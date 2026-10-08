@@ -23,7 +23,11 @@ web = ["dioxus/web"]
 ui-profile-dev = ["oxid-ui-dioxus/ui-profile-dev", "oxid-ui-dioxus/app-profile-authority"]
 # Opt-in fixture bootstrap presentation. It is accepted only with the
 # deterministic standalone-development composition.
-ui-profile-demo = ["oxid-ui-dioxus/ui-profile-demo", "oxid-ui-dioxus/app-profile-authority"]
+ui-profile-demo = [
+  "oxid-composition/development-did-approval",
+  "oxid-ui-dioxus/ui-profile-demo",
+  "oxid-ui-dioxus/app-profile-authority",
+]
 # Opt-in synthetic proof benchmark for development artifacts. This selects the
 # standalone developer profile but remains independent of its network routes.
 developer-proof-benchmark = [
@@ -47,6 +51,13 @@ desktop-portal-test = [
   "oxid-composition/desktop-portal-test",
   "oxid-ui-dioxus/desktop-test-click-driver",
 ]
+# Owner-invoked rendered developer-pager smoke. It carries the synthetic
+# benchmark presentation only; the driver never invokes a proof.
+desktop-developer-pager-test = [
+  "desktop",
+  "developer-proof-benchmark",
+  "oxid-ui-dioxus/desktop-developer-pager-driver",
+]
 # Opt-in native development route profile for the laptop-hosted standalone
 # stack. Routes are immutable loopback constants; Android emulators reach them
 # only through repository-owned adb reverse mappings.
@@ -62,6 +73,7 @@ standalone-portal = [
   "mobile",
   "standalone-development",
   "standalone-local",
+  "oxid-composition/development-did-approval",
   "oxid-composition/mobile-portal",
 ]
 # Physical Android Portal profile using compile-time authenticated Tailscale

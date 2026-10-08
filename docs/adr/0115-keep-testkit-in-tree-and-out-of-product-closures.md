@@ -1,4 +1,4 @@
-# ADR-0111: Keep testkit in-tree and out of product closures
+# ADR-0115: Keep testkit in-tree and out of product closures
 
 - Status: Proposed
 - Date: 2026-09-14

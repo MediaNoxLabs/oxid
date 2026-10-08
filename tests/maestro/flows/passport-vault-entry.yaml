@@ -1,0 +1,23 @@
+appId: io.medianox.oxid
+name: Passport Vault entry
+---
+- runFlow: ../subflows/launch-clean.yaml
+- runFlow: ../subflows/demo-profile.yaml
+- tapOn: "Home"
+- scrollUntilVisible:
+    element:
+      text: "Open Wallet for .*"
+    direction: DOWN
+    speed: 40
+    timeout: 20000
+    centerElement: true
+# Maestro's iOS WebView hierarchy exposes this carousel reliably to gestures, but
+# not to horizontal `scrollUntilVisible` queries.
+- swipe:
+    direction: LEFT
+- swipe:
+    direction: LEFT
+- tapOn: "Open Passport Vault"
+- assertVisible: "Passport Vault"
+- assertVisible: "Create, fund, claim, and withdraw credential-gated NIGHT locks."
+# Contract-call outcomes remain owned by Rust and native integration layers.

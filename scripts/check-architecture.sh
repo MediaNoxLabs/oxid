@@ -112,6 +112,7 @@ check_workspace_dependencies --all-kinds oxid-capabilities-application
 check_workspace_dependencies --all-kinds oxid-wallet-application \
   oxid-foundation oxid-platform-ports oxid-wallet-domain
 check_workspace_dependencies --all-kinds oxid-identity-application \
+  oxid-platform-ports \
   oxid-foundation oxid-identity-domain
 check_workspace_dependencies --all-kinds oxid-credential-application \
   oxid-credential-domain oxid-foundation
@@ -128,10 +129,12 @@ check_workspace_dependencies oxid-adapter-storage-memory \
   oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-diagnostics-memory \
   oxid-diagnostics-application
+check_workspace_dependencies oxid-adapter-diagnostics-encrypted \
+  oxid-adapter-store-atomic oxid-diagnostics-application
 check_workspace_dependencies oxid-adapter-deployment-profile \
-  oxid-capabilities-application
+  oxid-adapter-platform-system oxid-capabilities-application
 check_workspace_dependencies oxid-adapter-storage-dev \
-  oxid-adapter-backup-portable oxid-foundation oxid-platform-ports \
+  oxid-adapter-backup-portable oxid-adapter-store-atomic oxid-foundation oxid-platform-ports \
   oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-custody-software \
   oxid-wallet-application oxid-wallet-domain
@@ -155,12 +158,12 @@ check_workspace_dependencies oxid-adapter-mobile-native
 check_workspace_dependencies oxid-adapter-platform-system \
   oxid-adapter-mobile-native oxid-foundation oxid-platform-ports
 check_workspace_dependencies oxid-adapter-midnight \
-  oxid-adapter-store-atomic oxid-diagnostics-application oxid-foundation oxid-platform-ports \
+  oxid-adapter-platform-system oxid-adapter-store-atomic oxid-diagnostics-application oxid-foundation oxid-platform-ports \
   oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-did-midnight \
-  oxid-identity-application oxid-identity-domain oxid-wallet-application oxid-wallet-domain
+  oxid-adapter-platform-system oxid-identity-application oxid-identity-domain oxid-wallet-application oxid-wallet-domain
 check_workspace_dependencies oxid-adapter-identity-ingress \
-  oxid-adapter-mobile-native oxid-platform-ports oxid-protocol-application
+  oxid-adapter-mobile-native oxid-adapter-platform-system oxid-platform-ports oxid-protocol-application
 check_workspace_dependencies oxid-adapter-storage-identity-json \
   oxid-adapter-store-atomic oxid-identity-application oxid-identity-domain
 check_workspace_dependencies oxid-adapter-store-atomic
@@ -171,7 +174,7 @@ check_workspace_dependencies oxid-adapter-vc-midnight \
   oxid-identity-application oxid-identity-domain oxid-platform-ports \
   oxid-presentation-application oxid-presentation-domain
 check_workspace_dependencies oxid-adapter-openid4vci \
-  oxid-credential-application oxid-identity-application oxid-platform-ports \
+  oxid-adapter-platform-system oxid-credential-application oxid-identity-application oxid-platform-ports \
   oxid-protocol-application oxid-protocol-domain
 check_workspace_dependencies oxid-adapter-openid4vp \
   oxid-credential-application oxid-platform-ports \
@@ -180,7 +183,7 @@ check_workspace_dependencies oxid-adapter-siopv2 \
   oxid-identity-application oxid-platform-ports \
   oxid-protocol-application oxid-protocol-domain
 check_workspace_dependencies oxid-adapter-passport-vault \
-  oxid-adapter-vc-midnight oxid-credential-application oxid-credential-domain \
+  oxid-adapter-platform-system oxid-adapter-vc-midnight oxid-credential-application oxid-credential-domain \
   oxid-foundation oxid-passport-vault-application oxid-passport-vault-domain \
   oxid-platform-ports
 check_workspace_dependencies oxid-ui-dioxus \
@@ -190,6 +193,7 @@ check_workspace_dependencies oxid-ui-dioxus \
   oxid-passport-vault-application oxid-presentation-application \
   oxid-protocol-application oxid-wallet-application
 check_workspace_dependencies oxid-composition \
+  oxid-foundation \
   oxid-adapter-backup-complete oxid-adapter-backup-document-mobile \
   oxid-adapter-backup-portable oxid-adapter-custody-software oxid-adapter-deployment-profile \
   oxid-adapter-diagnostics-memory \
@@ -242,6 +246,16 @@ if [ "$unsafe_sources" != "$expected_unsafe_sources" ]; then
   exit 1
 fi
 
+# The portable-backup adapter alone interprets envelope versions. Consumers
+# receive its typed outcome instead of maintaining another accepted-version
+# list or inspecting the envelope magic.
+backup_version_authorities="$(rg -l 'OXIDBAK1|accepted_format_versions|accepted_backup_versions|argon2_policy_for_format|KDF_ARGON2ID|AEAD_XCHACHA20_POLY1305|CURRENT_CUSTODY_FORMAT_VERSION|LEGACY_CUSTODY_FORMAT_VERSION|COMPLETE_WALLET_FORMAT_VERSION' apps crates --glob '*.rs' | sort || true)"
+if [ "$backup_version_authorities" != 'crates/adapters/backup-portable/src/lib.rs' ]; then
+  echo "Portable backup version policy must remain in oxid-adapter-backup-portable." >&2
+  echo "$backup_version_authorities" >&2
+  exit 1
+fi
+
 check_no_external_dependencies oxid-foundation
 check_no_external_dependencies oxid-wallet-domain
 check_no_external_dependencies oxid-identity-domain
@@ -260,5 +274,7 @@ check_no_external_dependencies oxid-presentation-application
 check_no_external_dependencies oxid-passport-vault-application
 
 ./scripts/e2e/android-avd-process-ownership.test.sh
+./scripts/e2e/standalone-compose-ownership.test.sh
+./scripts/e2e/standalone-state-lifecycle.test.sh
 
 echo "Architecture dependency rules passed."

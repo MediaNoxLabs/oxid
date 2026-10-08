@@ -28,7 +28,8 @@ use oxid_wallet_application::{
     AuthorizeWalletDustRegistrationRequest, PrepareWalletDustRegistrationRequest,
     SubmitWalletDustRegistrationRequest, SubmittedWalletDustRegistration, WalletAccountPortError,
     WalletDustRegistrationPort, WalletDustRegistrationPortError, WalletDustRegistrationPortFuture,
-    WalletDustRegistrationStatusPortFuture, WalletTransactionPortError,
+    WalletDustRegistrationPreviewPortFuture, WalletDustRegistrationStatusPortFuture,
+    WalletTransactionPortError,
 };
 use oxid_wallet_domain::{
     AssetBalance, ChainBlockId, ChainTransactionId, WalletDustRegistrationPreview,
@@ -44,10 +45,11 @@ use crate::{
     MidnightWalletAdapter, SPECKS_PER_DUST, STARS_PER_NIGHT, midnight_asset, network_by_id,
     submission_journal::{StoredSubmissionJournalEntry, StoredSubmissionState},
     transaction::{
-        LedgerIntent, LedgerTransaction, MidnightCompletionOutcome, MidnightCompletionRequest,
-        MidnightRegistrationContext, MidnightSpendableUtxo, MidnightSubmissionAttempt,
-        MidnightSubmissionControl, MidnightSubmissionReconciliation, MidnightTransactionAuthorizer,
-        MidnightTransactionSource, decode_signature, decode_verifying_key,
+        CancelSubmissionOnDrop, LedgerIntent, LedgerTransaction, MidnightCompletionOutcome,
+        MidnightCompletionRequest, MidnightRegistrationContext, MidnightSpendableUtxo,
+        MidnightSubmissionAttempt, MidnightSubmissionControl, MidnightSubmissionReconciliation,
+        MidnightTransactionAuthorizer, MidnightTransactionSource, decode_signature,
+        decode_verifying_key,
     },
 };
 
@@ -84,237 +86,244 @@ where
     S: MidnightTransactionSource,
     D: MidnightTransactionAuthorizer + Clone + 'static,
 {
-    fn prepare(
-        &self,
-        profile_id: &WalletProfileId,
+    fn prepare<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
         request: PrepareWalletDustRegistrationRequest,
-    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError> {
-        let selected = self.selected(profile_id).map_err(map_account_error)?;
-        let network = network_by_id(&selected)
-            .map_err(map_account_error)?
-            .ok_or(WalletDustRegistrationPortError::InvalidChainState)?;
-        let spendable = self
-            .source
-            .spendable_account(profile_id, &network)
-            .map_err(map_transaction_error)?;
-        if spendable.account.network_id() != &selected {
-            return Err(WalletDustRegistrationPortError::DraftConflict);
-        }
-        let night_key = decode_verifying_key(&spendable.account).map_err(map_transaction_error)?;
-        let context = self
-            .completer
-            .registration_context()
-            .map_err(map_transaction_error)?;
-        let chain_time = context.timestamp.to_secs();
-        if request.expires_at.value() / 1_000 <= chain_time {
-            return Err(WalletDustRegistrationPortError::DraftExpired);
-        }
-        let dust_public_key = self
-            .deriver
-            .dust_public_key(profile_id, spendable.account.account_index())
-            .map_err(map_transaction_error)?;
-        let plan = plan_registration(
-            &selected,
-            night_key,
-            dust_public_key,
-            spendable.utxos,
-            &context,
-            request.expires_at.value() / 1_000,
-        )?;
-        let mut intents = LedgerHashMap::new();
-        intents = intents.insert(DUST_REGISTRATION_SEGMENT, plan.intent.clone());
-        let transaction = Transaction::Standard(StandardTransaction::new(
-            selected.as_str(),
-            intents,
-            None,
-            LedgerHashMap::new(),
-        ));
-        let fee = transaction
-            .fees(&context.parameters, false)
-            .map_err(|_| WalletDustRegistrationPortError::InvalidChainState)?;
-        if fee > plan.maximum_fee_allowance {
-            return Err(WalletDustRegistrationPortError::InsufficientRegistrationAllowance);
-        }
-
-        let draft_id = registration_id(&plan.signing_payload)?;
-        let authorization_challenge = registration_challenge(&draft_id, &plan.signing_payload)?;
-        let planning_fingerprint = registration_fingerprint(
-            profile_id,
-            &selected,
-            spendable.account.account_id().as_str(),
-            &plan.eligibility_fingerprint,
-        );
-        if let Some(stored) = self
-            .submission_journal
-            .find_planning_fingerprint(profile_id, &planning_fingerprint)
-            .map_err(map_store_error)?
-        {
-            return Err(match stored.state {
-                StoredSubmissionState::Broadcasting | StoredSubmissionState::OutcomeUnknown => {
-                    WalletDustRegistrationPortError::SubmissionOutcomeUnknown
-                }
-                StoredSubmissionState::Included => {
-                    WalletDustRegistrationPortError::RegistrationAlreadyCurrent
-                }
-                StoredSubmissionState::Rejected | StoredSubmissionState::Expired => {
-                    WalletDustRegistrationPortError::DraftConflict
-                }
-            });
-        }
-        let night = midnight_asset("midnight:night", "NIGHT", STARS_PER_NIGHT)
-            .map_err(map_account_error)?;
-        let dust =
-            midnight_asset("midnight:dust", "DUST", SPECKS_PER_DUST).map_err(map_account_error)?;
-        let preview = WalletDustRegistrationPreview::new(
-            draft_id.clone(),
-            authorization_challenge,
-            selected,
-            spendable.account.account_id().clone(),
-            AssetBalance::new(night, plan.registered_night),
-            plan.input_count,
-            AssetBalance::new(dust, plan.maximum_fee_allowance),
-            WalletTransactionFeeState::RequiresBalancing,
-            request.expires_at,
-            WalletTransactionDraftState::Prepared,
-        )
-        .map_err(|_| WalletDustRegistrationPortError::InvalidData)?;
-        let retained = RetainedMidnightDustRegistration {
-            planning_fingerprint,
-            preview: preview.clone(),
-            account_index: spendable.account.account_index(),
-            signing_payload: Zeroizing::new(plan.signing_payload),
-            unsigned_intent: plan.intent,
-            signed_transaction: None,
-            submission: None,
-            submission_state: WalletTransactionSubmissionState::NotStarted,
-            submission_control: None,
-        };
-        let key = (profile_id.clone(), draft_id);
-        let mut drafts = self
-            .dust_registration_drafts
-            .lock()
-            .map_err(|_| WalletDustRegistrationPortError::Unavailable)?;
-        if let Some(existing) = drafts.iter().find_map(|((stored_profile, _), retained)| {
-            (stored_profile == profile_id && retained.planning_fingerprint == planning_fingerprint)
-                .then(|| retained.preview.clone())
-        }) {
-            return Ok(existing);
-        }
-        if drafts.iter().any(|((stored_profile, _), retained)| {
-            stored_profile == profile_id
-                && matches!(
-                    retained.preview.state(),
-                    WalletTransactionDraftState::Prepared
-                        | WalletTransactionDraftState::Authorized
-                        | WalletTransactionDraftState::Submitting
-                )
-        }) {
-            return Err(WalletDustRegistrationPortError::DraftConflict);
-        }
-        drafts.insert(key, retained);
-        Ok(preview)
-    }
-
-    fn authorize(
-        &self,
-        profile_id: &WalletProfileId,
-        request: AuthorizeWalletDustRegistrationRequest,
-    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError> {
-        let key = (profile_id.clone(), request.draft_id.clone());
-        let mut drafts = self
-            .dust_registration_drafts
-            .lock()
-            .map_err(|_| WalletDustRegistrationPortError::Unavailable)?;
-        let retained = drafts
-            .get_mut(&key)
-            .ok_or(WalletDustRegistrationPortError::DraftNotFound)?;
-        if request.now.value() >= retained.preview.expires_at().value() {
-            expire_retained(retained);
-            return Err(WalletDustRegistrationPortError::DraftExpired);
-        }
-        if retained.preview.authorization_challenge() != &request.authorization_challenge {
-            return Err(WalletDustRegistrationPortError::AuthorizationChallengeMismatch);
-        }
-        match retained.preview.state() {
-            WalletTransactionDraftState::Prepared => {}
-            WalletTransactionDraftState::Authorized => return Ok(retained.preview.clone()),
-            WalletTransactionDraftState::Submitting => {
-                return Err(WalletDustRegistrationPortError::SubmissionInProgress);
-            }
-            WalletTransactionDraftState::Submitted | WalletTransactionDraftState::Expired => {
+    ) -> WalletDustRegistrationPreviewPortFuture<'a> {
+        Box::pin(async move {
+            let selected = self.selected(profile_id).map_err(map_account_error)?;
+            let network = network_by_id(&selected)
+                .map_err(map_account_error)?
+                .ok_or(WalletDustRegistrationPortError::InvalidChainState)?;
+            let spendable = self
+                .source
+                .spendable_account(profile_id, &network)
+                .map_err(map_transaction_error)?;
+            if spendable.account.network_id() != &selected {
                 return Err(WalletDustRegistrationPortError::DraftConflict);
             }
-        }
-        let selected = self.selected(profile_id).map_err(map_account_error)?;
-        if retained.preview.network_id() != &selected {
-            return Err(WalletDustRegistrationPortError::DraftConflict);
-        }
-        let network = network_by_id(&selected)
-            .map_err(map_account_error)?
-            .ok_or(WalletDustRegistrationPortError::InvalidChainState)?;
-        let spendable = self
-            .source
-            .spendable_account(profile_id, &network)
-            .map_err(map_transaction_error)?;
-        if spendable.account.account_id() != retained.preview.account_id()
-            || spendable.account.account_index() != retained.account_index
-        {
-            return Err(WalletDustRegistrationPortError::DraftConflict);
-        }
-        let wallet_signature = self
-            .deriver
-            .authorize(
+            let night_key =
+                decode_verifying_key(&spendable.account).map_err(map_transaction_error)?;
+            let context = self
+                .completer
+                .registration_context()
+                .await
+                .map_err(map_transaction_error)?;
+            let chain_time = context.timestamp.to_secs();
+            if request.expires_at.value() / 1_000 <= chain_time {
+                return Err(WalletDustRegistrationPortError::DraftExpired);
+            }
+            let dust_public_key = self
+                .deriver
+                .dust_public_key(profile_id, spendable.account.account_index())
+                .map_err(map_transaction_error)?;
+            let plan = plan_registration(
+                &selected,
+                night_key,
+                dust_public_key,
+                spendable.utxos,
+                &context,
+                request.expires_at.value() / 1_000,
+            )?;
+            let mut intents = LedgerHashMap::new();
+            intents = intents.insert(DUST_REGISTRATION_SEGMENT, plan.intent.clone());
+            let transaction = Transaction::Standard(StandardTransaction::new(
+                selected.as_str(),
+                intents,
+                None,
+                LedgerHashMap::new(),
+            ));
+            let fee = transaction
+                .fees(&context.parameters, false)
+                .map_err(|_| WalletDustRegistrationPortError::InvalidChainState)?;
+            if fee > plan.maximum_fee_allowance {
+                return Err(WalletDustRegistrationPortError::InsufficientRegistrationAllowance);
+            }
+
+            let draft_id = registration_id(&plan.signing_payload)?;
+            let authorization_challenge = registration_challenge(&draft_id, &plan.signing_payload)?;
+            let planning_fingerprint = registration_fingerprint(
                 profile_id,
-                &spendable.account,
-                retained.signing_payload.as_slice(),
+                &selected,
+                spendable.account.account_id().as_str(),
+                &plan.eligibility_fingerprint,
+            );
+            if let Some(stored) = self
+                .submission_journal
+                .find_planning_fingerprint(profile_id, &planning_fingerprint)
+                .map_err(map_store_error)?
+            {
+                return Err(match stored.state {
+                    StoredSubmissionState::Broadcasting | StoredSubmissionState::OutcomeUnknown => {
+                        WalletDustRegistrationPortError::SubmissionOutcomeUnknown
+                    }
+                    StoredSubmissionState::Included => {
+                        WalletDustRegistrationPortError::RegistrationAlreadyCurrent
+                    }
+                    StoredSubmissionState::Rejected | StoredSubmissionState::Expired => {
+                        WalletDustRegistrationPortError::DraftConflict
+                    }
+                });
+            }
+            let night = midnight_asset("midnight:night", "NIGHT", STARS_PER_NIGHT)
+                .map_err(map_account_error)?;
+            let dust = midnight_asset("midnight:dust", "DUST", SPECKS_PER_DUST)
+                .map_err(map_account_error)?;
+            let preview = WalletDustRegistrationPreview::new(
+                draft_id.clone(),
+                authorization_challenge,
+                selected,
+                spendable.account.account_id().clone(),
+                AssetBalance::new(night, plan.registered_night),
+                plan.input_count,
+                AssetBalance::new(dust, plan.maximum_fee_allowance),
+                WalletTransactionFeeState::RequiresBalancing,
+                request.expires_at,
+                WalletTransactionDraftState::Prepared,
             )
-            .map_err(map_transaction_error)?;
-        let signature = decode_signature(&wallet_signature).map_err(map_transaction_error)?;
-        let verifying_key =
-            decode_verifying_key(&spendable.account).map_err(map_transaction_error)?;
-        if !verifying_key.verify(retained.signing_payload.as_slice(), &signature) {
-            return Err(WalletDustRegistrationPortError::InvalidData);
-        }
-        let mut intent = retained.unsigned_intent.clone();
-        sign_offer(&mut intent.guaranteed_unshielded_offer, &signature)?;
-        sign_offer(&mut intent.fallible_unshielded_offer, &signature)?;
-        let dust_actions = intent
-            .dust_actions
-            .as_ref()
-            .ok_or(WalletDustRegistrationPortError::InvalidData)?;
-        if dust_actions.registrations.len() != 1 {
-            return Err(WalletDustRegistrationPortError::InvalidData);
-        }
-        let registrations = dust_actions
-            .registrations
-            .iter_deref()
-            .map(|registration| {
-                let mut registration = registration.clone();
-                if registration.night_key != verifying_key {
+            .map_err(|_| WalletDustRegistrationPortError::InvalidData)?;
+            let retained = RetainedMidnightDustRegistration {
+                planning_fingerprint,
+                preview: preview.clone(),
+                account_index: spendable.account.account_index(),
+                signing_payload: Zeroizing::new(plan.signing_payload),
+                unsigned_intent: plan.intent,
+                signed_transaction: None,
+                submission: None,
+                submission_state: WalletTransactionSubmissionState::NotStarted,
+                submission_control: None,
+            };
+            let key = (profile_id.clone(), draft_id);
+            let mut drafts = self
+                .dust_registration_drafts
+                .lock()
+                .map_err(|_| WalletDustRegistrationPortError::Unavailable)?;
+            if let Some(existing) = drafts.iter().find_map(|((stored_profile, _), retained)| {
+                (stored_profile == profile_id
+                    && retained.planning_fingerprint == planning_fingerprint)
+                    .then(|| retained.preview.clone())
+            }) {
+                return Ok(existing);
+            }
+            if drafts.iter().any(|((stored_profile, _), retained)| {
+                stored_profile == profile_id
+                    && matches!(
+                        retained.preview.state(),
+                        WalletTransactionDraftState::Prepared
+                            | WalletTransactionDraftState::Authorized
+                            | WalletTransactionDraftState::Submitting
+                    )
+            }) {
+                return Err(WalletDustRegistrationPortError::DraftConflict);
+            }
+            drafts.insert(key, retained);
+            Ok(preview)
+        })
+    }
+
+    fn authorize<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
+        request: AuthorizeWalletDustRegistrationRequest,
+    ) -> WalletDustRegistrationPreviewPortFuture<'a> {
+        Box::pin(async move {
+            let key = (profile_id.clone(), request.draft_id.clone());
+            let mut drafts = self
+                .dust_registration_drafts
+                .lock()
+                .map_err(|_| WalletDustRegistrationPortError::Unavailable)?;
+            let retained = drafts
+                .get_mut(&key)
+                .ok_or(WalletDustRegistrationPortError::DraftNotFound)?;
+            if request.now.value() >= retained.preview.expires_at().value() {
+                expire_retained(retained);
+                return Err(WalletDustRegistrationPortError::DraftExpired);
+            }
+            if retained.preview.authorization_challenge() != &request.authorization_challenge {
+                return Err(WalletDustRegistrationPortError::AuthorizationChallengeMismatch);
+            }
+            match retained.preview.state() {
+                WalletTransactionDraftState::Prepared => {}
+                WalletTransactionDraftState::Authorized => return Ok(retained.preview.clone()),
+                WalletTransactionDraftState::Submitting => {
+                    return Err(WalletDustRegistrationPortError::SubmissionInProgress);
+                }
+                WalletTransactionDraftState::Submitted | WalletTransactionDraftState::Expired => {
                     return Err(WalletDustRegistrationPortError::DraftConflict);
                 }
-                registration.signature = Some(Sp::new(signature.clone()));
-                Ok(registration)
-            })
-            .collect::<Result<Array<_, DefaultDB>, _>>()?;
-        intent.dust_actions = Some(Sp::new(DustActions {
-            spends: dust_actions.spends.clone(),
-            registrations,
-            ctime: dust_actions.ctime,
-        }));
-        let mut intents = LedgerHashMap::new();
-        intents = intents.insert(DUST_REGISTRATION_SEGMENT, intent);
-        retained.signed_transaction = Some(Transaction::Standard(StandardTransaction::new(
-            selected.as_str(),
-            intents,
-            None,
-            LedgerHashMap::new(),
-        )));
-        retained.signing_payload = Zeroizing::new(Vec::new());
-        retained.preview = retained
-            .preview
-            .with_state(WalletTransactionDraftState::Authorized);
-        Ok(retained.preview.clone())
+            }
+            let selected = self.selected(profile_id).map_err(map_account_error)?;
+            if retained.preview.network_id() != &selected {
+                return Err(WalletDustRegistrationPortError::DraftConflict);
+            }
+            let network = network_by_id(&selected)
+                .map_err(map_account_error)?
+                .ok_or(WalletDustRegistrationPortError::InvalidChainState)?;
+            let spendable = self
+                .source
+                .spendable_account(profile_id, &network)
+                .map_err(map_transaction_error)?;
+            if spendable.account.account_id() != retained.preview.account_id()
+                || spendable.account.account_index() != retained.account_index
+            {
+                return Err(WalletDustRegistrationPortError::DraftConflict);
+            }
+            let wallet_signature = self
+                .deriver
+                .authorize(
+                    profile_id,
+                    &spendable.account,
+                    retained.signing_payload.as_slice(),
+                )
+                .map_err(map_transaction_error)?;
+            let signature = decode_signature(&wallet_signature).map_err(map_transaction_error)?;
+            let verifying_key =
+                decode_verifying_key(&spendable.account).map_err(map_transaction_error)?;
+            if !verifying_key.verify(retained.signing_payload.as_slice(), &signature) {
+                return Err(WalletDustRegistrationPortError::InvalidData);
+            }
+            let mut intent = retained.unsigned_intent.clone();
+            sign_offer(&mut intent.guaranteed_unshielded_offer, &signature)?;
+            sign_offer(&mut intent.fallible_unshielded_offer, &signature)?;
+            let dust_actions = intent
+                .dust_actions
+                .as_ref()
+                .ok_or(WalletDustRegistrationPortError::InvalidData)?;
+            if dust_actions.registrations.len() != 1 {
+                return Err(WalletDustRegistrationPortError::InvalidData);
+            }
+            let registrations = dust_actions
+                .registrations
+                .iter_deref()
+                .map(|registration| {
+                    let mut registration = registration.clone();
+                    if registration.night_key != verifying_key {
+                        return Err(WalletDustRegistrationPortError::DraftConflict);
+                    }
+                    registration.signature = Some(Sp::new(signature.clone()));
+                    Ok(registration)
+                })
+                .collect::<Result<Array<_, DefaultDB>, _>>()?;
+            intent.dust_actions = Some(Sp::new(DustActions {
+                spends: dust_actions.spends.clone(),
+                registrations,
+                ctime: dust_actions.ctime,
+            }));
+            let mut intents = LedgerHashMap::new();
+            intents = intents.insert(DUST_REGISTRATION_SEGMENT, intent);
+            retained.signed_transaction = Some(Transaction::Standard(StandardTransaction::new(
+                selected.as_str(),
+                intents,
+                None,
+                LedgerHashMap::new(),
+            )));
+            retained.signing_payload = Zeroizing::new(Vec::new());
+            retained.preview = retained
+                .preview
+                .with_state(WalletTransactionDraftState::Authorized);
+            Ok(retained.preview.clone())
+        })
     }
 
     fn submit<'a>(
@@ -391,6 +400,7 @@ where
             let drafts = Arc::clone(&self.dust_registration_drafts);
             let worker_key = key.clone();
             let draft_id = request.draft_id;
+            let mut cancel_on_drop = CancelSubmissionOnDrop::new(Arc::clone(&control));
             let worker_control = Arc::clone(&control);
             let (sender, receiver) = futures::channel::oneshot::channel();
             thread::Builder::new()
@@ -417,6 +427,7 @@ where
                     let _ = sender.send(result);
                 })
                 .map_err(|_| {
+                    cancel_on_drop.disarm();
                     let _ = restore_authorized(
                         self.dust_registration_drafts.as_ref(),
                         &key,
@@ -424,105 +435,115 @@ where
                     );
                     WalletDustRegistrationPortError::Unavailable
                 })?;
-            match await_registration_completion(receiver, DUST_REGISTRATION_COMPLETION_TIMEOUT)
-                .await
+            let result =
+                match await_registration_completion(receiver, DUST_REGISTRATION_COMPLETION_TIMEOUT)
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let _ = control.mark_outcome_unknown();
+                        mark_outcome_unknown(self.dust_registration_drafts.as_ref(), &key)?;
+                        Err(error)
+                    }
+                };
+            cancel_on_drop.disarm();
+            result
+        })
+    }
+
+    fn get<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
+        draft_id: &'a WalletTransactionDraftId,
+        now: oxid_foundation::UnixTimestampMillis,
+    ) -> WalletDustRegistrationPreviewPortFuture<'a> {
+        Box::pin(async move {
+            let mut drafts = self
+                .dust_registration_drafts
+                .lock()
+                .map_err(|_| WalletDustRegistrationPortError::Unavailable)?;
+            let retained = drafts
+                .get_mut(&(profile_id.clone(), draft_id.clone()))
+                .ok_or(WalletDustRegistrationPortError::DraftNotFound)?;
+            if now.value() >= retained.preview.expires_at().value()
+                && matches!(
+                    retained.preview.state(),
+                    WalletTransactionDraftState::Prepared | WalletTransactionDraftState::Authorized
+                )
             {
-                Ok(result) => result,
-                Err(error) => {
-                    let _ = control.mark_outcome_unknown();
-                    mark_outcome_unknown(self.dust_registration_drafts.as_ref(), &key)?;
-                    Err(error)
-                }
+                expire_retained(retained);
+            }
+            Ok(retained.preview.clone())
+        })
+    }
+
+    fn status<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
+        draft_id: &'a WalletTransactionDraftId,
+    ) -> WalletDustRegistrationStatusPortFuture<'a> {
+        Box::pin(async move {
+            if !draft_id.as_str().starts_with("dustreg_") {
+                return Err(WalletDustRegistrationPortError::DraftNotFound);
+            }
+            let retained = self
+                .dust_registration_drafts
+                .lock()
+                .map_err(|_| WalletDustRegistrationPortError::Unavailable)?
+                .get(&(profile_id.clone(), draft_id.clone()))
+                .map(registration_status)
+                .transpose()?;
+            let stored = self
+                .submission_journal
+                .load(profile_id, draft_id)
+                .map_err(map_store_error)?;
+            match (stored.as_ref(), retained) {
+                (Some(entry), _) => registration_status_from_stored(entry),
+                (None, Some(status)) => Ok(status),
+                (None, None) => Err(WalletDustRegistrationPortError::DraftNotFound),
             }
         })
     }
 
-    fn get(
-        &self,
-        profile_id: &WalletProfileId,
-        draft_id: &WalletTransactionDraftId,
-        now: oxid_foundation::UnixTimestampMillis,
-    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError> {
-        let mut drafts = self
-            .dust_registration_drafts
-            .lock()
-            .map_err(|_| WalletDustRegistrationPortError::Unavailable)?;
-        let retained = drafts
-            .get_mut(&(profile_id.clone(), draft_id.clone()))
-            .ok_or(WalletDustRegistrationPortError::DraftNotFound)?;
-        if now.value() >= retained.preview.expires_at().value()
-            && matches!(
-                retained.preview.state(),
-                WalletTransactionDraftState::Prepared | WalletTransactionDraftState::Authorized
-            )
-        {
-            expire_retained(retained);
-        }
-        Ok(retained.preview.clone())
-    }
-
-    fn status(
-        &self,
-        profile_id: &WalletProfileId,
-        draft_id: &WalletTransactionDraftId,
-    ) -> Result<WalletDustRegistrationSubmissionStatus, WalletDustRegistrationPortError> {
-        if !draft_id.as_str().starts_with("dustreg_") {
-            return Err(WalletDustRegistrationPortError::DraftNotFound);
-        }
-        let retained = self
-            .dust_registration_drafts
-            .lock()
-            .map_err(|_| WalletDustRegistrationPortError::Unavailable)?
-            .get(&(profile_id.clone(), draft_id.clone()))
-            .map(registration_status)
-            .transpose()?;
-        let stored = self
-            .submission_journal
-            .load(profile_id, draft_id)
-            .map_err(map_store_error)?;
-        match (stored.as_ref(), retained) {
-            (Some(entry), _) => registration_status_from_stored(entry),
-            (None, Some(status)) => Ok(status),
-            (None, None) => Err(WalletDustRegistrationPortError::DraftNotFound),
-        }
-    }
-
-    fn cancel_submission(
-        &self,
-        profile_id: &WalletProfileId,
-        draft_id: &WalletTransactionDraftId,
-    ) -> Result<WalletDustRegistrationSubmissionStatus, WalletDustRegistrationPortError> {
-        let mut drafts = self
-            .dust_registration_drafts
-            .lock()
-            .map_err(|_| WalletDustRegistrationPortError::Unavailable)?;
-        let retained = drafts
-            .get_mut(&(profile_id.clone(), draft_id.clone()))
-            .ok_or(WalletDustRegistrationPortError::DraftNotFound)?;
-        match retained.submission_state {
-            WalletTransactionSubmissionState::Running => {
-                retained
-                    .submission_control
-                    .as_ref()
-                    .ok_or(WalletDustRegistrationPortError::InvalidData)?
-                    .request_cancellation()
-                    .map_err(map_transaction_error)?;
-                retained.submission_state = WalletTransactionSubmissionState::CancellationRequested;
+    fn cancel_submission<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
+        draft_id: &'a WalletTransactionDraftId,
+    ) -> WalletDustRegistrationStatusPortFuture<'a> {
+        Box::pin(async move {
+            let mut drafts = self
+                .dust_registration_drafts
+                .lock()
+                .map_err(|_| WalletDustRegistrationPortError::Unavailable)?;
+            let retained = drafts
+                .get_mut(&(profile_id.clone(), draft_id.clone()))
+                .ok_or(WalletDustRegistrationPortError::DraftNotFound)?;
+            match retained.submission_state {
+                WalletTransactionSubmissionState::Running => {
+                    retained
+                        .submission_control
+                        .as_ref()
+                        .ok_or(WalletDustRegistrationPortError::InvalidData)?
+                        .request_cancellation()
+                        .map_err(map_transaction_error)?;
+                    retained.submission_state =
+                        WalletTransactionSubmissionState::CancellationRequested;
+                }
+                WalletTransactionSubmissionState::CancellationRequested
+                | WalletTransactionSubmissionState::Cancelled => {}
+                WalletTransactionSubmissionState::NotStarted
+                | WalletTransactionSubmissionState::Rejected
+                | WalletTransactionSubmissionState::Expired => {
+                    return Err(WalletDustRegistrationPortError::SubmissionNotInProgress);
+                }
+                WalletTransactionSubmissionState::Included
+                | WalletTransactionSubmissionState::Broadcasting
+                | WalletTransactionSubmissionState::OutcomeUnknown => {
+                    return Err(WalletDustRegistrationPortError::SubmissionCancellationUnsafe);
+                }
             }
-            WalletTransactionSubmissionState::CancellationRequested
-            | WalletTransactionSubmissionState::Cancelled => {}
-            WalletTransactionSubmissionState::NotStarted
-            | WalletTransactionSubmissionState::Rejected
-            | WalletTransactionSubmissionState::Expired => {
-                return Err(WalletDustRegistrationPortError::SubmissionNotInProgress);
-            }
-            WalletTransactionSubmissionState::Included
-            | WalletTransactionSubmissionState::Broadcasting
-            | WalletTransactionSubmissionState::OutcomeUnknown => {
-                return Err(WalletDustRegistrationPortError::SubmissionCancellationUnsafe);
-            }
-        }
-        registration_status(retained)
+            registration_status(retained)
+        })
     }
 
     fn reconcile_submission<'a>(
@@ -543,30 +564,17 @@ where
             if !status.reconciliation_allowed() {
                 return Ok(status);
             }
-            let reconciler = Arc::clone(&self.submission_reconciler);
-            let journal = Arc::clone(&self.submission_journal);
-            let drafts = Arc::clone(&self.dust_registration_drafts);
-            let (sender, receiver) = futures::channel::oneshot::channel();
-            thread::Builder::new()
-                .name("oxid-midnight-dust-reconcile".to_owned())
-                .spawn(move || {
-                    let result = reconciler
-                        .reconcile(&entry)
-                        .map_err(map_transaction_error)
-                        .and_then(|outcome| {
-                            persist_registration_reconciliation(
-                                journal.as_ref(),
-                                drafts.as_ref(),
-                                entry,
-                                outcome,
-                            )
-                        });
-                    let _ = sender.send(result);
-                })
-                .map_err(|_| WalletDustRegistrationPortError::Unavailable)?;
-            receiver
+            let outcome = self
+                .submission_reconciler
+                .reconcile_async(&entry)
                 .await
-                .unwrap_or(Err(WalletDustRegistrationPortError::Unavailable))
+                .map_err(map_transaction_error)?;
+            persist_registration_reconciliation(
+                self.submission_journal.as_ref(),
+                self.dust_registration_drafts.as_ref(),
+                entry,
+                outcome,
+            )
         })
     }
 }

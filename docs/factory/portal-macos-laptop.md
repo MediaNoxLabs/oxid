@@ -19,6 +19,11 @@ provides the separate packaged iOS Simulator and Android QEMU continuation.
   the tools checked by the harnesses (including Cargo, Node, `jq`,
   `screencapture`, and `shasum`).
 - A tracked-clean, committed candidate `HEAD`.
+- The headless preflight resolves the exact pinned Portal commit and tree,
+  independently of the mutable upstream branch head. A missing object or
+  repository mismatch reports `source-fetch`; commit and tree mismatches report
+  `portal-commit` and `portal-tree`. Each phase fails before Docker or service
+  mutation.
 - No `oxid-portal-consumer` containers and no unresolved
   `target/portal-virtual-mobile/stack.lock`. Ports used by standalone
   (6300, 8088, 9944), the Portal consumer (8081, 8090, 8098, 9090, 9092), and
@@ -92,6 +97,25 @@ line is:
 portal-macos-laptop-e2e: PASS evidence=target/portal-headless-e2e/evidence.json,target/portal-desktop-e2e/evidence.json
 ```
 
+The shared stack uses the durable canonical state directory at the physical
+path resolved from `$(git rev-parse --git-common-dir)/oxid/standalone`.
+It survives the Nix launcher process and is shared by managed worktrees for the
+same checkout. `OXID_STANDALONE_STATE_DIR` remains an explicit absolute-path
+override for isolated tests and packaged invocations outside a Git checkout;
+the leaf must not be a symlink, and existing ancestors are resolved to their
+physical path before state is written. The generated indexer credentials,
+canonical Compose file, and owner
+receipt exist only while the owned stack is live. Exact teardown removes those
+files, and a later start with zero matching containers rotates stale canonical
+state left by a host reboot or Docker reset. Startup takes an atomic lease
+before reading or
+changing the fixed Compose project. A second worktree may reuse an exact
+three-container stack whose canonical receipt matches, but it never runs
+`docker compose up` or rewrites that receipt. Partial or unreceipted resources
+fail closed. Only the worktree session recorded by the owner receipt may run
+the matching `standalone-down`; caller ownership is verified before either
+Tailscale Serve or Compose cleanup.
+
 If the successful baseline was empty, only this Bash process may treat the
 stack as owned. A later failure invokes `just standalone-down` through the EXIT
 trap; if cleanup fails, the trap reports it, preserves the original failure,
@@ -104,9 +128,15 @@ historical state. This method never reads, writes, or removes them, and they
 never authorize cleanup.
 
 Harness cleanup is receipt-scoped to `oxid-portal-consumer`; it never prunes
-Docker or removes `oxid-standalone`. If a receipt or lock cannot prove ownership
-and restoration, preserve the containers, state, and lock for owner review.
-Report cleanup failures and never force-delete containers, state, or locks.
+Docker or removes `oxid-standalone`. A host-local Portal consumer lease is held
+for the detached project lifetime, so a second session reports contention before
+querying or changing Docker. If a receipt or lease cannot prove ownership and
+restoration, preserve the containers, state, and lease for owner review. The
+manual lease recovery procedure requires first proving the recorded owner has no Portal consumer
+containers and that its state directory is no longer active; then remove the
+lease directory deliberately. Never force-delete a stale or ambiguous lease from
+the lifecycle command. Report cleanup failures and never force-delete
+containers, state, or locks.
 
 ## Pass evidence and exact-head rule
 

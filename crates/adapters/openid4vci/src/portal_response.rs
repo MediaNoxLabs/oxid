@@ -4,7 +4,89 @@
 //! bounded HTTP response handling. Parent `portal.rs` owns session sequencing;
 //! this module owns only response/endpoint validation.
 
+use std::collections::BTreeSet;
+
 use super::*;
+use serde_json::value::RawValue;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TokenResponse<'a> {
+    // Keep attacker-controlled strings borrowed so serde never owns decoded text.
+    #[serde(borrow)]
+    access_token: &'a RawValue,
+    expires_in: u64,
+    #[serde(borrow)]
+    token_type: &'a RawValue,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NonceResponse<'a> {
+    // Keep the encoded secret borrowed so serde never owns its decoded text.
+    #[serde(borrow)]
+    c_nonce: &'a RawValue,
+    c_nonce_expires_in: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CredentialResponse<'a> {
+    #[serde(borrow)]
+    credentials: [CredentialResponseItem<'a>; 1],
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CredentialResponseItem<'a> {
+    credential: &'a str,
+    #[serde(borrow)]
+    midnight: MidnightCredentialResponse<'a>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
+struct MidnightCredentialResponse<'a> {
+    credential_family: &'a str,
+    #[serde(borrow)]
+    credential_private_parts: &'a RawValue,
+    #[serde(borrow)]
+    credential_proof: CredentialProof<'a>,
+    encoding: &'a str,
+    expires_at: &'a str,
+    has_expiration: bool,
+    #[serde(borrow)]
+    holder_binding: HolderBinding<'a>,
+    schema_id: &'a str,
+    schema_version: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CredentialProof<'a> {
+    encoding: &'a str,
+    payload: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
+struct HolderBinding<'a> {
+    challenge: &'a str,
+    #[serde(borrow)]
+    holder_did_method: HolderDidMethod<'a>,
+    method: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
+struct HolderDidMethod<'a> {
+    did: &'a str,
+    key_type: &'a str,
+    method_id: &'a str,
+}
 
 pub(super) fn parse_portal_authorization_metadata(
     bytes: &[u8],
@@ -39,52 +121,282 @@ pub(super) fn parse_portal_authorization_metadata(
     Ok(token)
 }
 
-pub(super) fn parse_token_response(bytes: &[u8]) -> Result<String, IssuanceProtocolError> {
-    let value = parse_strict_json(bytes)?;
-    let object = value
-        .as_object()
-        .ok_or(IssuanceProtocolError::IssuerRejected)?;
-    exact_keys(
-        object,
-        &["access_token", "expires_in", "token_type"],
-        IssuanceProtocolError::IssuerRejected,
-    )?;
-    let token = object
-        .get("access_token")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty() && value.len() <= MAX_SECRET_BYTES)
-        .ok_or(IssuanceProtocolError::IssuerRejected)?;
-    if object.get("token_type").and_then(Value::as_str) != Some("Bearer")
-        || object.get("expires_in").and_then(Value::as_u64).is_none()
-    {
+pub(super) fn parse_token_response(
+    bytes: &[u8],
+) -> Result<Zeroizing<String>, IssuanceProtocolError> {
+    let raw = parse_secret_response_json(bytes)?;
+    let response: TokenResponse<'_> =
+        serde_json::from_str(raw.get()).map_err(|_| IssuanceProtocolError::IssuerRejected)?;
+    let access_token = decode_bounded_json_string(response.access_token, true)?;
+    let token_type = decode_bounded_json_string(response.token_type, true)?;
+    if token_type.as_str() != "Bearer" {
         return Err(IssuanceProtocolError::IssuerRejected);
     }
-    Ok(token.to_owned())
+    let _ = response.expires_in;
+    Ok(access_token)
 }
 
-pub(super) fn parse_nonce_response(bytes: &[u8]) -> Result<String, IssuanceProtocolError> {
-    let value = parse_strict_json(bytes)?;
-    let object = value
-        .as_object()
-        .ok_or(IssuanceProtocolError::IssuerRejected)?;
-    exact_keys(
-        object,
-        &["c_nonce", "c_nonce_expires_in"],
-        IssuanceProtocolError::IssuerRejected,
-    )?;
-    if object
-        .get("c_nonce_expires_in")
-        .and_then(Value::as_u64)
-        .is_none()
-    {
-        return Err(IssuanceProtocolError::IssuerRejected);
+pub(super) fn parse_nonce_response(
+    bytes: &[u8],
+) -> Result<Zeroizing<String>, IssuanceProtocolError> {
+    let raw = parse_secret_response_json(bytes)?;
+    let response: NonceResponse<'_> =
+        serde_json::from_str(raw.get()).map_err(|_| IssuanceProtocolError::IssuerRejected)?;
+    let nonce = decode_bounded_json_string(response.c_nonce, true)?;
+    let _ = response.c_nonce_expires_in;
+    Ok(nonce)
+}
+
+fn parse_secret_response_json(bytes: &[u8]) -> Result<&RawValue, IssuanceProtocolError> {
+    if bytes.is_empty() || bytes.len() > super::super::MAX_PROTOCOL_RESPONSE_BYTES {
+        return Err(IssuanceProtocolError::InvalidMetadata);
     }
-    object
-        .get("c_nonce")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty() && value.len() <= MAX_SECRET_BYTES)
-        .map(str::to_owned)
-        .ok_or(IssuanceProtocolError::IssuerRejected)
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let raw = <&RawValue>::deserialize(&mut deserializer)
+        .map_err(|_| IssuanceProtocolError::InvalidMetadata)?;
+    deserializer
+        .end()
+        .map_err(|_| IssuanceProtocolError::InvalidMetadata)?;
+    let structure = JsonStructureScanner::new(raw.get().as_bytes())
+        .scan()
+        .map_err(|()| IssuanceProtocolError::InvalidMetadata)?;
+    if structure.has_duplicate || structure.depth > super::super::MAX_JSON_DEPTH {
+        return Err(IssuanceProtocolError::InvalidMetadata);
+    }
+    Ok(raw)
+}
+
+#[derive(Clone, Copy)]
+struct JsonStructure {
+    has_duplicate: bool,
+    depth: usize,
+}
+
+struct JsonStructureScanner<'a> {
+    bytes: &'a [u8],
+    index: usize,
+}
+
+#[derive(Eq)]
+struct JsonKey(Zeroizing<String>);
+
+impl PartialEq for JsonKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_str() == other.0.as_str()
+    }
+}
+
+impl PartialOrd for JsonKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for JsonKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.as_str().cmp(other.0.as_str())
+    }
+}
+
+impl<'a> JsonStructureScanner<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, index: 0 }
+    }
+
+    fn scan(mut self) -> Result<JsonStructure, ()> {
+        let structure = self.scan_value(0)?;
+        self.skip_whitespace();
+        (self.index == self.bytes.len())
+            .then_some(structure)
+            .ok_or(())
+    }
+
+    fn scan_value(&mut self, depth: usize) -> Result<JsonStructure, ()> {
+        if depth > super::super::MAX_JSON_DEPTH {
+            return Err(());
+        }
+        self.skip_whitespace();
+        match self.bytes.get(self.index) {
+            Some(b'{') => self.scan_object(depth),
+            Some(b'[') => self.scan_array(depth),
+            Some(b'"') => {
+                self.scan_string_end()?;
+                Ok(JsonStructure {
+                    has_duplicate: false,
+                    depth,
+                })
+            }
+            Some(_) => {
+                let start = self.index;
+                while self.bytes.get(self.index).is_some_and(|byte| {
+                    !matches!(byte, b',' | b']' | b'}' | b' ' | b'\n' | b'\r' | b'\t')
+                }) {
+                    self.index += 1;
+                }
+                (self.index > start)
+                    .then_some(JsonStructure {
+                        has_duplicate: false,
+                        depth,
+                    })
+                    .ok_or(())
+            }
+            None => Err(()),
+        }
+    }
+
+    fn scan_object(&mut self, depth: usize) -> Result<JsonStructure, ()> {
+        self.index += 1;
+        self.skip_whitespace();
+        if self.consume(b'}') {
+            return Ok(JsonStructure {
+                has_duplicate: false,
+                depth,
+            });
+        }
+
+        let mut keys = BTreeSet::new();
+        let mut structure = JsonStructure {
+            has_duplicate: false,
+            depth,
+        };
+        loop {
+            self.skip_whitespace();
+            let start = self.index;
+            let end = self.scan_string_end()?;
+            let key =
+                decode_json_string(&self.bytes[start..end], usize::MAX, false).map_err(|_| ())?;
+            structure.has_duplicate |= !keys.insert(JsonKey(key));
+            self.skip_whitespace();
+            if !self.consume(b':') {
+                return Err(());
+            }
+            let child = self.scan_value(depth.saturating_add(1))?;
+            structure.has_duplicate |= child.has_duplicate;
+            structure.depth = structure.depth.max(child.depth);
+            self.skip_whitespace();
+            if self.consume(b'}') {
+                return Ok(structure);
+            }
+            if !self.consume(b',') {
+                return Err(());
+            }
+        }
+    }
+
+    fn scan_array(&mut self, depth: usize) -> Result<JsonStructure, ()> {
+        self.index += 1;
+        self.skip_whitespace();
+        if self.consume(b']') {
+            return Ok(JsonStructure {
+                has_duplicate: false,
+                depth,
+            });
+        }
+
+        let mut structure = JsonStructure {
+            has_duplicate: false,
+            depth,
+        };
+        loop {
+            let child = self.scan_value(depth.saturating_add(1))?;
+            structure.has_duplicate |= child.has_duplicate;
+            structure.depth = structure.depth.max(child.depth);
+            self.skip_whitespace();
+            if self.consume(b']') {
+                return Ok(structure);
+            }
+            if !self.consume(b',') {
+                return Err(());
+            }
+        }
+    }
+
+    fn scan_string_end(&mut self) -> Result<usize, ()> {
+        if !self.consume(b'"') {
+            return Err(());
+        }
+        while let Some(byte) = self.bytes.get(self.index).copied() {
+            self.index += 1;
+            match byte {
+                b'"' => return Ok(self.index),
+                b'\\' => {
+                    let escape = self.bytes.get(self.index).copied().ok_or(())?;
+                    self.index += 1;
+                    match escape {
+                        b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => {}
+                        b'u' => {
+                            let first = self.scan_hex_quad()?;
+                            if (0xd800..=0xdbff).contains(&first) {
+                                if self.bytes.get(self.index..self.index.saturating_add(2))
+                                    != Some(b"\\u")
+                                {
+                                    return Err(());
+                                }
+                                self.index += 2;
+                                let second = self.scan_hex_quad()?;
+                                if !(0xdc00..=0xdfff).contains(&second) {
+                                    return Err(());
+                                }
+                            } else if (0xdc00..=0xdfff).contains(&first) {
+                                return Err(());
+                            }
+                        }
+                        _ => return Err(()),
+                    }
+                }
+                0x00..=0x1f => return Err(()),
+                _ => {}
+            }
+        }
+        Err(())
+    }
+
+    fn scan_hex_quad(&mut self) -> Result<u16, ()> {
+        let digits = self
+            .bytes
+            .get(self.index..self.index.saturating_add(4))
+            .filter(|digits| digits.len() == 4)
+            .ok_or(())?;
+        let mut value = 0_u16;
+        for digit in digits {
+            value = (value << 4)
+                | u16::from(match digit {
+                    b'0'..=b'9' => digit - b'0',
+                    b'a'..=b'f' => digit - b'a' + 10,
+                    b'A'..=b'F' => digit - b'A' + 10,
+                    _ => return Err(()),
+                });
+        }
+        self.index += 4;
+        Ok(value)
+    }
+
+    fn skip_whitespace(&mut self) {
+        while self
+            .bytes
+            .get(self.index)
+            .is_some_and(|byte| matches!(byte, b' ' | b'\n' | b'\r' | b'\t'))
+        {
+            self.index += 1;
+        }
+    }
+
+    fn consume(&mut self, expected: u8) -> bool {
+        if self.bytes.get(self.index) == Some(&expected) {
+            self.index += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn decode_bounded_json_string(
+    value: &RawValue,
+    reject_empty: bool,
+) -> Result<Zeroizing<String>, IssuanceProtocolError> {
+    // Decode directly from the borrowed JSON spelling into the only owned buffer.
+    decode_json_string(value.get().as_bytes(), MAX_SECRET_BYTES, reject_empty)
 }
 
 pub(super) fn parse_portal_credential_response(
@@ -94,103 +406,42 @@ pub(super) fn parse_portal_credential_response(
     expected_nonce: &str,
     decoder: &dyn PortalCredentialMaterialDecoder,
 ) -> Result<IssuedCredentialBytes, IssuanceProtocolError> {
-    let value =
-        parse_strict_json(bytes).map_err(|_| IssuanceProtocolError::InvalidCredentialResponse)?;
-    let root = value
-        .as_object()
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
-    exact_keys(
-        root,
-        &["credentials"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    let credentials = root
-        .get("credentials")
-        .and_then(Value::as_array)
-        .filter(|values| values.len() == 1)
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
-    let item = credentials[0]
-        .as_object()
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
-    exact_keys(
-        item,
-        &["credential", "midnight"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    let signed = item
-        .get("credential")
-        .and_then(Value::as_str)
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)
-        .and_then(decode_payload)?;
-    let midnight = required_response_object(item, "midnight")?;
-    exact_keys(
-        midnight,
-        &[
-            "credentialFamily",
-            "credentialPrivateParts",
-            "credentialProof",
-            "encoding",
-            "expiresAt",
-            "hasExpiration",
-            "holderBinding",
-            "schemaId",
-            "schemaVersion",
-        ],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    if response_string(midnight, "credentialFamily")? != PORTAL_FAMILY
-        || response_string(midnight, "encoding")? != PORTAL_ENCODING
-        || response_string(midnight, "schemaId")? != PORTAL_SCHEMA_ID
-        || response_string(midnight, "schemaVersion")? != PORTAL_SCHEMA_VERSION
-        || midnight
-            .get("hasExpiration")
-            .and_then(Value::as_bool)
-            .is_none()
-        || response_string(midnight, "expiresAt")?.len() > 64
+    if bytes.is_empty() || bytes.len() > MAX_CREDENTIAL_BYTES {
+        return Err(IssuanceProtocolError::InvalidCredentialResponse);
+    }
+    validate_credential_response_depth(bytes)?;
+    let response: CredentialResponse<'_> = serde_json::from_slice(bytes)
+        .map_err(|_| IssuanceProtocolError::InvalidCredentialResponse)?;
+    let item = &response.credentials[0];
+    let midnight = &item.midnight;
+    let _ = midnight.has_expiration;
+    if response_text(midnight.credential_family)? != PORTAL_FAMILY
+        || response_text(midnight.encoding)? != PORTAL_ENCODING
+        || response_text(midnight.schema_id)? != PORTAL_SCHEMA_ID
+        || response_text(midnight.schema_version)? != PORTAL_SCHEMA_VERSION
+        || response_text(midnight.expires_at)?.len() > 64
     {
         return Err(IssuanceProtocolError::InvalidCredentialResponse);
     }
-    let proof = required_response_object(midnight, "credentialProof")?;
-    exact_keys(
-        proof,
-        &["encoding", "payload"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    if response_string(proof, "encoding")? != PORTAL_ENCODING {
+    if response_text(midnight.credential_proof.encoding)? != PORTAL_ENCODING {
         return Err(IssuanceProtocolError::InvalidCredentialResponse);
     }
-    let detached_proof = decode_payload(response_string(proof, "payload")?)?;
-    let holder = required_response_object(midnight, "holderBinding")?;
-    exact_keys(
-        holder,
-        &["challenge", "holderDidMethod", "method"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    if response_string(holder, "challenge")? != expected_nonce
-        || response_string(holder, "method")? != "explicit_did_method"
+    let signed = decode_payload(item.credential)?;
+    let detached_proof = decode_payload(response_text(midnight.credential_proof.payload)?)?;
+    let holder = &midnight.holder_binding;
+    if response_text(holder.challenge)? != expected_nonce
+        || response_text(holder.method)? != "explicit_did_method"
     {
         return Err(IssuanceProtocolError::InvalidCredentialResponse);
     }
-    let method = required_response_object(holder, "holderDidMethod")?;
-    exact_keys(
-        method,
-        &["did", "keyType", "methodId"],
-        IssuanceProtocolError::InvalidCredentialResponse,
-    )?;
-    if response_string(method, "did")? != expected_holder_did
-        || response_string(method, "methodId")? != expected_binding_method
-        || response_string(method, "keyType")? != "jubjub"
+    let method = &holder.holder_did_method;
+    if response_text(method.did)? != expected_holder_did
+        || response_text(method.method_id)? != expected_binding_method
+        || response_text(method.key_type)? != "jubjub"
     {
         return Err(IssuanceProtocolError::InvalidCredentialResponse);
     }
-    let private_value = midnight
-        .get("credentialPrivateParts")
-        .filter(|value| value.is_object())
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
-    let private_json = Zeroizing::new(
-        serde_json::to_vec(private_value)
-            .map_err(|_| IssuanceProtocolError::InvalidCredentialResponse)?,
-    );
+    let private_json = compact_private_json(midnight.credential_private_parts)?;
     let private_material = decoder
         .decode(&signed, private_json.as_slice())
         .map_err(|error| match error {
@@ -211,6 +462,48 @@ pub(super) fn parse_portal_credential_response(
     })
 }
 
+fn validate_credential_response_depth(bytes: &[u8]) -> Result<(), IssuanceProtocolError> {
+    validate_response_depth(bytes, IssuanceProtocolError::InvalidCredentialResponse)
+}
+
+fn validate_response_depth(
+    bytes: &[u8],
+    error: IssuanceProtocolError,
+) -> Result<(), IssuanceProtocolError> {
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut depth = 0_usize;
+    for byte in bytes.iter().copied() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => {
+                depth = depth.checked_add(1).ok_or(error)?;
+                if depth > super::super::MAX_JSON_DEPTH {
+                    return Err(error);
+                }
+            }
+            b'}' | b']' => {
+                depth = depth.checked_sub(1).ok_or(error)?;
+            }
+            _ => {}
+        }
+    }
+    if in_string || escaped || depth != 0 {
+        return Err(error);
+    }
+    Ok(())
+}
+
 pub(super) fn decode_payload(value: &str) -> Result<Vec<u8>, IssuanceProtocolError> {
     if value.is_empty() || value.len() > MAX_CREDENTIAL_BYTES * 2 {
         return Err(IssuanceProtocolError::InvalidCredentialResponse);
@@ -224,26 +517,57 @@ pub(super) fn decode_payload(value: &str) -> Result<Vec<u8>, IssuanceProtocolErr
     Ok(bytes)
 }
 
-pub(super) fn required_response_object<'a>(
-    object: &'a Map<String, Value>,
-    key: &str,
-) -> Result<&'a Map<String, Value>, IssuanceProtocolError> {
-    object
-        .get(key)
-        .and_then(Value::as_object)
-        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)
+fn compact_private_json(value: &RawValue) -> Result<Zeroizing<Vec<u8>>, IssuanceProtocolError> {
+    let source = value.get();
+    if !source.trim_ascii_start().starts_with('{') {
+        return Err(IssuanceProtocolError::InvalidCredentialResponse);
+    }
+    let mut compact = Zeroizing::new(Vec::with_capacity(source.len()));
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut depth = 0_usize;
+    for byte in source.bytes() {
+        if in_string {
+            compact.push(byte);
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+        } else if byte == b'"' {
+            in_string = true;
+            compact.push(byte);
+        } else if !byte.is_ascii_whitespace() {
+            match byte {
+                b'{' | b'[' => {
+                    depth = depth
+                        .checked_add(1)
+                        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
+                    if depth > super::super::MAX_JSON_DEPTH {
+                        return Err(IssuanceProtocolError::InvalidCredentialResponse);
+                    }
+                }
+                b'}' | b']' => {
+                    depth = depth
+                        .checked_sub(1)
+                        .ok_or(IssuanceProtocolError::InvalidCredentialResponse)?;
+                }
+                _ => {}
+            }
+            compact.push(byte);
+        }
+    }
+    if in_string || depth != 0 {
+        return Err(IssuanceProtocolError::InvalidCredentialResponse);
+    }
+    Ok(compact)
 }
 
-pub(super) fn response_string<'a>(
-    object: &'a Map<String, Value>,
-    key: &str,
-) -> Result<&'a str, IssuanceProtocolError> {
-    object
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| {
-            !value.is_empty() && value.len() <= 2_048 && !value.chars().any(char::is_control)
-        })
+fn response_text(value: &str) -> Result<&str, IssuanceProtocolError> {
+    (!value.is_empty() && value.len() <= 2_048 && !value.chars().any(char::is_control))
+        .then_some(value)
         .ok_or(IssuanceProtocolError::InvalidCredentialResponse)
 }
 

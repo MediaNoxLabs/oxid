@@ -1139,7 +1139,7 @@ test("repository wrappers force only the public PR-creation and managed-worktree
   assert.throws(() => normalizeDevLoopsArgs(["--help", "pr", "create"]), /unsupported leading/);
   assert.throws(() => normalizeDevLoopsArgs(["pr", "create", "--head", "topic"]), /--delivery-base is required/);
   assert.deepEqual(normalizeDevLoopsArgs(["pr", "create", "--head", "topic", "--delivery-base", "milestone-0.4.0"]), ["pr", "create", "--head", "topic", "--base", "milestone-0.4.0"]);
-  assert.deepEqual(normalizeDevLoopsArgs(["--silent", "pr", "create-draft", "--head", "topic", "--delivery-base=origin/milestone-0.5.0"]), ["--silent", "pr", "create-draft", "--head", "topic", "--base", "milestone-0.5.0"]);
+  assert.deepEqual(normalizeDevLoopsArgs(["--silent", "pr", "create-draft", "--head", "topic", "--delivery-base=origin/milestone-0.5.0"]), ["--silent", "pr", "create", "--head", "topic", "--base", "milestone-0.5.0"]);
   assert.deepEqual(normalizeDevLoopsArgs(["loop", "ensure-worktree", "--base", "origin/develop", "--delivery-base", "develop"]), ["loop", "ensure-worktree", "--base", "origin/develop"]);
   assert.deepEqual(normalizeDevLoopsArgs(["loop", "ensure-worktree", "--delivery-base=origin/milestone-0.5.0"]), ["loop", "ensure-worktree", "--base", "origin/milestone-0.5.0"]);
   assert.deepEqual(normalizeDevLoopsArgs(["gate", "size-budget", "--base", "origin/develop", "--delivery-base", "develop"]), ["gate", "size-budget", "--base", "origin/develop"]);

@@ -6,6 +6,95 @@ use serde_json::json;
 use super::support::execute_with_wallet;
 
 #[test]
+fn exposes_the_shared_dust_settlement_projection_without_secret_material() {
+    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let response = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"settlement","method":"wallet.dust.registration.settlement","params":{}}"#,
+    );
+    let settlement = &response[0]["result"]["dustRegistrationSettlement"];
+    assert_eq!(settlement["state"], "unavailable");
+    assert!(settlement["identity"].is_null());
+    assert!(settlement["registration"].is_null());
+    assert_eq!(settlement["preparationRevision"], 0);
+    assert_eq!(settlement["recoveryRevision"], 0);
+
+    let rejected = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"settlement-secret","method":"wallet.dust.registration.settlement","params":{"seedHex":"must-not-echo"}}"#,
+    );
+    assert_eq!(rejected[0]["error"]["code"], "invalid_params");
+    assert!(!rejected[0].to_string().contains("must-not-echo"));
+}
+
+#[test]
+fn drives_the_shared_dust_settlement_to_the_selected_realm_without_legacy_calls() {
+    let wallet = super::support::trusted_movement_wallet();
+    let created = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"settlement-create","method":"wallet.profile.create","params":{"displayName":"Settlement flow"}}"#,
+    );
+    let profile_id = created[0]["result"]["profile"]["id"]
+        .as_str()
+        .expect("profile id is returned");
+    let setup = execute_with_wallet(
+        &wallet,
+        &format!(
+            "{}\n{}\n{}\n{}",
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "settlement-select",
+                "method": "wallet.profile.select",
+                "params": { "profileId": profile_id }
+            }),
+            r#"{"protocol":"oxid.headless.v1","id":"settlement-init","method":"wallet.security.initialize","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"settlement-derive","method":"wallet.account.derive","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"settlement-sync","method":"wallet.connect","params":{}}"#,
+        ),
+    );
+    assert!(setup.iter().all(|response| response["ok"] == true));
+
+    let refreshed = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"settlement-refresh","method":"wallet.dust.registration.settlement.refresh","params":{}}"#,
+    );
+    assert_eq!(
+        refreshed[0]["result"]["dustRegistrationSettlement"]["state"],
+        "not_eligible"
+    );
+    assert_eq!(
+        refreshed[0]["result"]["dustRegistrationSettlement"]["identity"]["profileId"],
+        profile_id
+    );
+    assert!(refreshed[0]["result"]["authorizationReview"].is_null());
+
+    let authorized = execute_with_wallet(
+        &wallet,
+        &json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "settlement-authorize",
+            "method": "wallet.dust.registration.settlement.authorize",
+            "params": {
+                "confirmation": {
+                    "title": "Authorize DUST registration",
+                    "summary": "Register this wallet's eligible NIGHT with its protected DUST key",
+                    "confirmed": true
+                }
+            }
+        })
+        .to_string(),
+    );
+    assert_eq!(authorized[0]["error"]["code"], "operation_not_admitted");
+
+    let rejected = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"settlement-retry-secret","method":"wallet.dust.registration.settlement.retry","params":{"seedHex":"must-not-echo"}}"#,
+    );
+    assert_eq!(rejected[0]["error"]["code"], "invalid_params");
+    assert!(!rejected[0].to_string().contains("must-not-echo"));
+}
+
+#[test]
 fn selected_realm_sync_projects_public_dust_and_shielded_outcomes_together() {
     let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
     let created = execute_with_wallet(
@@ -44,19 +133,26 @@ fn selected_realm_sync_projects_public_dust_and_shielded_outcomes_together() {
 
     for response in &responses {
         assert_eq!(response["ok"], true);
+        assert!(response["result"]["realmSync"]["identity"]["profileId"].is_string());
+        assert!(response["result"]["realmSync"]["identity"]["networkId"].is_string());
+        assert!(response["result"]["realmSync"]["revision"].is_u64());
+        assert!(response["result"]["realmSync"]["fresh"].is_boolean());
+        assert!(response["result"]["realmSync"]["consistent"].is_boolean());
+        assert!(response["result"]["realmSync"]["actionable"].is_string());
+        assert!(response["result"]["realmSync"]["observation"]["state"].is_string());
         assert_eq!(response["result"]["realmSync"]["account"]["state"], "ready");
         assert!(response["result"]["realmSync"]["account"]["value"]["networkId"].is_string());
         assert!(response["result"]["realmSync"]["dust"]["state"].is_string());
         assert!(response["result"]["realmSync"]["shielded"]["state"].is_string());
     }
-    assert_eq!(
-        responses[2]["result"]["realmSync"]["dust"]["value"]["state"],
-        "cancelled"
-    );
-    assert_eq!(
-        responses[2]["result"]["realmSync"]["shielded"]["value"]["state"],
-        "cancelled"
-    );
+    for family in ["dust", "shielded"] {
+        let projection = &responses[2]["result"]["realmSync"][family];
+        match projection["state"].as_str() {
+            Some("busy") => assert!(projection.get("value").is_none()),
+            Some("ready") => assert_eq!(projection["value"]["state"], "cancelled"),
+            state => panic!("unexpected {family} cancellation projection: {state:?}"),
+        }
+    }
 }
 
 #[test]
@@ -155,7 +251,7 @@ fn exposes_initial_resumed_current_and_cancelled_dust_flows() {
 
 #[test]
 fn registers_protected_dust_through_explicit_secret_free_headless_stages() {
-    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let wallet = super::support::trusted_movement_wallet();
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"register-create","method":"wallet.profile.create","params":{"displayName":"Registration flow"}}"#,
@@ -329,7 +425,7 @@ fn registers_protected_dust_through_explicit_secret_free_headless_stages() {
 
 #[test]
 fn exposes_exact_resumable_shielded_flow_without_secret_material() {
-    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let wallet = super::support::trusted_movement_wallet();
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"shielded-create","method":"wallet.profile.create","params":{"displayName":"Shielded flow"}}"#,

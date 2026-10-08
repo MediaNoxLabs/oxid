@@ -4,7 +4,8 @@ use std::{error::Error, fmt, sync::Arc};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_wallet_domain::{
-    WalletProfileId, WalletShieldedSyncFailure, WalletShieldedSyncSnapshot, WalletShieldedSyncState,
+    ChainNetworkId, WalletProfileId, WalletShieldedSyncFailure, WalletShieldedSyncSnapshot,
+    WalletShieldedSyncState,
 };
 
 /// Stable adapter failures for starting, reading, or cancelling shielded sync.
@@ -53,6 +54,33 @@ pub trait WalletShieldedSyncPort: Send + Sync {
         &self,
         profile_id: &WalletProfileId,
     ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError>;
+
+    fn shielded_status_in_realm(
+        &self,
+        _profile_id: &WalletProfileId,
+        _network_id: &ChainNetworkId,
+    ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        Err(WalletShieldedSyncPortError::UnsupportedNetwork)
+    }
+
+    fn start_shielded_sync_in_realm(
+        &self,
+        _profile_id: &WalletProfileId,
+        _network_id: &ChainNetworkId,
+    ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        Err(WalletShieldedSyncPortError::UnsupportedNetwork)
+    }
+
+    /// Cancels an adapter-owned session in an explicitly retired realm. Ports
+    /// that cannot address a realm must fail closed instead of cancelling the
+    /// newly selected one.
+    fn cancel_shielded_sync_in_realm(
+        &self,
+        _profile_id: &WalletProfileId,
+        _network_id: &ChainNetworkId,
+    ) -> Result<WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        Err(WalletShieldedSyncPortError::UnsupportedNetwork)
+    }
 }
 
 /// Profile-scoped query or command for shielded synchronization.

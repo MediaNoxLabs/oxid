@@ -14,8 +14,7 @@ final class IdentityIngressTests: XCTestCase {
         if createWallet.waitForExistence(timeout: 5) {
             createWallet.tap()
             application.buttons["Create and continue"].tap()
-            XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 10))
-            application.buttons["Skip for now"].tap()
+            WalletOnboardingFixture.completeDevelopmentRecoveryCeremony(in: application)
         }
         XCTAssertTrue(application.buttons["Scan"].waitForExistence(timeout: 15))
     }

@@ -75,6 +75,10 @@ test("tracked Pi policy uses balanced Codex defaults and exact package pins", as
       extensions: [],
     },
     "npm:@input-output-hk/agent-review-pi@0.6.0",
+    {
+      source: "npm:@grafana/agento11y-pi@0.25.0",
+      extensions: [],
+    },
   ]);
   assert.equal(settings.subagents.defaultModel, `${settings.defaultProvider}/${settings.defaultModel}`);
   assert.equal(settings.subagents.defaultThinking, settings.defaultThinkingLevel);
@@ -382,7 +386,7 @@ test("the handoff wrapper makes prototype local and production-ready the default
     requiredReads: ["AGENT.md"],
     stopRules: ["merge"],
     maxCopilotRounds: 5,
-    requireDraftFirst: true,
+    requireDraftFirst: false,
     gateConfig: { requireCi: true },
     acceptance: { criteria: [], evidence: [], maxFinalizationTurns: 6 },
     control: { needsAttentionAfterMs: 300000, activeNoticeAfterMs: 300000 },
@@ -433,6 +437,7 @@ test("the handoff wrapper makes prototype local and production-ready the default
     branch: "develop", remoteRef: "origin/develop", kind: "factory",
   });
   assert.equal(production.deliveryProfile, "production-ready");
+  assert.equal(production.requireDraftFirst, false);
   assert.equal(contract.profiles["production-ready"].maximumReviewers, 1);
   assert.deepEqual(contract.profiles["production-ready"].qualityBudget, {
     targetPercent: 70,
@@ -451,7 +456,7 @@ test("the handoff wrapper makes prototype local and production-ready the default
     staleAfterDays: 30,
     trustedActors: ["yshyn-iohk"],
   });
-  assert.equal(production.nextAction, base.nextAction);
+  assert.equal(production.nextAction, "create a review-ready PR");
   assert.deepEqual(production.supervision, contract.profiles["production-ready"].supervision);
   assert.equal(production.executionProfile, "regular-production-ready");
   assert.equal(production.fallbackReason, "missing-pre-mutation-assessment");

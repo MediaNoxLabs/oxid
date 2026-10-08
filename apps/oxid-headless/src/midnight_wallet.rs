@@ -8,12 +8,13 @@ use oxid_wallet_application::{
     CancelWalletDustRegistrationSubmissionCommand, GetWalletDustRegistrationCommand,
     GetWalletDustRegistrationStatusCommand, PrepareShieldedWalletTransferCommand,
     PrepareWalletDustRegistrationCommand, PrepareWalletTransferCommand,
-    ReconcileWalletDustRegistrationSubmissionCommand, SelectedWalletRealmSyncCommand,
-    SelectedWalletRealmSyncError, SelectedWalletRealmSyncView, SensitiveOperationConfirmation,
+    ReconcileWalletDustRegistrationSubmissionCommand, SelectedWalletRealmProjection,
+    SelectedWalletRealmSyncCommand, SelectedWalletRealmSyncError, SensitiveOperationConfirmation,
     SubmitWalletDustRegistrationCommand, SubmitWalletTransferCommand, WalletAccountQuery,
     WalletAccountView, WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationSubmissionStatusView, WalletDustSyncCommand, WalletDustSyncError,
-    WalletDustSyncView, WalletShieldedSyncCommand, WalletShieldedSyncError, WalletShieldedSyncView,
+    WalletDustSyncView, WalletRealmLifecycleInput, WalletShieldedSyncCommand,
+    WalletShieldedSyncError, WalletShieldedSyncPortError, WalletShieldedSyncView,
     WalletTransactionError, WalletTransactionPortError, WalletTransferDraftQuery,
     WalletTransferSubmissionQuery, WalletTransferSubmissionStatusView, validate_confirmation,
 };
@@ -27,12 +28,13 @@ use crate::{
         transaction_port_error,
     },
     parameters::{
-        AuthorizeDustRegistrationParams, AuthorizeTransferParams, PrepareShieldedTransferParams,
-        PrepareTransferParams, SubmitTransferParams, TransactionDraftParams,
-        dust_registration_draft_params,
+        AuthorizeDustRegistrationParams, AuthorizeDustSettlementParams, AuthorizeTransferParams,
+        ImportReceiveRequestParams, PrepareShieldedTransferParams, PrepareTransferParams,
+        SubmitTransferParams, TransactionDraftParams, dust_registration_draft_params,
     },
     projections::{
-        account_value, address_value, balance_value, dust_registration_preview_value,
+        account_value, address_value, balance_value, dust_registration_asset_value,
+        dust_registration_preview_value, dust_registration_settlement_value,
         dust_registration_status_value, dust_registration_submission_value, dust_sync_value,
         selected_realm_sync_value, shielded_sync_value, sync_value, transaction_value,
         transfer_preview_value, transfer_submission_status_value, transfer_submission_value,
@@ -42,7 +44,7 @@ use crate::{
 
 fn selected_realm_sync_dispatch(
     id: Option<String>,
-    result: Result<SelectedWalletRealmSyncView, SelectedWalletRealmSyncError>,
+    result: Result<SelectedWalletRealmProjection, SelectedWalletRealmSyncError>,
 ) -> Dispatch {
     match result {
         Ok(status) => Dispatch::continue_with(Response::success(
@@ -58,6 +60,110 @@ fn selected_realm_sync_dispatch(
 }
 
 impl HeadlessWallet {
+    pub(super) fn dust_registration_settlement(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.dust.registration.settlement");
+        }
+        match self.application.wallet_dust_settlement().projection() {
+            Ok(projection) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({
+                    "dustRegistrationSettlement":
+                        dust_registration_settlement_value(&projection)
+                }),
+            )),
+            Err(_) => Dispatch::continue_with(Response::error(
+                request.id,
+                "state_unavailable",
+                "DUST registration settlement state is unavailable",
+            )),
+        }
+    }
+
+    pub(super) fn refresh_dust_registration_settlement(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.dust.registration.settlement.refresh");
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let capability = self.application.wallet_dust_settlement();
+        match futures::executor::block_on(capability.refresh(profile_id)) {
+            Ok(projection) => {
+                let review = capability.authorization_review().ok().map(|review| {
+                    json!({
+                        "networkId": review.network_id,
+                        "registeredNight": dust_registration_asset_value(&review.registered_night),
+                        "inputCount": review.input_count,
+                        "maximumFeeAllowance": dust_registration_asset_value(&review.maximum_fee_allowance),
+                    })
+                });
+                Dispatch::continue_with(Response::success(
+                    request.id,
+                    json!({
+                        "dustRegistrationSettlement": dust_registration_settlement_value(&projection),
+                        "authorizationReview": review,
+                    }),
+                ))
+            }
+            Err(_) => Dispatch::continue_with(Response::error(
+                request.id,
+                "state_unavailable",
+                "DUST registration settlement could not be refreshed",
+            )),
+        }
+    }
+
+    pub(super) fn authorize_dust_registration_settlement(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<AuthorizeDustSettlementParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.dust.registration.settlement.authorize requires only confirmation",
+                ));
+            }
+        };
+        match futures::executor::block_on(
+            self.application
+                .wallet_dust_settlement()
+                .authorize(params.confirmation.into()),
+        ) {
+            Ok(projection) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({
+                    "dustRegistrationSettlement": dust_registration_settlement_value(&projection)
+                }),
+            )),
+            Err(_) => Dispatch::continue_with(Response::error(
+                request.id,
+                "operation_not_admitted",
+                "DUST registration authorization is not currently admitted",
+            )),
+        }
+    }
+
+    pub(super) fn retry_dust_registration_settlement(&self, request: Request) -> Dispatch {
+        if !params_are_empty(&request.params) {
+            return invalid_empty_params(request.id, "wallet.dust.registration.settlement.retry");
+        }
+        match futures::executor::block_on(self.application.wallet_dust_settlement().retry()) {
+            Ok(projection) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({
+                    "dustRegistrationSettlement": dust_registration_settlement_value(&projection)
+                }),
+            )),
+            Err(_) => Dispatch::continue_with(Response::error(
+                request.id,
+                "operation_not_admitted",
+                "DUST registration retry is not currently admitted",
+            )),
+        }
+    }
+
     pub(super) fn sync_account(&self, request: Request) -> Dispatch {
         let method = match request.method.as_str() {
             "wallet.connect" => "wallet.connect",
@@ -103,12 +209,41 @@ impl HeadlessWallet {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
         };
-        let result = futures::executor::block_on(
-            self.application
-                .sync_selected_wallet_realm()
-                .execute(SelectedWalletRealmSyncCommand { profile_id }),
-        );
-        selected_realm_sync_dispatch(request.id, result)
+        let lifecycle = self.application.reconcile_wallet_realm_lifecycle();
+        let Ok(status) = lifecycle.status() else {
+            return selected_realm_sync_dispatch(
+                request.id,
+                Err(SelectedWalletRealmSyncError::Unavailable),
+            );
+        };
+        let result = self.execute_realm_lifecycle(WalletRealmLifecycleInput::ActionPreflight {
+            now_millis: self.monotonic_millis(),
+            facets: status.facets,
+        });
+        let projection = match result {
+            Ok(result) => {
+                if matches!(
+                    result.decision,
+                    oxid_wallet_application::WalletRealmLifecycleDecision::Retained(_)
+                ) && self.await_realm_lifecycle_idle().is_err()
+                {
+                    return selected_realm_sync_dispatch(
+                        request.id,
+                        Err(SelectedWalletRealmSyncError::Unavailable),
+                    );
+                }
+                result.projection.map_or_else(
+                    || {
+                        self.application
+                            .get_selected_wallet_realm_sync()
+                            .execute(SelectedWalletRealmSyncCommand { profile_id })
+                    },
+                    Ok,
+                )
+            }
+            Err(_) => Err(SelectedWalletRealmSyncError::Unavailable),
+        };
+        selected_realm_sync_dispatch(request.id, projection)
     }
 
     pub(super) fn cancel_selected_realm_sync(&self, request: Request) -> Dispatch {
@@ -131,7 +266,7 @@ impl HeadlessWallet {
             &ApplicationServices,
             SelectedWalletRealmSyncCommand,
         )
-            -> Result<SelectedWalletRealmSyncView, SelectedWalletRealmSyncError>,
+            -> Result<SelectedWalletRealmProjection, SelectedWalletRealmSyncError>,
     ) -> Dispatch {
         if !params_are_empty(&request.params) {
             return invalid_empty_params(request.id, method);
@@ -204,11 +339,11 @@ impl HeadlessWallet {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
         };
-        match self
-            .application
-            .prepare_wallet_dust_registration()
-            .execute(PrepareWalletDustRegistrationCommand { profile_id })
-        {
+        match futures::executor::block_on(
+            self.application
+                .prepare_wallet_dust_registration()
+                .execute(PrepareWalletDustRegistrationCommand { profile_id }),
+        ) {
             Ok(preview) => Dispatch::continue_with(Response::success(
                 request.id,
                 json!({ "registration": dust_registration_preview_value(&preview) }),
@@ -233,15 +368,16 @@ impl HeadlessWallet {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
         };
-        match self
-            .application
-            .authorize_wallet_dust_registration()
-            .execute(AuthorizeWalletDustRegistrationCommand {
-                profile_id,
-                draft_id: params.draft_id,
-                authorization_challenge: params.authorization_challenge,
-                confirmation: params.confirmation.into(),
-            }) {
+        match futures::executor::block_on(
+            self.application
+                .authorize_wallet_dust_registration()
+                .execute(AuthorizeWalletDustRegistrationCommand {
+                    profile_id,
+                    draft_id: params.draft_id,
+                    authorization_challenge: params.authorization_challenge,
+                    confirmation: params.confirmation.into(),
+                }),
+        ) {
             Ok(preview) => Dispatch::continue_with(Response::success(
                 request.id,
                 json!({ "registration": dust_registration_preview_value(&preview) }),
@@ -297,11 +433,13 @@ impl HeadlessWallet {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
         };
-        let preview = match self.application.get_wallet_dust_registration().execute(
-            GetWalletDustRegistrationCommand {
-                profile_id: profile_id.clone(),
-                draft_id: params.draft_id.clone(),
-            },
+        let preview = match futures::executor::block_on(
+            self.application.get_wallet_dust_registration().execute(
+                GetWalletDustRegistrationCommand {
+                    profile_id: profile_id.clone(),
+                    draft_id: params.draft_id.clone(),
+                },
+            ),
         ) {
             Ok(preview) => preview,
             Err(error) => {
@@ -354,7 +492,7 @@ impl HeadlessWallet {
             draft_id: params.draft_id,
         };
         for _ in 0..100 {
-            match service.execute(command.clone()) {
+            match futures::executor::block_on(service.execute(command.clone())) {
                 Ok(status) if status.state != "not_started" => {
                     return Dispatch::continue_with(Response::success(
                         request.id,
@@ -381,12 +519,12 @@ impl HeadlessWallet {
             request,
             "wallet.dust.registration.draft",
             |application, profile_id, draft_id| {
-                application.get_wallet_dust_registration().execute(
+                futures::executor::block_on(application.get_wallet_dust_registration().execute(
                     GetWalletDustRegistrationCommand {
                         profile_id,
                         draft_id,
                     },
-                )
+                ))
             },
             |preview| json!({ "registration": dust_registration_preview_value(&preview) }),
         )
@@ -397,9 +535,11 @@ impl HeadlessWallet {
             request,
             "wallet.dust.registration.status",
             |application, command| {
-                application
-                    .get_wallet_dust_registration_status()
-                    .execute(command)
+                futures::executor::block_on(
+                    application
+                        .get_wallet_dust_registration_status()
+                        .execute(command),
+                )
             },
         )
     }
@@ -417,13 +557,14 @@ impl HeadlessWallet {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
         };
-        match self
-            .application
-            .cancel_wallet_dust_registration_submission()
-            .execute(CancelWalletDustRegistrationSubmissionCommand {
-                profile_id,
-                draft_id: params.draft_id,
-            }) {
+        match futures::executor::block_on(
+            self.application
+                .cancel_wallet_dust_registration_submission()
+                .execute(CancelWalletDustRegistrationSubmissionCommand {
+                    profile_id,
+                    draft_id: params.draft_id,
+                }),
+        ) {
             Ok(status) => Dispatch::continue_with(Response::success(
                 request.id,
                 json!({ "registrationStatus": dust_registration_status_value(&status) }),
@@ -539,7 +680,24 @@ impl HeadlessWallet {
         self.shielded_sync_operation(
             request,
             "wallet.shielded.sync.start",
-            |application, command| application.start_wallet_shielded_sync().execute(command),
+            |application, command| {
+                match application
+                    .start_wallet_shielded_sync()
+                    .execute(command.clone())
+                {
+                    // Lifecycle-driven reconciliation may have admitted the
+                    // same adapter worker immediately before this explicit
+                    // recovery command. Return its public status instead of
+                    // turning a harmless single-flight conflict into a
+                    // protocol failure.
+                    Err(WalletShieldedSyncError::Port(WalletShieldedSyncPortError::Conflict)) => {
+                        application
+                            .get_wallet_shielded_sync_status()
+                            .execute(command)
+                    }
+                    result => result,
+                }
+            },
         )
     }
 
@@ -580,7 +738,7 @@ impl HeadlessWallet {
         self.account_projection(request, "wallet.address.list", |account| {
             json!({
                 "networkId": account.network_id,
-                "source": account.source,
+                "source": account.source.as_str(),
                 "addresses": account.addresses.iter().map(address_value).collect::<Vec<_>>()
             })
         })
@@ -590,7 +748,7 @@ impl HeadlessWallet {
         self.account_projection(request, "wallet.address.unshielded", |account| {
             json!({
                 "networkId": account.network_id,
-                "source": account.source,
+                "source": account.source.as_str(),
                 "address": account.addresses.iter().find(|address| address.kind == "unshielded").map(address_value)
             })
         })
@@ -600,7 +758,7 @@ impl HeadlessWallet {
         self.account_projection(request, "wallet.address.shielded", |account| {
             json!({
                 "networkId": account.network_id,
-                "source": account.source,
+                "source": account.source.as_str(),
                 "address": account.addresses.iter().find(|address| address.kind == "shielded").map(address_value)
             })
         })
@@ -610,7 +768,7 @@ impl HeadlessWallet {
         self.account_projection(request, "wallet.balance.snapshot", |account| {
             json!({
                 "networkId": account.network_id,
-                "source": account.source,
+                "source": account.source.as_str(),
                 "balances": account.balances.iter().map(balance_value).collect::<Vec<_>>(),
                 "sync": sync_value(account)
             })
@@ -621,10 +779,66 @@ impl HeadlessWallet {
         self.account_projection(request, "wallet.transaction.history", |account| {
             json!({
                 "networkId": account.network_id,
-                "source": account.source,
+                "source": account.source.as_str(),
                 "transactions": account.transactions.iter().map(transaction_value).collect::<Vec<_>>()
             })
         })
+    }
+
+    pub(super) fn import_receive_request(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<ImportReceiveRequestParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "wallet.receive_request.import requires only a string receiveRequest",
+                ));
+            }
+        };
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let account = match self
+            .application
+            .get_wallet_account()
+            .execute(WalletAccountQuery { profile_id })
+        {
+            Ok(account) => account,
+            Err(error) => return Dispatch::continue_with(account_error(request.id, error)),
+        };
+        let format = if params.receive_request.starts_with("midnight-receive:") {
+            "versioned"
+        } else {
+            "raw"
+        };
+        match oxid_wallet_application::import_midnight_night_receive_request(
+            &account.network_id,
+            &params.receive_request,
+        ) {
+            Ok(address) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({"recipient": {
+                    "address": address.value(),
+                    "format": format,
+                    "networkId": account.network_id,
+                    "asset": "NIGHT"
+                }}),
+            )),
+            Err(error) => {
+                let code = match error {
+                    oxid_wallet_application::MidnightReceiveRequestError::UnsupportedNetwork => {
+                        "unsupported_network"
+                    }
+                    oxid_wallet_application::MidnightReceiveRequestError::UnsupportedAsset => {
+                        "unsupported_asset"
+                    }
+                    _ => "invalid_recipient",
+                };
+                Dispatch::continue_with(Response::error(request.id, code, error.to_string()))
+            }
+        }
     }
 
     pub(super) fn prepare_unshielded(&self, request: Request) -> Dispatch {

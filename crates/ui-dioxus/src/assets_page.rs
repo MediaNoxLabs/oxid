@@ -6,6 +6,9 @@ use super::*;
 pub(super) fn AssetsPage(
     active_profile: WalletProfileView,
     secret_mode: SecretModeController,
+    send_entry: bool,
+    pending_payment_request: Signal<Option<PendingPaymentRequest>>,
+    on_realm_changed: EventHandler<()>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     #[cfg(feature = "preprod-observation")]
@@ -29,25 +32,25 @@ pub(super) fn AssetsPage(
 
     match state.read().clone() {
         AccountPageState::Loading => rsx! {
-            section { class: "wallet-hero",
-                p { class: "eyebrow", "Wallet overview" }
-                div { class: "wallet-hero__number-row",
-                    h1 { "…" }
+            section { class: "wallet-hero", "data-ui-primitive": "Card Skeleton",
+                p { class: "eyebrow", "Assets" }
+                div { class: "wallet-hero__number-row", aria_busy: "true",
+                    strong { class: "wallet-balance wallet-skeleton", "…" }
                     span { "NIGHT" }
                 }
                 p { class: "wallet-hero__hint", "Loading the selected Midnight account boundary…" }
             }
         },
         AccountPageState::Failed(error) => rsx! {
-            section { class: "wallet-hero",
-                p { class: "eyebrow", "Wallet overview" }
+            section { class: "wallet-hero", "data-ui-primitive": "Card ErrorState",
+                p { class: "eyebrow", "Assets" }
                 div { class: "wallet-hero__number-row",
-                    h1 { "—" }
+                    strong { class: "wallet-balance", "—" }
                     span { "NIGHT" }
                 }
                 p { class: "wallet-hero__hint", "Account state could not be loaded safely." }
             }
-            article { class: "empty-state surface-card", role: "alert",
+            article { class: "empty-state surface-card", role: "alert", "data-ui-primitive": "ErrorState",
                 h2 { "Midnight account unavailable" }
                 p { "{error}" }
                 button {
@@ -77,6 +80,7 @@ pub(super) fn AssetsPage(
             networks,
             account,
             security,
+            custody_recovery_required,
             busy,
         } => {
             let night = balance_for(&account, "NIGHT")
@@ -85,13 +89,26 @@ pub(super) fn AssetsPage(
             let dust = balance_for(&account, "DUST")
                 .map(|balance| ui::format_atomic_units(&balance.atomic_units, balance.decimals))
                 .unwrap_or_else(|| "—".to_owned());
-            let unavailable = account.source == "unavailable";
+            let unavailable = account.source == WalletAccountSource::Unavailable;
             let is_busy = busy.is_some();
             let account_hint = account_hint(&account, busy);
-            let source_label = ui::account_source(&account.source);
+            let source_label = ui::account_source(account.source);
             let protected_account = has_protected_account(&account);
             let protection_available = security.is_available();
             let protection_unlocked = security.state_name() == "Unlocked";
+            #[cfg(feature = "ui-profile-dev")]
+            let lifecycle_label = services
+                .reconcile_wallet_realm_lifecycle()
+                .status()
+                .ok()
+                .map(|status| {
+                    format!(
+                        "Wallet lifecycle generation {}",
+                        status.lifecycle_generation
+                    )
+                });
+            #[cfg(not(feature = "ui-profile-dev"))]
+            let lifecycle_label = None::<String>;
             let selected_network_id = networks.selected_network_id.clone();
             let select_services = services.clone();
             let select_profile_id = active_profile.id.clone();
@@ -103,19 +120,27 @@ pub(super) fn AssetsPage(
             let mut activate_state = state;
 
             rsx! {
-                section { class: "wallet-hero",
+                section { class: "wallet-hero", "data-ui-primitive": "Card StatusPill",
                     div { class: "wallet-hero__heading-row",
-                        p { class: "eyebrow", "Wallet overview" }
-                        span { class: if account.source == "simulated" { "status-pill warning" } else { "status-pill" },
+                        p { class: "eyebrow", "Assets" }
+                        span { class: if account.source == WalletAccountSource::Simulated { "status-pill warning" } else { "status-pill" },
                             "{source_label}"
                         }
                     }
                     div { class: "wallet-hero__number-row",
-                        h1 { class: "privacy-value", "{night}" }
+                        strong {
+                            class: "wallet-balance privacy-value",
+                            aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                            "{night}"
+                        }
                         span { "NIGHT" }
                     }
                     div { class: "dust-pill",
-                        strong { class: "privacy-value", "{dust}" }
+                        strong {
+                            class: "privacy-value",
+                            aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                            "{dust}"
+                        }
                         span { "DUST" }
                     }
                     p { class: "wallet-hero__hint", "{account_hint}" }
@@ -127,15 +152,42 @@ pub(super) fn AssetsPage(
                         strong { "{active_profile.display_name} · {account.network_name}" }
                         p {
                             if let Some(height) = account.sync.chain_tip_height {
-                                "{ui::sync_state(&account.sync.state)} · block {height} · {source_label} source"
+                                "{ui::account_sync_state(account.sync.state)} · block {height} · {source_label} source"
                             } else {
-                                "{ui::sync_state(&account.sync.state)} · {source_label} source"
+                                "{ui::account_sync_state(account.sync.state)} · {source_label} source"
                             }
+                        }
+                        if let Some(lifecycle_label) = lifecycle_label.as_deref() {
+                            small { class: "dev-lifecycle-marker", "{lifecycle_label}" }
                         }
                     }
                 }
 
-                label { class: "network-field",
+                if send_entry {
+                    if wallet_write_actions_available(observation_only) && protected_account && protection_unlocked && account.sync.state == WalletSyncState::Synced {
+                        if let (Some(unshielded), Some(shielded)) = (
+                            account.addresses.iter().find(|address| address.kind == "unshielded"),
+                            account.addresses.iter().find(|address| address.kind == "shielded"),
+                        ) {
+                            SendTransferPanel {
+                                profile_id: active_profile.id.clone(),
+                                active_network_id: account.network_id.clone(),
+                                unshielded_receive_address: unshielded.value.clone(),
+                                shielded_receive_address: shielded.value.clone(),
+                                night_balance: balance_for(&account, "NIGHT").cloned(),
+                                pending_payment_request,
+                            }
+                        }
+                    } else {
+                        article { class: "empty-state surface-card", role: "status",
+                            p { class: "card-eyebrow", "Send NIGHT" }
+                            h2 { "Send is not ready yet" }
+                            p { "This wallet needs an unlocked, synchronized protected account before a recipient can be entered. No transfer draft has been created." }
+                        }
+                    }
+                }
+
+                label { class: "network-field", "data-ui-primitive": "SegmentedControl",
                     span { "Midnight network" }
                     select {
                         value: "{selected_network_id}",
@@ -167,8 +219,10 @@ pub(super) fn AssetsPage(
                                             networks,
                                             account: Box::new(account),
                                             security,
+                                            custody_recovery_required: false,
                                             busy: None,
                                         });
+                                        on_realm_changed.call(());
                                     }
                                     Ok(Err(error)) => select_state
                                         .set(AccountPageState::Failed(error.to_string())),
@@ -204,6 +258,7 @@ pub(super) fn AssetsPage(
                     protection_available,
                     security.state_name(),
                     protected_account,
+                    custody_recovery_required,
                 ) {
                     article { class: "surface-card development-card",
                         p { class: "card-eyebrow", if observation_only { "PreProd recovery" } else { "Standalone development" } }
@@ -224,7 +279,7 @@ pub(super) fn AssetsPage(
                             if observation_only {
                                 "Native custody already holds the recovered root. Authorize account 0/address 0 derivation without entering the root again."
                             } else {
-                                "This opt-in simulator/emulator mode uses process-local development custody. It is not durable production key protection."
+                                "This opt-in simulator/emulator mode uses development-only custody. It is not production key protection."
                             }
                         }
                         button {
@@ -237,6 +292,7 @@ pub(super) fn AssetsPage(
                                     networks: activate_networks.clone(),
                                     account: activate_account.clone(),
                                     security,
+                                    custody_recovery_required,
                                     busy: Some(account_activation_operation(security)),
                                 });
                                 let services = activate_services.clone();
@@ -263,6 +319,7 @@ pub(super) fn AssetsPage(
                                                 networks: networks.clone(),
                                                 account: account.clone(),
                                                 security: updated_security,
+                                                custody_recovery_required: false,
                                                 busy: Some(AccountOperation::Syncing),
                                             });
                                             match run_ui_future(async move {
@@ -274,6 +331,7 @@ pub(super) fn AssetsPage(
                                                     networks,
                                                     account: Box::new(account),
                                                     security: updated_security,
+                                                    custody_recovery_required: false,
                                                     busy: None,
                                                 }),
                                                 Ok(Err(error)) => activate_state.set(AccountPageState::Failed(error.to_string())),
@@ -297,6 +355,7 @@ pub(super) fn AssetsPage(
 
                 AccountSyncCard {
                     profile_id: active_profile.id.clone(),
+                    secret_mode,
                     can_sync: protection_unlocked,
                     account_unavailable: unavailable,
                     on_account_updated: move |updated_account| {
@@ -304,26 +363,24 @@ pub(super) fn AssetsPage(
                             networks: networks.clone(),
                             account: Box::new(updated_account),
                             security,
+                            custody_recovery_required,
                             busy: None,
                         });
                     },
                 }
 
-                if observation_only {
+                if custody_recovery_required {
+                    article { class: "surface-card account-sync-card", role: "alert",
+                        p { class: "card-eyebrow", "Wallet recovery" }
+                        h2 { "Restore this wallet to continue" }
+                        p { "The saved profile still refers to a protected Midnight account, but this app process cannot access its custody root. Restore the original recovery phrase or complete backup before synchronizing, registering DUST, or sending funds." }
+                        p { class: "consent-copy", "Do not initialize a replacement root for this funded profile." }
+                    }
+                } else if observation_only {
                     article { class: "surface-card account-sync-card", role: "status",
                         p { class: "card-eyebrow", "PreProd observation" }
                         h2 { "Balances only" }
                         p { "This recovery profile exposes synchronization and receive addresses only. Sending, DUST registration, proving, and transaction submission are disabled for this slice." }
-                    }
-                } else {
-                    DustRegistrationPanel {
-                        profile_id: active_profile.id.clone(),
-                        availability: dust_registration_availability(
-                            protection_unlocked,
-                            protected_account,
-                            account.sync.state == "synced",
-                            unavailable,
-                        ),
                     }
                 }
 
@@ -351,22 +408,85 @@ pub(super) fn AssetsPage(
                     SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
                 }
 
-                if wallet_write_actions_available(observation_only) && protected_account && protection_unlocked && account.sync.state == "synced" {
+                if !send_entry && wallet_write_actions_available(observation_only) && protected_account && protection_unlocked && account.sync.state == WalletSyncState::Synced {
                     if let (Some(unshielded), Some(shielded)) = (
                         account.addresses.iter().find(|address| address.kind == "unshielded"),
                         account.addresses.iter().find(|address| address.kind == "shielded"),
                     ) {
                         SendTransferPanel {
                             profile_id: active_profile.id.clone(),
+                            active_network_id: account.network_id.clone(),
                             unshielded_receive_address: unshielded.value.clone(),
                             shielded_receive_address: shielded.value.clone(),
                             night_balance: balance_for(&account, "NIGHT").cloned(),
+                            pending_payment_request,
                         }
                     }
                 }
             }
         }
     }
+}
+
+pub(super) async fn activate_protected_account(
+    services: WalletUiServices,
+    profile_id: String,
+    current: WalletSecurityStatusView,
+) -> Result<WalletSecurityStatusView, String> {
+    match run_ui_blocking(move || {
+        let command = || WalletProfileSecurityCommand {
+            profile_id: profile_id.clone(),
+        };
+        let security = match current.state_name() {
+            "Uninitialized" => services
+                .initialize_wallet_security()
+                .execute(command())
+                .map_err(|error| error.to_string())?,
+            "Locked" => services
+                .unlock_wallet()
+                .execute(command())
+                .map_err(|error| error.to_string())?,
+            "Unlocked" => current,
+            _ => return Err("wallet protection is unavailable".to_owned()),
+        };
+        services
+            .derive_wallet_account()
+            .execute(DeriveWalletAccountCommand {
+                profile_id,
+                account_index: 0,
+                address_index: 0,
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(security)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn account_activation_operation(status: WalletSecurityStatusView) -> AccountOperation {
+    match status.state_name() {
+        "Uninitialized" => AccountOperation::Initializing,
+        "Locked" => AccountOperation::Unlocking,
+        _ => AccountOperation::Deriving,
+    }
+}
+
+pub(super) fn has_protected_account(account: &WalletAccountView) -> bool {
+    account
+        .account_id
+        .as_deref()
+        .is_some_and(|account_id| account_id.starts_with("midnight_account_"))
+        && account
+            .addresses
+            .iter()
+            .any(|address| address.kind == "unshielded")
+        && account
+            .addresses
+            .iter()
+            .any(|address| address.kind == "shielded")
 }
 
 pub(super) const fn wallet_write_actions_available(observation_only: bool) -> bool {
@@ -378,8 +498,10 @@ pub(super) fn wallet_account_activation_available(
     protection_available: bool,
     protection_state: &str,
     protected_account: bool,
+    custody_recovery_required: bool,
 ) -> bool {
     protection_available
+        && !custody_recovery_required
         && (!observation_only || protection_state != "Uninitialized")
         && (protection_state != "Unlocked" || !protected_account)
 }

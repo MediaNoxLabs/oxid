@@ -358,18 +358,14 @@ async fn run_driver() {
         ("Documents", "open-documents"),
         ("Manage identities", "manage-identities"),
         ("Create a DID", "open-create-did"),
-        ("Create DID", "create-did"),
+        ("Create off-chain demo identity", "create-did"),
     ] {
         if let Err(failure) = click_when_visible(label, failure).await {
             write_failure(&root, failure);
             return;
         }
     }
-    if let Err(failure) = wait_for_rendered_text(
-        &["A protected managed DID is ready for credential issuance."],
-        "did-readiness",
-    )
-    .await
+    if let Err(failure) = wait_for_rendered_text(&["DID details", "Managed"], "did-readiness").await
     {
         write_failure(&root, failure);
         return;

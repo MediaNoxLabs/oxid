@@ -1,23 +1,77 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use oxid_diagnostics_application::{DiagnosticCode, DiagnosticSeverity};
 use oxid_identity_application::{
-    CreateDidCommand, DeactivateDidCommand, DidRecordQuery, ListDidRecordsQuery, ResolveDidCommand,
-    SignDidPayloadCommand, UpdateDidCommand,
+    CreateDidCommand, DeactivateDidCommand, DeployDidCommand, DidRecordQuery, ListDidRecordsQuery,
+    ResolveDidCommand, SignDidPayloadCommand, UpdateDidCommand,
 };
+use oxid_identity_domain::{IdentityProfileId, MidnightNetwork};
 use serde_json::json;
 
 use crate::{
     HeadlessWallet,
-    errors::{did_error, invalid_empty_params},
+    errors::{did_deployment_error, did_error, invalid_empty_params},
     parameters::{
-        CreateDidParams, DeactivateDidParams, DidParams, DidUpdateParams, SignDidParams,
-        decode_hex, did_update,
+        CreateDidParams, DeactivateDidParams, DeployDidParams, DidParams, DidUpdateParams,
+        SignDidParams, decode_hex, did_update,
     },
-    projections::{did_record_value, encode_hex},
+    projections::{did_deployment_value, did_record_value, encode_hex},
     protocol::{Dispatch, Request, Response, params_are_empty},
 };
 
 impl HeadlessWallet {
+    pub(super) fn deploy_did(&self, request: Request) -> Dispatch {
+        let params = match serde_json::from_value::<DeployDidParams>(request.params) {
+            Ok(params) => params,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_params",
+                    "did.deploy accepts only optional network and accountIndex fields",
+                ));
+            }
+        };
+        let Some(network) = MidnightNetwork::parse(&params.network) else {
+            return Dispatch::continue_with(Response::error(
+                request.id,
+                "invalid_params",
+                "did.deploy network is not recognized",
+            ));
+        };
+        if network == MidnightNetwork::Offchain {
+            return Dispatch::continue_with(Response::error(
+                request.id,
+                "invalid_params",
+                "did.deploy requires a ledger-backed Midnight network",
+            ));
+        }
+        let profile_id = match self.active_profile_id(request.id.clone()) {
+            Ok(profile_id) => profile_id,
+            Err(response) => return Dispatch::continue_with(response),
+        };
+        let profile_id = match IdentityProfileId::parse(profile_id) {
+            Ok(profile_id) => profile_id,
+            Err(_) => {
+                return Dispatch::continue_with(Response::error(
+                    request.id,
+                    "invalid_profile",
+                    "active profile identifier cannot be used for DID deployment",
+                ));
+            }
+        };
+        match futures::executor::block_on(self.application.deploy_did().execute(DeployDidCommand {
+            profile_id,
+            network,
+            account_index: params.account_index,
+        })) {
+            Ok(operation) => Dispatch::continue_with(Response::success(
+                request.id,
+                json!({ "deployment": did_deployment_value(&operation) }),
+            )),
+            Err(error) => Dispatch::continue_with(did_deployment_error(request.id, error)),
+        }
+    }
+
     pub(super) fn resolve_did(&self, request: Request) -> Dispatch {
         let params = match serde_json::from_value::<DidParams>(request.params) {
             Ok(params) => params,
@@ -29,6 +83,7 @@ impl HeadlessWallet {
                 ));
             }
         };
+        let is_offchain = params.did.starts_with("did:midnight:offchain:");
         let profile_id = match self.active_profile_id(request.id.clone()) {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
@@ -39,11 +94,27 @@ impl HeadlessWallet {
                 did: params.did,
             },
         )) {
-            Ok(record) => Dispatch::continue_with(Response::success(
-                request.id,
-                json!({ "didRecord": did_record_value(&record) }),
-            )),
-            Err(error) => Dispatch::continue_with(did_error(request.id, error)),
+            Ok(record) => {
+                if is_offchain {
+                    self.record_diagnostic(
+                        DiagnosticCode::IdentityOffchainDidResolutionSucceeded,
+                        DiagnosticSeverity::Info,
+                    );
+                }
+                Dispatch::continue_with(Response::success(
+                    request.id,
+                    json!({ "didRecord": did_record_value(&record) }),
+                ))
+            }
+            Err(error) => {
+                if is_offchain {
+                    self.record_diagnostic(
+                        DiagnosticCode::IdentityOffchainDidResolutionFailed,
+                        DiagnosticSeverity::Warning,
+                    );
+                }
+                Dispatch::continue_with(did_error(request.id, error))
+            }
         }
     }
 
@@ -58,6 +129,7 @@ impl HeadlessWallet {
                 ));
             }
         };
+        let is_offchain = params.network == "offchain";
         let profile_id = match self.active_profile_id(request.id.clone()) {
             Ok(profile_id) => profile_id,
             Err(response) => return Dispatch::continue_with(response),
@@ -66,11 +138,27 @@ impl HeadlessWallet {
             profile_id,
             network: params.network,
         }) {
-            Ok(record) => Dispatch::continue_with(Response::success(
-                request.id,
-                json!({ "didRecord": did_record_value(&record) }),
-            )),
-            Err(error) => Dispatch::continue_with(did_error(request.id, error)),
+            Ok(record) => {
+                if is_offchain {
+                    self.record_diagnostic(
+                        DiagnosticCode::IdentityOffchainDidCreationSucceeded,
+                        DiagnosticSeverity::Info,
+                    );
+                }
+                Dispatch::continue_with(Response::success(
+                    request.id,
+                    json!({ "didRecord": did_record_value(&record) }),
+                ))
+            }
+            Err(error) => {
+                if is_offchain {
+                    self.record_diagnostic(
+                        DiagnosticCode::IdentityOffchainDidCreationFailed,
+                        DiagnosticSeverity::Warning,
+                    );
+                }
+                Dispatch::continue_with(did_error(request.id, error))
+            }
         }
     }
 
@@ -85,7 +173,7 @@ impl HeadlessWallet {
                 ));
             }
         };
-        let (did, operation, confirmation) = match did_update(params) {
+        let (did, operation) = match did_update(params) {
             Some(value) => value,
             None => {
                 return Dispatch::continue_with(Response::error(
@@ -103,7 +191,6 @@ impl HeadlessWallet {
             profile_id,
             did,
             operation,
-            confirmation,
         }) {
             Ok(record) => Dispatch::continue_with(Response::success(
                 request.id,
@@ -120,7 +207,7 @@ impl HeadlessWallet {
                 return Dispatch::continue_with(Response::error(
                     request.id,
                     "invalid_params",
-                    "did.sign requires did, methodId, payloadHex, and confirmation",
+                    "did.sign requires did, methodId, payloadHex",
                 ));
             }
         };
@@ -145,8 +232,7 @@ impl HeadlessWallet {
                 profile_id,
                 did: params.did,
                 method_id: params.method_id,
-                payload,
-                confirmation: params.confirmation.into(),
+                payload: &payload,
             }) {
             Ok(signature) => Dispatch::continue_with(Response::success(
                 request.id,
@@ -167,7 +253,7 @@ impl HeadlessWallet {
                 return Dispatch::continue_with(Response::error(
                     request.id,
                     "invalid_params",
-                    "did.deactivate requires did and confirmation",
+                    "did.deactivate requires did",
                 ));
             }
         };
@@ -181,7 +267,6 @@ impl HeadlessWallet {
             .execute(DeactivateDidCommand {
                 profile_id,
                 did: params.did,
-                confirmation: params.confirmation.into(),
             }) {
             Ok(record) => Dispatch::continue_with(Response::success(
                 request.id,

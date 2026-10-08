@@ -148,8 +148,7 @@ final class BackupFlowTests: XCTestCase {
         let create = application.buttons["Create and continue"]
         XCTAssertTrue(create.waitForExistence(timeout: 15))
         create.tap()
-        XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 15))
-        application.buttons["Skip for now"].tap()
+        WalletOnboardingFixture.completeDevelopmentRecoveryCeremony(in: application)
         application.buttons["Wallet"].tap()
 
         let activate = application.buttons["Activate protected Midnight account"]
@@ -165,6 +164,9 @@ final class BackupFlowTests: XCTestCase {
         XCTAssertTrue(application.staticTexts["standalone-1"].waitForExistence(timeout: 30))
 
         application.buttons["Documents"].tap()
+        let addDocument = application.buttons["Add document"]
+        XCTAssertTrue(addDocument.waitForExistence(timeout: 15))
+        addDocument.tap()
         let offer = application.buttons["Use demo OID4VCI offer"]
         XCTAssertTrue(offer.waitForExistence(timeout: 15))
         offer.tap()

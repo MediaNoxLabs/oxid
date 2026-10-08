@@ -21,6 +21,13 @@ scenario needs explicit target support, dependencies and ownership, health and
 cleanup, commands or an honest unsupported/manual boundary, evidence/cadence,
 test mapping, manual steps, and outcomes.
 
+Treat the approved owner journeys as the product map. Keep their use cases,
+ordered scenarios, and demo composition aligned when a slice ships. Passport
+Vault remains a post-0.2.0 product concept, not milestone acceptance. A planned
+scenario may name an unsupported default target so that the inventory records
+intent without claiming executability; promote that target to supported only
+when its exact commands, health checks, cleanup, and evidence are present.
+
 Never execute operational command entries from the inventory, start resources,
 claim authority over devices or credentials, alter AGENT.md boundaries, or turn
 planned/diagnostic evidence into acceptance. Preserve the resource-hygiene

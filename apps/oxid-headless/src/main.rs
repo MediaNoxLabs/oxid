@@ -7,6 +7,20 @@ use std::{io, process::ExitCode};
 use oxid_headless::HeadlessWallet;
 
 fn main() -> ExitCode {
+    // Live Midnight transports use Tokio-native I/O futures. Keep one bounded
+    // process runtime alive while the synchronous JSON-lines adapter drives
+    // those futures through the shared application ports.
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            eprintln!("oxid-headless runtime initialization failed");
+            return ExitCode::FAILURE;
+        }
+    };
+    let _runtime_guard = runtime.enter();
     let application = match oxid_composition::compose_native_headless_process_from_environment() {
         Ok(application) => application,
         Err(error) => {

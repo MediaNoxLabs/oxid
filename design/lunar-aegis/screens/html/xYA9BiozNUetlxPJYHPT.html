@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Restore — Oxid</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'oxid-bg': '#07090E',
+                        'oxid-surface': '#0F172A',
+                        'oxid-border': '#1E293B',
+                        'oxid-primary': '#06B6D4',
+                        'oxid-highlight': '#38BDF8',
+                        'oxid-identity': '#8B5CF6',
+                        'oxid-text': '#F8FAFC',
+                        'oxid-muted': '#94A3B8',
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        heading: ['Space Grotesk', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-oxid-bg text-oxid-text font-sans overflow-hidden flex justify-center">
+    <div class="w-full max-w-[430px] h-[840px] relative flex flex-col">
+
+        <!-- Header -->
+        <header class="px-6 pt-12 pb-4 flex items-center justify-between sticky top-0 bg-oxid-bg/80 backdrop-blur-md z-10">
+            <button class="w-11 h-11 rounded-xl bg-oxid-surface border border-oxid-border flex items-center justify-center text-oxid-muted hover:text-white transition-colors">
+                <i class="fa-solid fa-xmark text-sm"></i>
+            </button>
+            <h1 class="text-xl font-heading font-bold text-white tracking-tight">Restore Profile</h1>
+            <div class="w-11"></div>
+        </header>
+
+        <main class="flex-1 px-6 pb-32 overflow-y-auto space-y-9 pt-4">
+            
+            <!-- Choice -->
+            <section class="space-y-4">
+                <h3 class="text-[10px] font-bold uppercase tracking-[0.2em] text-oxid-muted px-1">Choose Backup Source</h3>
+                
+                <div class="space-y-3">
+                    <button class="w-full bg-oxid-surface rounded-[24px] p-5 border-2 border-oxid-primary flex items-center gap-4 text-left shadow-2xl relative">
+                        <div class="absolute -top-2 -right-2 bg-oxid-primary text-oxid-bg w-6 h-6 rounded-full flex items-center justify-center shadow-lg">
+                            <i class="fa-solid fa-check text-[10px]"></i>
+                        </div>
+                        <div class="w-12 h-12 rounded-xl bg-oxid-bg border border-oxid-border flex items-center justify-center text-oxid-primary">
+                            <i class="fa-solid fa-file-import text-lg"></i>
+                        </div>
+                        <div class="flex-grow">
+                            <p class="text-[15px] font-bold text-white tracking-tight">Local File</p>
+                            <p class="text-[11px] text-oxid-muted font-medium mt-0.5">Select an .oxid-vault file</p>
+                        </div>
+                    </button>
+
+                    <div class="opacity-40 space-y-3 grayscale cursor-not-allowed">
+                        <div class="w-full bg-oxid-surface rounded-[24px] p-5 border border-oxid-border border-dashed flex items-center gap-4 text-left">
+                            <div class="w-12 h-12 rounded-xl bg-oxid-bg border border-oxid-border flex items-center justify-center text-oxid-muted">
+                                <i class="fa-brands fa-icloud text-lg"></i>
+                            </div>
+                            <div class="flex-grow">
+                                <p class="text-[15px] font-bold text-white tracking-tight">iCloud / Drive</p>
+                                <p class="text-[10px] font-bold uppercase tracking-widest text-oxid-muted mt-0.5">Proposed Concept</p>
+                            </div>
+                            <i class="fa-solid fa-lock text-oxid-border text-xs"></i>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Validation -->
+            <section id="validation" class="space-y-4">
+                <div class="flex items-center justify-between px-1">
+                    <h3 class="text-[10px] font-bold uppercase tracking-[0.2em] text-oxid-muted">Validation Progress</h3>
+                    <span class="text-[9px] font-bold text-oxid-primary uppercase tracking-tighter italic">Simulation</span>
+                </div>
+                
+                <div class="bg-oxid-surface rounded-[24px] border border-oxid-border overflow-hidden shadow-xl divide-y divide-oxid-border/50">
+                    <div class="p-5 flex items-center gap-4 bg-emerald-500/5">
+                        <i class="fa-solid fa-circle-check text-emerald-400"></i>
+                        <div class="flex-grow">
+                            <p class="text-[13px] font-bold text-white">File Integrity</p>
+                            <p class="text-[11px] text-oxid-muted font-medium">Not checked yet. Select a file to start validation.</p>
+                        </div>
+                    </div>
+
+                    <div class="p-5 flex items-center gap-4">
+                        <div class="w-4 h-4 rounded-full border-2 border-oxid-border border-t-oxid-primary animate-spin shrink-0"></div>
+                        <div class="flex-grow">
+                            <p class="text-[13px] font-bold text-white">Snapshot Consistency</p>
+                            <p class="text-[11px] text-oxid-muted font-medium italic leading-snug">Verification pending file analysis.</p>
+                        </div>
+                    </div>
+
+                    <!-- Mismatched Version (Visible Warning) -->
+                    <div class="p-5 flex items-center gap-4 bg-rose-500/5">
+                        <i class="fa-solid fa-triangle-exclamation text-rose-400"></i>
+                        <div class="flex-grow">
+                            <p class="text-[13px] font-bold text-white">Version Warning</p>
+                            <p class="text-[11px] text-rose-400/80 font-medium">Example compatibility warning. Check the file version before restoring.</p>
+                        </div>
+                        <button class="text-[10px] font-bold text-rose-400 uppercase tracking-widest underline underline-offset-4">Ignore</button>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+
+        <!-- Fixed Footer Action -->
+        <div class="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-oxid-bg via-oxid-bg to-transparent">
+            <div class="max-w-[430px] mx-auto grid grid-cols-2 gap-4">
+                <button class="h-16 rounded-[20px] bg-oxid-surface border border-oxid-border font-bold text-[13px] uppercase tracking-widest text-white hover:bg-oxid-border transition-all active:scale-[0.98]">
+                    Cancel
+                </button>
+                <button class="h-16 rounded-[20px] bg-oxid-primary text-oxid-bg font-bold text-[13px] uppercase tracking-widest shadow-lg shadow-oxid-primary/10 hover:bg-oxid-highlight transition-all active:scale-[0.98]">
+                    Review Data
+                </button>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

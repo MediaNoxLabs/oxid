@@ -1,8 +1,8 @@
 # Midnight ledger and cryptography dependency review
 
-- Project: [midnight-ledger](https://github.com/midnightntwrk/midnight-ledger)
-- Selected revision: `d9414884db9da9e9b1f6f3a7f742d79a5732f817`
-  from the official HTTPS Git repository; `midnight-ledger` reports
+- Project: [midnight-ledger](https://github.com/MediaNoxLabs/midnight-ledger)
+- Selected revision: `b85f5d8e503fd1d7a1b128bbc1d7156baf823a65`
+  from the reviewed HTTPS Git repository; `midnight-ledger` reports
   `8.2.0-rc.1` at this commit
 - Direct packages: `midnight-ledger`, `midnight-base-crypto`,
   `midnight-coin-structure`, `midnight-onchain-runtime`, `midnight-serialize`,
@@ -11,8 +11,8 @@
   for canonical DUST proof orchestration
 - License: Apache-2.0 for the selected direct packages; transitive license and
   source policy remain enforced by `cargo-deny` and repository checks
-- Maintenance/activity: official active Midnight monorepo revision reviewed on
-  2026-08-12; updates require a new immutable revision and compatibility review
+- Maintenance/activity: active Ledger8 compatibility revision reviewed on
+  2026-10-07; updates require a new immutable revision and compatibility review
 - Security/audit evidence: no independent Oxid audit. Canonical structures and
   BIP340 verification are isolated inside the outgoing adapter. Inputs are
   bounded and typed, external errors are not surfaced raw, and key use remains
@@ -51,3 +51,21 @@
   `CredentialDisclosurePort`, after canonical/reference-vector conformance,
   source policy, mobile compilation, and headless flow tests pass at the new
   source.
+
+The selected revision increments the compatible direct packages to
+`midnight-base-crypto 1.0.1`, `midnight-coin-structure 2.0.2`,
+`midnight-onchain-runtime 3.1.1`, `midnight-serialize 1.1.1`,
+`midnight-storage 2.0.3`, `midnight-transient-crypto 2.1.1`, and
+`midnight-zkir 2.1.1`; ledger and Zswap remain `8.2.0-rc.1`. Its root manifest
+pins `midnight-proofs 0.7.3` to
+`MediaNoxLabs/midnight-zk@083c82824dc5979fd7d509229e6f6b362d5b1ebf`
+to provide the native `disk-spill` feature. Oxid repeats that immutable patch
+because Cargo does not propagate patch tables through Git dependencies.
+
+An upstream runtime-packaging record referenced a later audited
+`midnight-zk` revision, but the immutable Ledger8 revision above declares
+`083c82824dc5979fd7d509229e6f6b362d5b1ebf`; the ledger declaration is the
+authority for this graph. The separate prerelease constraint tracked by
+`MediaNoxLabs/compact#437` still blocks consuming the reusable Compact-backed
+native DID runtime, not Oxid's existing Ledger8-only wallet/DID graph. Oxid
+therefore does not add Compact or a Zswap source rewrite in this update.

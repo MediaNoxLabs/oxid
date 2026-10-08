@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Authorize — Oxid</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'oxid-bg': '#07090E',
+                        'oxid-surface': '#0F172A',
+                        'oxid-border': '#1E293B',
+                        'oxid-primary': '#06B6D4',
+                        'oxid-highlight': '#38BDF8',
+                        'oxid-identity': '#8B5CF6',
+                        'oxid-text': '#F8FAFC',
+                        'oxid-muted': '#94A3B8',
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        heading: ['Space Grotesk', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .shield-pulse { animation: shield-pulse 3s infinite; }
+        @keyframes shield-pulse { 0% { transform: scale(1); opacity: 0.1; } 50% { transform: scale(1.15); opacity: 0.2; } 100% { transform: scale(1); opacity: 0.1; } }
+        .scan-line {
+            position: absolute;
+            top: 0; left: 0; right: 0; height: 2px;
+            background: linear-gradient(to right, transparent, #06B6D4, transparent);
+            animation: scan 2.5s ease-in-out infinite;
+        }
+        @keyframes scan { 0% { top: 0; opacity: 0; } 20% { opacity: 1; } 80% { opacity: 1; } 100% { top: 100%; opacity: 0; } }
+    </style>
+</head>
+<body class="bg-oxid-bg text-oxid-text font-sans overflow-hidden flex justify-center">
+    <div class="w-full max-w-[430px] h-[840px] relative flex flex-col items-center justify-center">
+
+        <!-- Proposed Flow Banner -->
+        <div class="bg-amber-500/10 border-b border-amber-500/20 py-2.5 flex items-center justify-center gap-2 absolute top-0 left-0 right-0 z-[60] backdrop-blur-md">
+            <i class="fa-solid fa-flask text-amber-500 text-[10px]"></i>
+            <span class="text-[9px] font-bold uppercase tracking-[0.2em] text-amber-500">Proposed Future Flow — Design Concept</span>
+        </div>
+
+        <main class="relative z-10 px-8 flex flex-col items-center text-center space-y-12 w-full">
+            
+            <!-- Auth Visual -->
+            <div class="relative w-56 h-56 flex items-center justify-center">
+                <div class="absolute inset-0 rounded-full border border-oxid-primary/20 shield-pulse"></div>
+                <div class="absolute inset-6 rounded-full border border-oxid-primary/30 shield-pulse" style="animation-delay: 0.5s"></div>
+                
+                <div class="w-36 h-36 rounded-full bg-oxid-surface border border-oxid-primary/20 flex items-center justify-center relative overflow-hidden shadow-2xl shadow-oxid-primary/10">
+                    <i class="fa-solid fa-fingerprint text-6xl text-oxid-primary"></i>
+                    <div class="scan-line"></div>
+                </div>
+            </div>
+
+            <div class="space-y-3">
+                <h1 class="text-3xl font-heading font-bold tracking-tight text-white">Authorize Vault</h1>
+                <p class="text-oxid-muted text-[15px] max-w-[280px] mx-auto leading-relaxed font-medium">
+                    Use system authentication to review and authorize this proposed proof.
+                </p>
+            </div>
+
+            <!-- Details Card -->
+            <div class="w-full p-5 rounded-[24px] bg-oxid-surface border border-oxid-border flex items-center gap-4 shadow-2xl">
+                <div class="w-11 h-11 rounded-xl bg-oxid-primary/10 border border-oxid-primary/20 flex items-center justify-center text-oxid-primary">
+                    <i class="fa-solid fa-id-card-clip text-lg"></i>
+                </div>
+                <div class="text-left flex-1">
+                    <p class="text-[10px] font-bold text-oxid-muted uppercase tracking-widest">Action</p>
+                    <p class="text-[14px] font-bold text-white tracking-tight">Generate Age Proof</p>
+                </div>
+                <div class="flex flex-col items-end">
+                    <p class="text-[10px] font-bold text-oxid-muted uppercase tracking-widest">To</p>
+                    <p class="text-[14px] font-bold text-white tracking-tight">Example Verifier</p>
+                </div>
+            </div>
+
+            <div class="w-full space-y-6 pt-4">
+                <button class="w-full h-16 rounded-[20px] bg-oxid-primary text-oxid-bg font-bold text-[14px] uppercase tracking-widest shadow-lg shadow-oxid-primary/10 active:scale-[0.98] transition-all">
+                    Verify & Unlock
+                </button>
+                
+                <div class="flex items-center justify-center gap-10">
+                    <button class="text-[13px] font-bold text-oxid-muted hover:text-white transition-colors flex items-center gap-2 uppercase tracking-widest">
+                        <i class="fa-solid fa-chevron-left text-[10px]"></i>
+                        Review
+                    </button>
+                    <div class="w-px h-4 bg-oxid-border"></div>
+                    <button class="text-[13px] font-bold text-rose-400 hover:text-rose-300 transition-colors uppercase tracking-widest">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </main>
+
+        <!-- Security Footer -->
+        <footer class="absolute bottom-12 px-10 text-center">
+            <p class="text-[10px] font-mono text-oxid-muted/50 uppercase tracking-[0.2em] leading-relaxed">
+                Zero-Knowledge Authorization <br>
+                <span class="opacity-60">System protection · Proposed method</span>
+            </p>
+        </footer>
+
+    </div>
+</body>
+</html>

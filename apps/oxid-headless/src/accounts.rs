@@ -54,13 +54,16 @@ impl HeadlessWallet {
             .application
             .select_wallet_network()
             .execute(SelectWalletNetworkCommand {
-                profile_id,
+                profile_id: profile_id.clone(),
                 network_id: params.network_id,
             }) {
-            Ok(networks) => Dispatch::continue_with(Response::success(
-                request.id,
-                network_list_value(&networks),
-            )),
+            Ok(networks) => {
+                let _ = self.drive_selected_realm(profile_id);
+                Dispatch::continue_with(Response::success(
+                    request.id,
+                    network_list_value(&networks),
+                ))
+            }
             Err(error) => Dispatch::continue_with(account_error(request.id, error)),
         }
     }

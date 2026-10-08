@@ -20,6 +20,18 @@ fn development_proof_cache_directory() -> std::path::PathBuf {
     std::env::temp_dir().join("oxid-midnight-proof-benchmark")
 }
 
+#[cfg(feature = "desktop-developer-pager-test")]
+fn developer_pager_viewport() -> (f64, f64) {
+    match std::env::var("OXID_DEVELOPER_PAGER_VIEWPORT").as_deref() {
+        Ok("360x640") => (360.0, 640.0),
+        Ok("390x844") | Err(_) => (390.0, 844.0),
+        Ok(_) => {
+            eprintln!("Oxid startup failed: invalid developer pager viewport");
+            std::process::exit(2);
+        }
+    }
+}
+
 #[cfg(any(
     feature = "standalone-portal",
     feature = "standalone-portal-tailnet",
@@ -28,6 +40,28 @@ fn development_proof_cache_directory() -> std::path::PathBuf {
 fn startup_failure(error: impl std::fmt::Display) -> ! {
     eprintln!("Oxid startup failed: {error}");
     std::process::exit(2)
+}
+
+struct ComposedWalletDustSettlementUiPort {
+    capability: std::sync::Arc<oxid_composition::WalletDustSettlementCapability>,
+}
+
+impl ComposedWalletDustSettlementUiPort {
+    fn new(capability: std::sync::Arc<oxid_composition::WalletDustSettlementCapability>) -> Self {
+        Self { capability }
+    }
+}
+
+impl oxid_ui_dioxus::WalletDustSettlementUiPort for ComposedWalletDustSettlementUiPort {
+    fn projection(&self) -> Result<oxid_ui_dioxus::WalletDustSettlementProjection, String> {
+        self.capability
+            .projection()
+            .map_err(|error| error.to_string())
+    }
+
+    fn subscribe(&self) -> oxid_ui_dioxus::WalletDustSettlementSubscription {
+        self.capability.subscribe()
+    }
 }
 
 fn main() {
@@ -39,6 +73,34 @@ fn main() {
         not(all(target_os = "macos", target_arch = "aarch64"))
     ))]
     compile_error!("desktop-portal-test is available only on ARM64 macOS");
+
+    #[cfg(all(
+        feature = "desktop-developer-pager-test",
+        not(all(target_os = "macos", target_arch = "aarch64"))
+    ))]
+    compile_error!("desktop-developer-pager-test is available only on ARM64 macOS");
+
+    #[cfg(all(
+        feature = "desktop-developer-pager-test",
+        feature = "desktop-portal-test"
+    ))]
+    compile_error!("desktop test profiles are mutually exclusive");
+
+    #[cfg(all(
+        feature = "desktop-developer-pager-test",
+        any(
+            feature = "mobile",
+            feature = "web",
+            feature = "standalone-local",
+            feature = "standalone-tailnet",
+            feature = "standalone-portal",
+            feature = "standalone-portal-tailnet",
+            feature = "standalone-native-custody",
+            feature = "preprod-observation",
+            feature = "ui-profile-demo"
+        )
+    ))]
+    compile_error!("desktop-developer-pager-test is an isolated test-only desktop profile");
 
     #[cfg(all(
         feature = "desktop-portal-test",
@@ -309,6 +371,18 @@ fn main() {
     #[cfg(all(
         feature = "standalone-development",
         not(feature = "standalone-native-custody"),
+        feature = "ui-profile-demo",
+        not(feature = "standalone-tailnet"),
+        not(feature = "standalone-local"),
+        not(feature = "standalone-portal-tailnet"),
+        not(feature = "desktop-portal-test"),
+        not(target_arch = "wasm32")
+    ))]
+    let application = oxid_composition::compose_headless_with_development_did_approval();
+    #[cfg(all(
+        feature = "standalone-development",
+        not(feature = "standalone-native-custody"),
+        not(feature = "ui-profile-demo"),
         not(feature = "standalone-tailnet"),
         not(feature = "standalone-local"),
         not(feature = "standalone-portal-tailnet"),
@@ -430,7 +504,10 @@ fn main() {
             oxid_ui_dioxus::WalletRealmSyncUiServices::new(
                 application.sync_selected_wallet_realm(),
                 application.get_selected_wallet_realm_sync(),
+                application.reconcile_wallet_realm_lifecycle(),
+                application.manage_wallet_action_watch(),
                 application.cancel_selected_wallet_realm_sync(),
+                application.get_wallet_operation_timeline(),
             ),
             application.public_text_exporter(),
         ),
@@ -440,17 +517,9 @@ fn main() {
                 application.start_wallet_dust_sync(),
                 application.cancel_wallet_dust_sync(),
             ),
-            oxid_ui_dioxus::WalletDustRegistrationUiServices::new(
-                application.prepare_wallet_dust_registration(),
-                application.authorize_wallet_dust_registration(),
-                application.submit_wallet_dust_registration(),
-                oxid_ui_dioxus::WalletDustRegistrationRecoveryUiServices::new(
-                    application.get_wallet_dust_registration(),
-                    application.get_wallet_dust_registration_status(),
-                    application.cancel_wallet_dust_registration_submission(),
-                    application.reconcile_wallet_dust_registration_submission(),
-                ),
-            ),
+            oxid_ui_dioxus::WalletDustSettlementUiServices::new(std::sync::Arc::new(
+                ComposedWalletDustSettlementUiPort::new(application.wallet_dust_settlement()),
+            )),
             oxid_ui_dioxus::WalletShieldedSyncUiServices::new(
                 application.get_wallet_shielded_sync_status(),
                 application.start_wallet_shielded_sync(),
@@ -472,11 +541,14 @@ fn main() {
                 ),
             ),
             oxid_ui_dioxus::PassportVaultUiServices::new(
-                application.list_passport_vault_locks(),
-                application.create_passport_vault_lock(),
-                application.deposit_passport_vault_lock(),
-                application.claim_passport_vault_lock(),
-                application.withdraw_passport_vault_lock(),
+                oxid_ui_dioxus::PassportVaultLockUiServices::new(
+                    application.list_passport_vault_locks(),
+                    application.list_passport_vault_activity(),
+                    application.create_passport_vault_lock(),
+                    application.deposit_passport_vault_lock(),
+                    application.claim_passport_vault_lock(),
+                    application.withdraw_passport_vault_lock(),
+                ),
                 application.passport_vault_state_persistence(),
                 oxid_ui_dioxus::PassportVaultContractCallUiServices::new(
                     application.read_passport_vault_contract_state(),
@@ -521,6 +593,7 @@ fn main() {
                     application.accept_credential_issuance(),
                     application.refuse_credential_issuance(),
                     application.list_credential_issuances(),
+                    application.list_credential_issuance_activity(),
                     standalone_credential_offer,
                     credential_issuance_ready,
                 ),
@@ -529,6 +602,7 @@ fn main() {
                     application.accept_credential_presentation(),
                     application.cancel_credential_presentation(),
                     application.refuse_credential_presentation(),
+                    application.list_credential_presentation_activity(),
                     standalone_openid4vp_request,
                 ),
                 oxid_ui_dioxus::CredentialDisclosureUiServices::new(
@@ -596,8 +670,9 @@ fn main() {
     {
         let app_links = application.identity_link_ingress();
         let presentation_lifecycle = application.set_credential_presentation_foreground();
-        let config =
-            dioxus::mobile::Config::new().with_custom_event_handler(move |event, _target| {
+        let config = dioxus::mobile::Config::new()
+            .with_custom_index(include_str!("../assets/index.html").to_owned())
+            .with_custom_event_handler(move |event, _target| {
                 match event {
                     dioxus::mobile::tao::event::Event::Opened { urls } => {
                         for url in urls {
@@ -621,17 +696,22 @@ fn main() {
         feature = "desktop",
         not(any(target_os = "ios", target_os = "android"))
     ))]
-    launcher
-        .with_cfg(
+    {
+        #[cfg(feature = "desktop-developer-pager-test")]
+        let (width, height) = developer_pager_viewport();
+        #[cfg(not(feature = "desktop-developer-pager-test"))]
+        let (width, height) = (390.0, 844.0);
+        launcher.with_cfg(
             dioxus::desktop::Config::new().with_window(
                 dioxus::desktop::WindowBuilder::new()
                     .with_title(generated_brand::BRAND_PROFILE.product_name())
-                    .with_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(390.0, 844.0))
+                    .with_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(width, height))
                     .with_min_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(360.0, 640.0))
                     .with_resizable(true),
             ),
         )
-        .launch(oxid_ui_dioxus::App);
+    }
+    .launch(oxid_ui_dioxus::App);
     #[cfg(all(
         not(feature = "desktop"),
         not(any(target_os = "ios", target_os = "android"))
@@ -642,6 +722,28 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::generated_brand::BRAND_PROFILE;
+
+    #[test]
+    fn mobile_bootstrap_index_uses_safe_area_viewport_and_dioxus_placeholders() {
+        let index = include_str!("../assets/index.html");
+
+        assert_eq!(index.matches("name=\"viewport\"").count(), 1);
+        assert!(index.contains("width=device-width"));
+        assert!(index.contains("initial-scale=1"));
+        assert!(index.contains("viewport-fit=cover"));
+        let custom_head = index
+            .find("<!-- CUSTOM HEAD -->")
+            .expect("custom head marker");
+        let head_close = index.find("</head>").expect("head close");
+        let main_root = index.find("<div id=\"main\"></div>").expect("main root");
+        let module_loader = index.find("<!-- MODULE LOADER -->").expect("module loader");
+        let body_close = index.find("</body>").expect("body close");
+
+        assert!(custom_head < head_close);
+        assert!(head_close < main_root);
+        assert!(main_root < module_loader);
+        assert!(module_loader < body_close);
+    }
 
     #[test]
     fn default_brand_pins_identity_and_security_copy() {

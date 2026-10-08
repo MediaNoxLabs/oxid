@@ -90,13 +90,23 @@ case "${1:-}" in
     nix_develop_command bash -c '
       repo_root="$1"
       shift
-      cd "$repo_root"
+      if [[ -n "${CI:-}" ]]; then
+        echo "Pi dispatch is unavailable in CI; provision packages only from an owner-invoked local devshell." >&2
+        exit 1
+      fi
+      cd -- "$repo_root"
       node scripts/factory/audit-pi.mjs --config-only --enforce-config || {
         echo "Pi startup audit failed. If user-subagent-policy is red, run ./bootstrap.sh --configure-pi; otherwise fix the reported control, then retry ./bootstrap.sh --pi." >&2
         exit 1
       }
       bash scripts/check-pi-devshell.sh || {
         echo "Pi runtime smoke failed; resolve the reported package/resource problem before starting an agent." >&2
+        exit 1
+      }
+      # Resolve startup in the supervisor process, before the implementation
+      # child receives its own tool budget. The child verifies this snapshot.
+      node "$repo_root/scripts/loop/prepare-dev-loop-admission.mjs" prepare -- "$@" || {
+        echo "Pi admission failed before child dispatch." >&2
         exit 1
       }
       exec pi "$@"

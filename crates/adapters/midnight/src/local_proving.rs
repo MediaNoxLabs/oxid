@@ -22,6 +22,7 @@ use midnight_transient_crypto::{
 };
 use midnight_zkir::{IrSource, LocalProvingProvider};
 use midnight_zswap::{ZSWAP_EXPECTED_FILES, prove::ZswapResolver};
+use oxid_adapter_platform_system::http_client_builder_for;
 use oxid_wallet_application::WalletTransactionPortError;
 use rand::{RngCore as _, rngs::OsRng};
 use reqwest::Url;
@@ -258,14 +259,15 @@ pub(crate) async fn prove_transaction(
     ensure_not_cancelled(cancellation)?;
     ensure_tls_provider()?;
     let preparation_started = Instant::now();
-    let client = reqwest::Client::builder()
+    let source =
+        Url::parse(PARAMETER_SOURCE).map_err(|_| WalletTransactionPortError::ProvingFailed)?;
+    let client = http_client_builder_for(&source)
+        .map_err(|_| WalletTransactionPortError::ProvingFailed)?
         .no_proxy()
         .connect_timeout(Duration::from_secs(15))
         .timeout(FETCH_TIMEOUT)
         .build()
         .map_err(|_| WalletTransactionPortError::ProvingFailed)?;
-    let source =
-        Url::parse(PARAMETER_SOURCE).map_err(|_| WalletTransactionPortError::ProvingFailed)?;
     #[cfg(feature = "proving-bench")]
     eprintln!("local proving: authenticating bounded cache");
     prepare_cache(config.cache_directory(), &client, &source, cancellation).await?;

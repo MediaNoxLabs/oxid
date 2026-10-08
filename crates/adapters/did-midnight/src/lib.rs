@@ -5,10 +5,23 @@
 use std::collections::BTreeMap;
 
 use oxid_identity_application::{
-    DidResolutionPort, DidResolutionPortError, DidResolutionPortFuture,
+    DidRefreshAvailability, DidResolutionPort, DidResolutionPortError, DidResolutionPortFuture,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+mod call;
+#[cfg(not(target_arch = "wasm32"))]
+mod compact_artifacts;
+#[cfg(not(target_arch = "wasm32"))]
+mod custody;
+#[cfg(not(target_arch = "wasm32"))]
+mod deployment;
 mod lifecycle;
+#[cfg(not(target_arch = "wasm32"))]
+mod maintenance;
+mod offchain;
+#[cfg(not(target_arch = "wasm32"))]
+mod protected_randomness;
 
 #[cfg(all(
     feature = "tailnet-test-did-publication",
@@ -16,12 +29,36 @@ mod lifecycle;
 ))]
 mod publication;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use call::{
+    MidnightDidBootstrapCall, MidnightDidCallComposerConfigError, MidnightDidCallCompositionFuture,
+    MidnightDidCallCompositionPort, MidnightDidCallContext, MidnightDidCallOperation,
+    NativeMidnightDidCallComposer, NativeMidnightDidCallPlan, NativeMidnightDidCallRequest,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use compact_artifacts::{
+    MidnightDidBootstrapCircuit, MidnightDidCompactArtifactError, MidnightDidCompactArtifacts,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use deployment::{
+    NativeMidnightDidDeploymentComposer, NativeMidnightDidDeploymentPlan,
+    NativeMidnightDidDeploymentRequest,
+};
 pub use lifecycle::StandaloneDidLifecycle;
+#[cfg(not(target_arch = "wasm32"))]
+pub use maintenance::{
+    NativeMidnightDidMaintenanceComposer, NativeMidnightDidMaintenancePlan,
+    NativeMidnightDidMaintenanceRequest,
+};
+pub use offchain::{
+    OFFCHAIN_STATE_ENCODING, OffchainDidError, OffchainDidState, OffchainService,
+    OffchainVerificationMethod, create_long_form_offchain_did, resolve_long_form_offchain_did,
+};
 use oxid_identity_domain::{
     DID_CONTEXT, DidDocument, DidDocumentMetadata, DidDocumentParts, DidResolution,
     DidResolutionMetadata, DidResolutionSource, JWK_CONTEXT, JwkCurve, JwkKeyType, MidnightDid,
-    PublicJwk, Service, ServiceEndpointValue, VerificationMethod, VerificationRelationship,
-    VerificationRelationshipEntry,
+    MidnightNetwork, PublicJwk, Service, ServiceEndpointValue, VerificationMethod,
+    VerificationRelationship, VerificationRelationshipEntry,
 };
 #[cfg(all(
     feature = "tailnet-test-did-publication",
@@ -48,21 +85,37 @@ pub struct StandaloneDidResolver;
 
 impl DidResolutionPort for StandaloneDidResolver {
     fn resolve<'a>(&'a self, did: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
-        let result = match did.as_str() {
-            STANDALONE_FIXTURE_DID => standalone_resolution_for(
-                STANDALONE_FIXTURE_DID,
-                "#authentication-1",
-                "4A3l3ITUWOFUgNTdtN9BS3HEIpnEhewcfd_rEb3iSEo",
-            ),
-            STANDALONE_PASSPORT_ISSUER_DID => standalone_resolution_for(
-                STANDALONE_PASSPORT_ISSUER_DID,
-                "#assertion-1",
-                "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
-            ),
-            STANDALONE_COMPACT_PASSPORT_ISSUER_DID => standalone_compact_issuer_resolution(),
-            _ => Err(DidResolutionPortError::NotFound),
+        let result = if did.network() == MidnightNetwork::Offchain {
+            resolve_long_form_offchain_did(did).map_err(|_| DidResolutionPortError::InvalidResponse)
+        } else {
+            match did.as_str() {
+                STANDALONE_FIXTURE_DID => standalone_resolution_for(
+                    STANDALONE_FIXTURE_DID,
+                    "#authentication-1",
+                    "4A3l3ITUWOFUgNTdtN9BS3HEIpnEhewcfd_rEb3iSEo",
+                ),
+                STANDALONE_PASSPORT_ISSUER_DID => standalone_resolution_for(
+                    STANDALONE_PASSPORT_ISSUER_DID,
+                    "#assertion-1",
+                    "GX9rI-FshTLGq8g4-s1ep4m-DHaykgM0A5v6iz02jWE",
+                ),
+                STANDALONE_COMPACT_PASSPORT_ISSUER_DID => standalone_compact_issuer_resolution(),
+                _ => Err(DidResolutionPortError::NotFound),
+            }
         };
         Box::pin(async move { result })
+    }
+
+    fn refresh_availability(&self, did: &MidnightDid) -> DidRefreshAvailability {
+        if did.network() == MidnightNetwork::Offchain {
+            return DidRefreshAvailability::NotApplicable;
+        }
+        match did.as_str() {
+            STANDALONE_FIXTURE_DID
+            | STANDALONE_PASSPORT_ISSUER_DID
+            | STANDALONE_COMPACT_PASSPORT_ISSUER_DID => DidRefreshAvailability::Available,
+            _ => DidRefreshAvailability::NotApplicable,
+        }
     }
 }
 
@@ -190,7 +243,8 @@ mod http {
     use std::{error::Error, fmt, net::IpAddr, sync::Arc, thread, time::Duration};
 
     use futures::{StreamExt as _, channel::oneshot};
-    use reqwest::{Certificate, Client, Url, redirect::Policy};
+    use oxid_adapter_platform_system::http_client_builder_for;
+    use reqwest::{Client, Url, redirect::Policy};
 
     use super::*;
 
@@ -263,17 +317,12 @@ mod http {
             let endpoint = base
                 .join("resolve")
                 .map_err(|_| HttpDidResolverConfigError::InvalidUrl)?;
-            let trusted_roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
-                .iter()
-                .map(|certificate| Certificate::from_der(certificate.as_ref()))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| HttpDidResolverConfigError::ClientUnavailable)?;
-            let client = Client::builder()
+            let client = http_client_builder_for(&endpoint)
+                .map_err(|_| HttpDidResolverConfigError::ClientUnavailable)?
                 .no_proxy()
                 .redirect(Policy::none())
                 .timeout(REQUEST_TIMEOUT)
                 .user_agent("oxid-identity-wallet/0.1")
-                .tls_certs_only(trusted_roots)
                 .build()
                 .map_err(|_| HttpDidResolverConfigError::ClientUnavailable)?;
             Ok(Self { endpoint, client })
@@ -369,6 +418,10 @@ mod http {
                     .await
                     .unwrap_or(Err(DidResolutionPortError::Unavailable))
             })
+        }
+
+        fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+            DidRefreshAvailability::Available
         }
     }
 
@@ -814,6 +867,10 @@ mod tests {
     fn standalone_resolves_only_the_documented_fixture() {
         let resolver = StandaloneDidResolver;
         let fixture = MidnightDid::parse(STANDALONE_FIXTURE_DID).expect("fixture DID");
+        assert_eq!(
+            resolver.refresh_availability(&fixture),
+            DidRefreshAvailability::Available
+        );
         let resolved = futures::executor::block_on(resolver.resolve(&fixture)).expect("resolve");
         assert_eq!(resolved.document().verification_methods().len(), 2);
         let compact_issuer =
@@ -841,6 +898,10 @@ mod tests {
         );
         let unknown =
             MidnightDid::parse(format!("did:midnight:undeployed:{}", "f".repeat(64))).expect("DID");
+        assert_eq!(
+            resolver.refresh_availability(&unknown),
+            DidRefreshAvailability::NotApplicable
+        );
         assert_eq!(
             futures::executor::block_on(resolver.resolve(&unknown)),
             Err(DidResolutionPortError::NotFound)

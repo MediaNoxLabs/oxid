@@ -3,28 +3,41 @@
 #![forbid(unsafe_code)]
 #![recursion_limit = "256"]
 
-//! Versioned incoming adapter organized according to
-//! [ADR-0104](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/adr/0104-regrow-incoming-adapters-behind-capability-facades.md).
-//! `protocol` owns the envelope and stream errors; `parameters`, `projections`,
-//! and `errors` own wire translation; capability modules own application-port
-//! invocation; this root owns transport, stable re-exports, and dispatch.
+//! Versioned incoming adapter organized according to ADR-0104.
+//! `protocol` owns the envelope and stream errors; translation and capability
+//! modules own their ports; this root owns transport, re-exports, and dispatch.
 
 mod accounts;
 mod dids;
 mod errors;
+#[cfg(feature = "standalone-faucet")]
+mod faucet;
+#[cfg(feature = "standalone-faucet")]
+mod faucet_application;
+#[cfg(feature = "standalone-faucet")]
+mod faucet_errors;
+#[cfg(feature = "standalone-faucet")]
+mod faucet_http;
+#[cfg(feature = "standalone-faucet")]
+pub use faucet_http::{DEFAULT_HTTP_ADDRESS as DEFAULT_FAUCET_HTTP_ADDRESS, run_loopback_http};
 mod identity_protocols;
 mod midnight_wallet;
 mod parameters;
 mod passport_vault;
 mod projections;
 mod protocol;
+mod realm_lifecycle;
 mod security;
 mod system;
 mod wallet_profiles;
 
+#[cfg(feature = "standalone-faucet")]
+pub use faucet::StandaloneFaucet;
+#[cfg(feature = "standalone-faucet")]
+pub use faucet_errors::{FaucetIoError, FaucetStartupError};
 pub use protocol::HeadlessIoError;
 
-use std::{io::BufRead, io::Write};
+use std::{io::BufRead, io::Write, time::Instant};
 
 use oxid_composition::ApplicationServices;
 use oxid_diagnostics_application::{DiagnosticCode, DiagnosticSeverity};
@@ -39,19 +52,39 @@ const MAX_REQUEST_ID_CHARACTERS: usize = 128;
 /// Drives Oxid application use cases through line-delimited JSON.
 pub struct HeadlessWallet {
     application: ApplicationServices,
+    started_at: Instant,
 }
 
 impl HeadlessWallet {
     #[must_use]
-    pub const fn new(application: ApplicationServices) -> Self {
-        Self { application }
+    pub fn new(application: ApplicationServices) -> Self {
+        let wallet = Self {
+            application,
+            started_at: Instant::now(),
+        };
+        wallet.initialize_active_realm();
+        wallet
     }
 
     /// Processes requests until EOF or a successful shutdown request.
     ///
     /// Protocol responses are the only bytes written to `writer`. Callers must
     /// direct operational diagnostics to stderr.
-    pub fn run<R: BufRead, W: Write>(
+    pub fn run<R: BufRead, W: Write>(&self, reader: R, writer: W) -> Result<(), HeadlessIoError> {
+        let runtime = tokio::runtime::Handle::try_current().ok();
+        let (stop_sender, stop_receiver) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let scheduler = scope.spawn(move || {
+                self.run_lifecycle_scheduler_with_runtime(&stop_receiver, runtime.as_ref());
+            });
+            let result = self.run_requests(reader, writer);
+            drop(stop_sender);
+            let _ = scheduler.join();
+            result
+        })
+    }
+
+    fn run_requests<R: BufRead, W: Write>(
         &self,
         reader: R,
         mut writer: W,
@@ -176,6 +209,7 @@ impl HeadlessWallet {
             "wallet.address.shielded" => self.shielded_address(request),
             "wallet.balance.snapshot" => self.balance_snapshot(request),
             "wallet.transaction.history" => self.transaction_history(request),
+            "wallet.receive_request.import" => self.import_receive_request(request),
             "wallet.transaction.prepare_unshielded" => self.prepare_unshielded(request),
             "wallet.transaction.prepare_shielded" => self.prepare_shielded(request),
             "wallet.transaction.authorize_unshielded" => self.authorize_unshielded(request),
@@ -213,6 +247,16 @@ impl HeadlessWallet {
             "wallet.dust.registration.reconcile_submission" => {
                 self.reconcile_dust_registration_submission(request)
             }
+            "wallet.dust.registration.settlement" => self.dust_registration_settlement(request),
+            "wallet.dust.registration.settlement.refresh" => {
+                self.refresh_dust_registration_settlement(request)
+            }
+            "wallet.dust.registration.settlement.authorize" => {
+                self.authorize_dust_registration_settlement(request)
+            }
+            "wallet.dust.registration.settlement.retry" => {
+                self.retry_dust_registration_settlement(request)
+            }
             "wallet.shielded.sync.status" => self.shielded_sync_status(request),
             "wallet.shielded.sync.start" => self.start_shielded_sync(request),
             "wallet.shielded.sync.cancel" => self.cancel_shielded_sync(request),
@@ -243,6 +287,7 @@ impl HeadlessWallet {
             "vault.claim" => self.claim_from_vault_lock(request),
             "vault.withdraw" => self.withdraw_from_vault_lock(request),
             "did.create" => self.create_did(request),
+            "did.deploy" => self.deploy_did(request),
             "did.resolve" => self.resolve_did(request),
             "did.list" => self.list_dids(request),
             "did.get" => self.get_did(request),

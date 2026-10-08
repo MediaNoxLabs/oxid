@@ -24,7 +24,10 @@ today="$(date -u +%F)"
 temporary_directory="$(mktemp -d)"
 trap 'rm -rf "$temporary_directory"' EXIT
 baseline="$temporary_directory/capability-facades.json"
+prior_baseline="$temporary_directory/prior-capability-facades.json"
 baseline_entries="$temporary_directory/baseline-index-entry"
+source_roots_file="$temporary_directory/source-roots"
+crates_file="$temporary_directory/crates"
 
 is_iso_date() {
   local value="$1"
@@ -132,6 +135,52 @@ jq -e '
   ))
 ' "$baseline" >/dev/null || fail "baseline schema is invalid."
 
+comparison_revision="HEAD"
+# Pull-request CI must have the protected base ref. A shallow checkout that
+# lacks it cannot prove that the ceiling has not risen.
+if [ -n "${GITHUB_BASE_REF:-}" ]; then
+  if [[ "$GITHUB_BASE_REF" != develop && ! "$GITHUB_BASE_REF" =~ ^milestone-[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    fail "unsupported protected delivery ref '$GITHUB_BASE_REF'."
+  fi
+  delivery_ref="refs/remotes/origin/$GITHUB_BASE_REF"
+  git -C "$repository_root" show-ref --verify --quiet "$delivery_ref" ||
+    fail "protected delivery ref '$delivery_ref' is unavailable; fetch full history before checking façade ratchets."
+  comparison_revision="$(git -C "$repository_root" merge-base HEAD "$delivery_ref")" ||
+    fail "could not resolve the capability façade comparison revision."
+fi
+# Compare with a protected delivery branch, never the issue branch's upstream.
+# The latter points at this same commit after push and silently forgives a rise.
+while [ -z "${GITHUB_BASE_REF:-}" ] && IFS= read -r delivery_ref; do
+  candidate="$(git -C "$repository_root" merge-base HEAD "$delivery_ref")" ||
+    fail "could not resolve the capability façade comparison revision."
+  if [ "$comparison_revision" = HEAD ]; then
+    comparison_revision="$candidate"
+  elif git -C "$repository_root" merge-base --is-ancestor "$comparison_revision" "$candidate"; then
+    comparison_revision="$candidate"
+  elif ! git -C "$repository_root" merge-base --is-ancestor "$candidate" "$comparison_revision"; then
+    fail "protected delivery branches have ambiguous façade comparison revisions."
+  fi
+done < <(git -C "$repository_root" for-each-ref --format='%(refname)' refs/remotes/origin/develop 'refs/remotes/origin/milestone-*')
+if [ "$comparison_revision" != HEAD ] &&
+  [ "$comparison_revision" = "$(git -C "$repository_root" rev-parse HEAD)" ] &&
+  git -C "$repository_root" rev-parse -q --verify 'HEAD^' >/dev/null; then
+  comparison_revision="HEAD^"
+fi
+if git -C "$repository_root" cat-file -e "$comparison_revision:$baseline_path" 2>/dev/null; then
+  git -C "$repository_root" show "$comparison_revision:$baseline_path" >"$prior_baseline" || fail "could not read the prior capability façade baseline."
+  jq -e '
+    . as $current |
+    input as $prior |
+    [ $current.crates[] as $crate |
+      $prior.crates[]? | select(.name == $crate.name) as $previous |
+      $crate.facadeMaximumPhysicalLinesByPath | to_entries[] as $ceiling |
+      select($ceiling.value > $previous.facadeMaximumPhysicalLinesByPath[$ceiling.key])
+    ] | length == 0
+  ' "$baseline" "$prior_baseline" >/dev/null ||
+    fail "a façade maximum increased from the comparison revision; use a temporary exception instead of raising the ratchet."
+fi
+
+jq -r '.crates[].sourceRoot' "$baseline" >"$source_roots_file"
 source_roots=()
 while IFS= read -r source_root; do
   case "$source_root" in
@@ -139,7 +188,7 @@ while IFS= read -r source_root; do
   esac
   path_has_glob "$source_root" && fail "sourceRoot '$source_root' must not contain a glob."
   source_roots+=("$source_root")
-done < <(jq -r '.crates[].sourceRoot' "$baseline")
+done <"$source_roots_file"
 
 inventory="$temporary_directory/inventory"
 unsorted_inventory="$temporary_directory/unsorted-inventory"
@@ -188,6 +237,7 @@ awk -F '\t' '
   seen[$1]++ { if (seen[$1] > 1) exit 1 }
 ' "$inventory" || fail "indexed inventory must contain unique path and physical-line records."
 
+jq -c '.crates[]' "$baseline" >"$crates_file"
 crate_index=0
 while IFS= read -r crate; do
   crate_index=$((crate_index + 1))
@@ -196,6 +246,12 @@ while IFS= read -r crate; do
   name="$(jq -r '.name' "$crate_file")"
   source_root="$(jq -r '.sourceRoot' "$crate_file")"
   maximum="$(jq -r '.facadeMaximumPhysicalLines' "$crate_file")"
+  facade_files="$temporary_directory/facade-files-$crate_index"
+  exclusion_paths="$temporary_directory/exclusion-paths-$crate_index"
+  exception_records="$temporary_directory/exception-records-$crate_index"
+  jq -r '.facadeFiles[]' "$crate_file" >"$facade_files"
+  jq -r '.exclusions[].path' "$crate_file" >"$exclusion_paths"
+  jq -c '.temporaryExceptions[]' "$crate_file" >"$exception_records"
 
   duplicate_facade="$(jq -r '.facadeFiles[]' "$crate_file" | sort | uniq -d)"
   [ -z "$duplicate_facade" ] || fail "$name repeats façade path '$duplicate_facade'."
@@ -208,7 +264,7 @@ while IFS= read -r crate; do
       *) fail "$name façade '$facade' is not a Rust file below '$source_root'." ;;
     esac
     inventory_has "$facade" || fail "$name façade '$facade' is missing from the indexed inventory."
-  done < <(jq -r '.facadeFiles[]' "$crate_file")
+  done <"$facade_files"
 
   jq -e 'all(.capabilityOwners[];
     keys == ["modulePathPrefixes", "name"] and
@@ -263,11 +319,11 @@ while IFS= read -r crate; do
       *) fail "$name exclusion '$exclusion' is not a Rust file below '$source_root'." ;;
     esac
     inventory_has "$exclusion" || fail "$name exclusion '$exclusion' is missing from the indexed inventory."
-  done < <(jq -r '.exclusions[].path' "$crate_file")
+  done <"$exclusion_paths"
 
   jq -e 'all(.temporaryExceptions[];
     keys == ["expiresOn", "extraLineCeiling", "issue", "paths", "reason"] and
-    (.paths | type == "array" and length > 0) and
+    (.paths | type == "array" and length == 1) and
     all(.paths[]; type == "string" and length > 0) and
     (.extraLineCeiling | type == "number" and floor == . and . > 0) and
     (.issue | type == "string" and length > 0) and
@@ -278,11 +334,17 @@ while IFS= read -r crate; do
   duplicate_exception_path="$(jq -r '.temporaryExceptions[].paths[]' "$crate_file" | sort | uniq -d)"
   [ -z "$duplicate_exception_path" ] || fail "$name repeats temporary exception path '$duplicate_exception_path'."
   exception_ceiling=0
+  exception_index=0
   while IFS= read -r exception; do
-    expires_on="$(jq -r '.expiresOn' <<<"$exception")"
+    exception_index=$((exception_index + 1))
+    exception_file="$temporary_directory/exception-$crate_index-$exception_index.json"
+    printf '%s\n' "$exception" >"$exception_file"
+    expires_on="$(jq -r '.expiresOn' "$exception_file")"
     is_iso_date "$expires_on" || fail "$name exception expiry '$expires_on' is not an ISO-8601 calendar date."
     [ "$expires_on" \> "$today" ] || fail "$name has an expired temporary exception ending '$expires_on'."
     exception_excess=0
+    exception_paths="$temporary_directory/exception-paths-$crate_index-$exception_index"
+    jq -r '.paths[]' "$exception_file" >"$exception_paths"
     while IFS= read -r exception_path; do
       jq -e --arg path "$exception_path" '.facadeFiles | index($path) != null' "$crate_file" >/dev/null || fail "$name exception path '$exception_path' is not an exact façade path."
       lines="$(inventory_lines "$exception_path")"
@@ -290,11 +352,12 @@ while IFS= read -r crate; do
       if [ "$lines" -gt "$path_maximum" ]; then
         exception_excess=$((exception_excess + lines - path_maximum))
       fi
-    done < <(jq -r '.paths[]' <<<"$exception")
-    ceiling="$(jq -r '.extraLineCeiling' <<<"$exception")"
+    done <"$exception_paths"
+    ceiling="$(jq -r '.extraLineCeiling' "$exception_file")"
     [ "$exception_excess" -le "$ceiling" ] || fail "$name temporary exception needs $exception_excess extra lines across its exact paths; ceiling is $ceiling."
+    [ "$exception_excess" -eq "$ceiling" ] || fail "$name temporary exception has stale headroom: $exception_excess extra lines, ceiling $ceiling."
     exception_ceiling=$((exception_ceiling + ceiling))
-  done < <(jq -c '.temporaryExceptions[]' "$crate_file")
+  done <"$exception_records"
 
   facade_total=0
   while IFS= read -r facade; do
@@ -303,10 +366,12 @@ while IFS= read -r crate; do
     if ! jq -e --arg path "$facade" '[.temporaryExceptions[].paths[]] | index($path) != null' "$crate_file" >/dev/null; then
       path_maximum="$(jq -r --arg path "$facade" '.facadeMaximumPhysicalLinesByPath[$path]' "$crate_file")"
       [ "$lines" -le "$path_maximum" ] || fail "$name façade '$facade' has $lines lines; path maximum is $path_maximum."
+      [ "$lines" -ge "$path_maximum" ] || fail "$name façade '$facade' has $lines lines below path maximum $path_maximum; lower the ratchet."
     fi
-  done < <(jq -r '.facadeFiles[]' "$crate_file")
+  done <"$facade_files"
   allowed_total=$((maximum + exception_ceiling))
   [ "$facade_total" -le "$allowed_total" ] || fail "$name façade total $facade_total exceeds its allowed maximum $allowed_total."
+  [ "$facade_total" -ge "$maximum" ] || fail "$name façade total $facade_total is below its committed maximum $maximum; lower the ratchet in the same change."
 
   while IFS=$'\t' read -r encoded_path lines; do
     path="$(decode_path "$encoded_path")"
@@ -329,6 +394,6 @@ while IFS= read -r crate; do
     [ "$owners" -eq 1 ] || fail "$name source '$(display_path "$path")' belongs to $owners capability owners; expected exactly one."
   done <"$inventory"
   rm -f "$prefixes"
-done < <(jq -c '.crates[]' "$baseline")
+done <"$crates_file"
 
 echo "Capability façade ownership and line ratchets passed."

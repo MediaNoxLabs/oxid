@@ -1,5 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(all(
+    feature = "mobile-portal",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+compile_error!("mobile-portal is available only on iOS and Android");
+
+#[cfg(all(feature = "mobile-portal-tailnet", not(target_os = "android")))]
+compile_error!("mobile-portal-tailnet is available only on Android");
+
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 
@@ -124,6 +133,8 @@ pub enum HeadlessCompositionError {
     InvalidPortalConfiguration,
     InvalidStandaloneDeploymentProfile,
     PublicStandaloneGenesisRequiresUndeployed,
+    DevelopmentDidApprovalFixtureUnavailable,
+    DevelopmentMovementApprovalFixtureUnavailable,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -176,6 +187,12 @@ impl std::fmt::Display for HeadlessCompositionError {
             Self::InvalidStandaloneDeploymentProfile => "invalid standalone deployment profile",
             Self::PublicStandaloneGenesisRequiresUndeployed => {
                 "public standalone genesis custody requires the undeployed network"
+            }
+            Self::DevelopmentDidApprovalFixtureUnavailable => {
+                "development DID approval fixture supports only persistent simulated or Portal standalone profiles"
+            }
+            Self::DevelopmentMovementApprovalFixtureUnavailable => {
+                "development movement approval fixture supports only a standalone profile without Portal or Passport Vault overrides"
             }
         };
         formatter.write_str(message)

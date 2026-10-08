@@ -99,6 +99,7 @@ if ! PORTAL_INTEGRATION_TREE="$RUN_TREE" \
   OXID_PORTAL_EVIDENCE_HEAD="$OXID_HEAD" \
   OXID_PORTAL_EVIDENCE_TREE="$OXID_TREE" \
   cargo test --manifest-path "$REPO_ROOT/Cargo.toml" -p oxid-headless \
+    --features development-did-approval-fixture \
     --test portal_live_flow \
     lace_portal_mock_flow_issues_to_same_headless_process_and_restores \
     -- --ignored --exact >>"$RAW_LOG" 2>&1; then

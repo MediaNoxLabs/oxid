@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# Dioxus/Wry's Android Java bridge calls these native entry points by their
+# JNI names. Rust and dependency implementation symbols are private to the
+# packaged executable and must not inflate Bionic's dynamic hash table.
+OXID_ANDROID_1 {
+  global:
+    JNI_OnLoad*;
+    ANativeActivity_onCreate*;
+    android_main*;
+    main*;
+    _start*;
+    Java_*;
+  local:
+    *;
+};

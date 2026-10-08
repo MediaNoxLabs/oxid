@@ -1,0 +1,54 @@
+{
+  "name": "portal-tailnet-prepare",
+  "description": "Prepare the exact pinned Portal artifacts for the private Tailnet VC issuance demo without requiring a phone or changing Tailscale state.",
+  "version": 1,
+  "scriptCwd": "invocation",
+  "strictInterpolation": true,
+  "incremental": false,
+  "concurrency": 1,
+  "args": {
+    "mode": {
+      "type": "enum",
+      "values": ["prepare-only"],
+      "default": "prepare-only",
+      "description": "The first canary is intentionally limited to environment preparation."
+    }
+  },
+  "phases": [
+    {
+      "id": "preflight",
+      "type": "script",
+      "run": ["./scripts/factory/portal-tailnet-taskflow-step.sh", "preflight", "{args.mode}"],
+      "timeout": 30000,
+      "idempotent": true,
+      "cache": {"scope": "off"}
+    },
+    {
+      "id": "prepare-artifacts",
+      "type": "approval",
+      "task": "Run `just portal-tailnet-manual-prepare` in a supervised terminal. It may take longer than Taskflow 0.2.10's five-minute script limit and is resumable from its private receipt. Approve only after the command reports PREPARED; reject instead of bypassing a failed build.",
+      "dependsOn": ["preflight"],
+      "timeoutMs": 14400000,
+      "onExpire": "reject"
+    },
+    {
+      "id": "verify-prepared-artifacts",
+      "type": "script",
+      "run": ["./scripts/test-android-portal-tailnet-physical.sh", "manual-prepared-status"],
+      "dependsOn": ["prepare-artifacts"],
+      "timeout": 60000,
+      "idempotent": true,
+      "cache": {"scope": "off"}
+    },
+    {
+      "id": "handoff",
+      "type": "script",
+      "run": ["./scripts/factory/portal-tailnet-taskflow-step.sh", "handoff", "{args.mode}"],
+      "dependsOn": ["verify-prepared-artifacts"],
+      "timeout": 30000,
+      "idempotent": true,
+      "cache": {"scope": "off"},
+      "final": true
+    }
+  ]
+}

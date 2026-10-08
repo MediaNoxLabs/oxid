@@ -20,6 +20,10 @@ if [ ! -x /usr/bin/xcodebuild ] || [ ! -x /usr/bin/xcrun ]; then
 fi
 
 repository_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=e2e/ios-simulator-ownership.sh
+source "$repository_root/scripts/e2e/ios-simulator-ownership.sh"
+oxid_ios_supervise_acceptance "$repository_root" ios-profile-flow 3600 \
+  "$repository_root/scripts/test-ios-profile-flow.sh" "$@"
 cd "$repository_root"
 
 device="${OXID_IOS_DEVICE:-}"
@@ -51,13 +55,17 @@ app_bundle="$repository_root/target/dx/oxid-app/debug/ios/OxidApp.app"
 bundle_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw "$app_bundle/Info.plist")"
 test_source="$repository_root/tests/mobile/ios/OxidUITests/ProfileFlowTests.swift"
 test_names=()
-while IFS= read -r test_name; do
-  test_names+=("$test_name")
-done < <(
-  sed -nE \
-    's/^[[:space:]]*func (test[A-Za-z0-9_]+)\(\)( throws)? \{.*/\1/p' \
-    "$test_source"
-)
+if [ -n "${OXID_IOS_PROFILE_TEST:-}" ]; then
+  test_names+=("$OXID_IOS_PROFILE_TEST")
+else
+  while IFS= read -r test_name; do
+    test_names+=("$test_name")
+  done < <(
+    sed -nE \
+      's/^[[:space:]]*func (test[A-Za-z0-9_]+)\(\)( throws)? \{.*/\1/p' \
+      "$test_source"
+  )
+fi
 if [ "${#test_names[@]}" -eq 0 ]; then
   echo "No ProfileFlowTests test methods were discovered in $test_source." >&2
   exit 1
@@ -73,7 +81,8 @@ for test_name in "${test_names[@]}"; do
   /usr/bin/xcrun simctl uninstall "$device" "$bundle_identifier" >/dev/null 2>&1 || true
   /usr/bin/xcrun simctl install "$device" "$app_bundle"
 
-  env -i \
+  scenario_name="$(oxid_ios_scenario_name profile "$test_name")"
+  oxid_ios_run_xctest "$repository_root" "$scenario_name" 600 env -i \
     "DEVELOPER_DIR=$xcode_developer_dir" \
     "HOME=$HOME" \
     "LANG=${LANG:-en_US.UTF-8}" \

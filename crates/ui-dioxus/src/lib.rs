@@ -2,12 +2,16 @@
 
 #![forbid(unsafe_code)]
 
+mod activity_page;
 #[cfg(any(target_os = "android", test))]
 mod android_platform;
 mod assets_page;
 mod brand;
+mod credential_inventory;
 #[cfg(feature = "standalone-deployment-profile")]
 mod deployment_profile;
+#[cfg(feature = "desktop-developer-pager-driver")]
+mod desktop_developer_pager_driver;
 #[cfg(feature = "desktop-test-click-driver")]
 mod desktop_test_driver;
 mod developer_notices;
@@ -16,24 +20,38 @@ mod developer_tools;
 mod diagnostics;
 mod dids;
 mod header_menu;
+mod identity_primitives;
+mod identity_scan;
 mod labels;
 mod passport_vault;
 mod profile_guard;
 mod profile_quick_switcher;
 #[cfg(feature = "proof-benchmark")]
 mod proof_benchmark;
+mod receive;
 mod screen_privacy;
 mod selected_realm_sync;
+mod send_recipient;
 mod wallet_onboarding;
+mod wallet_realm_lifecycle;
+mod wallet_realm_sync_services;
+pub use wallet_realm_sync_services::{WalletAccountUiServices, WalletRealmSyncUiServices};
 #[cfg(feature = "preprod-observation")]
 mod wallet_root_recovery;
 
+use activity_page::{
+    CredentialIssuanceActivitySection, CredentialPresentationActivitySection,
+    PassportVaultActivitySection,
+};
 #[cfg(target_os = "android")]
 pub use android_platform::{AndroidPlatformInitialization, App};
 use assets_page::AssetsPage;
 #[cfg(test)]
-use assets_page::{wallet_account_activation_available, wallet_write_actions_available};
+use assets_page::{
+    has_protected_account, wallet_account_activation_available, wallet_write_actions_available,
+};
 pub use brand::{BrandProfile, SecurityCopySnapshot, security_copy_snapshot};
+use credential_inventory::CredentialInventoryCard;
 #[cfg(feature = "standalone-deployment-profile")]
 use deployment_profile::DeploymentProfileCard;
 use developer_notices::{
@@ -41,11 +59,29 @@ use developer_notices::{
 };
 pub use diagnostics::DiagnosticsUiServices;
 use dids::DidsPage;
+use identity_primitives::{IdentityEmptyState, IdentityReviewSheet};
+#[cfg(test)]
+use identity_scan::identity_scan_is_admitted;
+use identity_scan::{IdentityScanDependencies, IdentityScanSignals, start_identity_scan};
 #[cfg(feature = "ui-profile-dev")]
 pub use oxid_capabilities_application::CapabilityManifestContext;
 pub use passport_vault::{
     PassportVaultContractCallRecoveryUiServices, PassportVaultContractCallUiServices,
-    PassportVaultUiServices,
+    PassportVaultLockUiServices, PassportVaultUiServices,
+};
+#[cfg(feature = "standalone-deployment-profile")]
+use receive::standalone_funding_action;
+use receive::{
+    default_receive_kind, grouped_address_preview, protected_receive_addresses,
+    public_export_message, receive_address_is_exportable, render_qr_svg,
+};
+use selected_realm_sync::action_watch::{
+    WalletActionWatchContext, WalletActionWatchStatus, reset_receive_watch, start_receive_watch,
+    use_action_watch_projection,
+};
+use send_recipient::{
+    SendWizardProgress, SendWizardStep, is_public_recipient_candidate, scanned_recipient_update,
+    start_recipient_scan,
 };
 use wallet_onboarding::{WalletOnboarding, WalletOnboardingIntent};
 #[cfg(feature = "preprod-observation")]
@@ -64,12 +100,13 @@ use oxid_credential_application::{
     PreviewCredentialDisclosureUseCase, ReceiveCredentialUseCase, RevealCredentialClaimCommand,
     RevealCredentialClaimUseCase, ReverifyCredentialUseCase,
 };
-#[cfg(any(target_os = "ios", target_os = "android"))]
-use oxid_diagnostics_application::DiagnosticEventSinkPort;
-use oxid_diagnostics_application::{ClearDiagnosticsUseCase, GetDiagnosticSnapshotUseCase};
+use oxid_diagnostics_application::{
+    ClearDiagnosticsUseCase, DiagnosticCode, DiagnosticEventSinkPort, DiagnosticSeverity,
+    GetDiagnosticSnapshotUseCase,
+};
 use oxid_identity_application::{
     CreateDidCommand, CreateDidUseCase, DeactivateDidCommand, DeactivateDidUseCase,
-    DidKeyAlgorithm, DidOperationConfirmation, DidOperationError, DidRecordQuery, DidRecordView,
+    DidKeyAlgorithm, DidOperationError, DidRecordQuery, DidRecordView, DidRefreshAvailability,
     DidUpdate, ForgetDidUseCase, ListDidRecordsQuery, ListDidRecordsUseCase,
     PUBLISH_DID_TO_TEST_ISSUER_INTENT, PublishDidCommand, PublishDidUseCase, ResolveDidCommand,
     ResolveDidUseCase, SignDidPayloadCommand, SignDidPayloadUseCase, UpdateDidCommand,
@@ -78,18 +115,20 @@ use oxid_identity_application::{
 use oxid_identity_domain::VerificationRelationship;
 use oxid_passport_vault_application::{
     ClaimPassportVaultLockUseCase, CreatePassportVaultLockUseCase, DepositPassportVaultLockUseCase,
-    ListPassportVaultLocksUseCase, PassportVaultView, WithdrawPassportVaultLockUseCase,
+    ListPassportVaultActivityUseCase, ListPassportVaultLocksUseCase, PassportVaultView,
+    WithdrawPassportVaultLockUseCase,
 };
 use oxid_platform_ports::{
-    IdentityLinkIngressError, IdentityLinkIngressPort, PublicReceiveAddress, PublicTextExportError,
-    PublicTextExportPort, QrScanError, QrScannerPort, ScreenPrivacyPort,
+    IdentityLinkIngressError, IdentityLinkIngressPort, PublicDid, PublicReceiveAddress,
+    PublicTextExportError, PublicTextExportPort, QrScanError, QrScannerPort, ScreenPrivacyPort,
 };
 #[cfg(feature = "proof-benchmark")]
 use oxid_platform_ports::{ProcessResourceSamplerPort, UnavailableProcessResourceSampler};
 use oxid_presentation_application::{
     AcceptCredentialPresentationCommand, AcceptCredentialPresentationUseCase,
     CancelCredentialPresentationCommand, CancelCredentialPresentationUseCase,
-    CredentialPresentationError, CredentialPresentationView, PrepareCredentialPresentationCommand,
+    CredentialPresentationError, CredentialPresentationView,
+    ListCredentialPresentationActivityUseCase, PrepareCredentialPresentationCommand,
     PrepareCredentialPresentationUseCase, PresentationProtocolError,
     RefuseCredentialPresentationCommand, RefuseCredentialPresentationUseCase,
     RequestedPresentationClaimView,
@@ -98,57 +137,48 @@ use oxid_protocol_application::{
     AcceptCredentialIssuanceCommand, AcceptCredentialIssuanceUseCase,
     AcceptSelfIssuedAuthenticationCommand, AcceptSelfIssuedAuthenticationUseCase,
     CredentialIssuanceError, CredentialIssuanceProfileQuery, CredentialIssuanceView,
-    IdentityRequestKind, IdentityRequestRoutingError, ListCredentialIssuancesUseCase,
-    PrepareCredentialIssuanceCommand, PrepareCredentialIssuanceUseCase,
-    PrepareSelfIssuedAuthenticationCommand, PrepareSelfIssuedAuthenticationUseCase,
-    RefuseCredentialIssuanceCommand, RefuseCredentialIssuanceUseCase,
-    RefuseSelfIssuedAuthenticationCommand, RefuseSelfIssuedAuthenticationUseCase,
-    RouteIdentityRequestCommand, RouteIdentityRequestUseCase, SelfIssuedAuthenticationError,
-    SelfIssuedAuthenticationView,
+    IdentityRequestKind, IdentityRequestRoutingError, ListCredentialIssuanceActivityUseCase,
+    ListCredentialIssuancesUseCase, PrepareCredentialIssuanceCommand,
+    PrepareCredentialIssuanceUseCase, PrepareSelfIssuedAuthenticationCommand,
+    PrepareSelfIssuedAuthenticationUseCase, RefuseCredentialIssuanceCommand,
+    RefuseCredentialIssuanceUseCase, RefuseSelfIssuedAuthenticationCommand,
+    RefuseSelfIssuedAuthenticationUseCase, RouteIdentityRequestCommand,
+    RouteIdentityRequestUseCase, SelfIssuedAuthenticationError, SelfIssuedAuthenticationView,
 };
 #[cfg(feature = "proof-benchmark")]
 use oxid_wallet_application::RunProofBenchmarkUseCase;
+#[cfg(test)]
+use oxid_wallet_application::WalletAddressView;
 use oxid_wallet_application::{
-    AuthorizeWalletDustRegistrationCommand, AuthorizeWalletDustRegistrationUseCase,
-    AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase,
-    CancelSelectedWalletRealmSyncUseCase, CancelWalletDustRegistrationSubmissionCommand,
-    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
+    AuthorizeWalletTransferCommand, AuthorizeWalletTransferUseCase, CancelWalletDustSyncUseCase,
     CancelWalletOnboardingUseCase, CancelWalletShieldedSyncUseCase,
     CancelWalletTransferSubmissionUseCase, CompleteWalletOnboardingUseCase,
     CompleteWalletRecoverySummary, CreateWalletProfileCommand, CreateWalletProfileUseCase,
     DeriveWalletAccountCommand, DeriveWalletAccountUseCase, EXPORT_COMPLETE_WALLET_BACKUP_SUMMARY,
     EXPORT_COMPLETE_WALLET_BACKUP_TITLE, ExportCompleteWalletBackupCommand,
-    ExportCompleteWalletBackupUseCase, GetActiveWalletProfileUseCase,
-    GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
-    GetWalletDustRegistrationCommand, GetWalletDustRegistrationStatusCommand,
-    GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
-    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
+    ExportCompleteWalletBackupUseCase, GetActiveWalletProfileUseCase, GetWalletAccountUseCase,
+    GetWalletBackupReceiptUseCase, GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
     GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
     GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
     ListWalletNetworksUseCase, ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase,
     LockWalletUseCase, MAX_WALLET_RECOVERY_SECRET_CHARACTERS, PortableWalletBackupDocumentError,
     PortableWalletBackupDocumentKind, PortableWalletBackupDocumentPort,
     PrepareShieldedWalletTransferCommand, PrepareShieldedWalletTransferUseCase,
-    PrepareWalletDustRegistrationCommand, PrepareWalletDustRegistrationUseCase,
     PrepareWalletOnboardingUseCase, PrepareWalletTransferCommand, PrepareWalletTransferUseCase,
     RECOVER_COMPLETE_WALLET_BACKUP_SUMMARY, RECOVER_COMPLETE_WALLET_BACKUP_TITLE,
     RECOVER_PORTABLE_WALLET_BACKUP_SUMMARY, RECOVER_PORTABLE_WALLET_BACKUP_TITLE,
-    ReconcileWalletDustRegistrationSubmissionCommand,
-    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletTransferSubmissionUseCase,
-    RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupCommand,
-    RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupCommand,
-    RecoverPortableWalletBackupUseCase, SelectWalletNetworkCommand, SelectWalletNetworkUseCase,
-    SelectWalletProfileCommand, SelectWalletProfileUseCase, SelectedWalletRealmSyncCommand,
+    ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
+    RecoverCompleteWalletBackupCommand, RecoverCompleteWalletBackupUseCase,
+    RecoverPortableWalletBackupCommand, RecoverPortableWalletBackupUseCase,
+    SelectWalletNetworkCommand, SelectWalletNetworkUseCase, SelectWalletProfileCommand,
+    SelectWalletProfileUseCase, SelectedWalletRealmProjection, SelectedWalletRealmSyncCommand,
     SelectedWalletRealmSyncView, SensitiveOperationConfirmation, StartWalletDustSyncUseCase,
-    StartWalletShieldedSyncUseCase, SubmitWalletDustRegistrationCommand,
-    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
-    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
-    WalletAccountError, WalletAccountPortError, WalletAccountQuery, WalletAccountView,
-    WalletAddressView, WalletBackupReceiptCommand, WalletBackupReceiptView,
-    WalletDustRegistrationAssetView, WalletDustRegistrationPreviewView,
-    WalletDustRegistrationSubmissionStatusView, WalletDustSyncView, WalletNetworkListView,
+    StartWalletShieldedSyncUseCase, SubmitWalletTransferCommand, SubmitWalletTransferUseCase,
+    SyncWalletAccountUseCase, UnlockWalletUseCase, WalletAccountError, WalletAccountPortError,
+    WalletAccountQuery, WalletAccountSource, WalletAccountView, WalletBackupReceiptCommand,
+    WalletBackupReceiptView, WalletDustSyncView, WalletNetworkListView,
     WalletProfileSecurityCommand, WalletProfileView, WalletRealmFamilyView, WalletRecoverySecret,
-    WalletSecurityStatusView, WalletShieldedSyncView, WalletSyncStatusView,
+    WalletSecurityStatusView, WalletShieldedSyncView, WalletSyncState, WalletSyncStatusView,
     WalletTransferDraftQuery, WalletTransferPreviewView, WalletTransferSubmissionQuery,
     WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
 };
@@ -161,8 +191,8 @@ use zeroize::{Zeroize, Zeroizing};
 
 #[cfg(feature = "ui-profile-dev")]
 use developer_tools::{
-    DeveloperCapabilitiesPage, DeveloperProofBenchmarkPage, DeveloperSectionNav, DeveloperToolsHub,
-    is_developer_route, is_developer_section,
+    DeveloperCapabilitiesPage, DeveloperProofBenchmarkPage, DeveloperSectionNav,
+    DeveloperSectionPager, DeveloperToolsHub, is_developer_route, is_developer_section,
 };
 #[cfg(feature = "ui-profile-dev")]
 use diagnostics::DeveloperDiagnosticsPage;
@@ -170,33 +200,32 @@ use diagnostics::DiagnosticsPage;
 use header_menu::{GlobalApplicationMenu, GlobalMenuAction, GlobalMenuTrigger, HeaderMenu};
 use labels as ui;
 use passport_vault::PassportVaultPage;
-use profile_quick_switcher::{ProfileSwitcherMenu, profile_switch_is_allowed};
+use profile_quick_switcher::{ProfilePage, ProfileSwitcherMenu, profile_switch_is_allowed};
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use screen_privacy::protect_suspended_snapshot;
 use screen_privacy::route_forces_screen_privacy;
 use selected_realm_sync::{
-    AccountSyncCardState, dust_status_pill_class, load_account_sync_card,
-    non_native_shielded_balances, poll_account_sync, selected_realm_chain_tip,
-    selected_realm_dust_balance, selected_realm_dust_note, selected_realm_dust_state,
-    selected_realm_is_syncing, selected_realm_provenance, selected_realm_shielded_balance,
-    selected_realm_shielded_note, selected_realm_shielded_state, selected_realm_sync_progress,
-    selected_realm_sync_state,
+    AccountSyncCardState, account_sync_card_accepts_projection,
+    begin_account_sync_card_observation, dust_status_pill_class, finish_account_sync_card_action,
+    non_native_shielded_balances, poll_account_sync, reload_account_sync_card,
+    selected_realm_chain_tip, selected_realm_dust_balance, selected_realm_dust_note,
+    selected_realm_dust_state, selected_realm_is_syncing, selected_realm_lifecycle_presentation,
+    selected_realm_provenance, selected_realm_shielded_balance, selected_realm_shielded_note,
+    selected_realm_shielded_state, selected_realm_sync_progress, selected_realm_sync_state,
 };
 #[cfg(test)]
 use selected_realm_sync::{
     dust_progress_percent, dust_sync_note, shielded_progress_percent, shielded_sync_note,
 };
+use wallet_realm_lifecycle::{WalletRealmLifecycleWake, WalletRealmProjectionWake};
 
 const BASE_STYLES: &str = include_str!("../assets/styles.css");
-const DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL: &str = "Protected DUST registration";
-const DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL: &str = "Authorize DUST registration";
-const DUST_REGISTRATION_SUBMIT_ACCESSIBLE_LABEL: &str = "Register on Midnight";
-const DUST_REGISTRATION_RECONCILE_ACCESSIBLE_LABEL: &str =
-    "Reconcile DUST registration with Midnight";
 const CREDENTIAL_ISSUANCE_TERMINAL_ERROR_STATUS: &str =
     "Credential issuance terminal error: protocol unavailable";
 const CREDENTIAL_ISSUANCE_PROTOCOL_ERROR_STATUS: &str =
     "Credential issuance protocol error: protocol unavailable";
+const IMPORTED_CREDENTIAL_OFFER_NOTICE: &str =
+    "Imported credential offer loaded. Preview it before accepting.";
 const NATIVE_SHIELDED_NIGHT_TOKEN_TYPE: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
 #[cfg(not(target_arch = "wasm32"))]
@@ -295,7 +324,6 @@ pub struct WalletUiServices {
     proof_benchmark: Option<Arc<dyn RunProofBenchmarkUseCase>>,
     #[cfg(feature = "proof-benchmark")]
     process_resource_sampler: Arc<dyn ProcessResourceSamplerPort>,
-    #[cfg(any(target_os = "ios", target_os = "android"))]
     diagnostic_events: Arc<dyn DiagnosticEventSinkPort>,
     get_diagnostic_snapshot: Arc<dyn GetDiagnosticSnapshotUseCase>,
     clear_diagnostics: Arc<dyn ClearDiagnosticsUseCase>,
@@ -326,21 +354,11 @@ pub struct WalletUiServices {
     derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
     get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
     sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
-    sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
-    get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
-    cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
+    realm_sync: WalletRealmSyncUiServices,
     get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
     start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
     cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
-    prepare_wallet_dust_registration: Arc<dyn PrepareWalletDustRegistrationUseCase>,
-    authorize_wallet_dust_registration: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
-    submit_wallet_dust_registration: Arc<dyn SubmitWalletDustRegistrationUseCase>,
-    get_wallet_dust_registration: Arc<dyn GetWalletDustRegistrationUseCase>,
-    get_wallet_dust_registration_status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
-    cancel_wallet_dust_registration_submission:
-        Arc<dyn CancelWalletDustRegistrationSubmissionUseCase>,
-    reconcile_wallet_dust_registration_submission:
-        Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
+    wallet_dust_settlement: WalletDustSettlementUiServices,
     get_wallet_shielded_sync_status: Arc<dyn GetWalletShieldedSyncStatusUseCase>,
     start_wallet_shielded_sync: Arc<dyn StartWalletShieldedSyncUseCase>,
     cancel_wallet_shielded_sync: Arc<dyn CancelWalletShieldedSyncUseCase>,
@@ -373,18 +391,21 @@ pub struct WalletUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+    list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
     standalone_credential_offer: Option<String>,
     credential_issuance_ready: bool,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
     cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
     refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
+    list_credential_presentation_activity: Arc<dyn ListCredentialPresentationActivityUseCase>,
     standalone_openid4vp_request: Option<String>,
     prepare_self_issued_authentication: Arc<dyn PrepareSelfIssuedAuthenticationUseCase>,
     accept_self_issued_authentication: Arc<dyn AcceptSelfIssuedAuthenticationUseCase>,
     refuse_self_issued_authentication: Arc<dyn RefuseSelfIssuedAuthenticationUseCase>,
     standalone_self_issued_request: Option<String>,
     list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase>,
+    list_passport_vault_activity: Arc<dyn ListPassportVaultActivityUseCase>,
     create_passport_vault_lock: Arc<dyn CreatePassportVaultLockUseCase>,
     deposit_passport_vault_lock: Arc<dyn DepositPassportVaultLockUseCase>,
     claim_passport_vault_lock: Arc<dyn ClaimPassportVaultLockUseCase>,
@@ -397,7 +418,7 @@ pub struct WalletUiServices {
 /// service bundles at the incoming composition boundary.
 pub struct WalletOperationalUiServices {
     dust: WalletDustSyncUiServices,
-    dust_registration: WalletDustRegistrationUiServices,
+    dust_settlement: WalletDustSettlementUiServices,
     shielded: WalletShieldedSyncUiServices,
     transactions: WalletTransactionUiServices,
     vault: PassportVaultUiServices,
@@ -407,18 +428,49 @@ impl WalletOperationalUiServices {
     #[must_use]
     pub const fn new(
         dust: WalletDustSyncUiServices,
-        dust_registration: WalletDustRegistrationUiServices,
+        dust_settlement: WalletDustSettlementUiServices,
         shielded: WalletShieldedSyncUiServices,
         transactions: WalletTransactionUiServices,
         vault: PassportVaultUiServices,
     ) -> Self {
         Self {
             dust,
-            dust_registration,
+            dust_settlement,
             shielded,
             transactions,
             vault,
         }
+    }
+}
+
+pub type WalletDustSettlementProjection =
+    oxid_wallet_application::WalletDustRegistrationSettlementProjection;
+pub type WalletDustSettlementSubscription =
+    tokio::sync::watch::Receiver<WalletDustSettlementProjection>;
+
+/// Adapter boundary for the composition-owned DUST settlement coordinator.
+///
+/// The UI can only observe the composition-owned projection. Registration,
+/// reconciliation, and retries remain application/composition concerns.
+pub trait WalletDustSettlementUiPort: Send + Sync {
+    fn projection(&self) -> Result<WalletDustSettlementProjection, String>;
+
+    fn subscribe(&self) -> WalletDustSettlementSubscription;
+}
+
+#[derive(Clone)]
+pub struct WalletDustSettlementUiServices {
+    port: Arc<dyn WalletDustSettlementUiPort>,
+}
+
+impl WalletDustSettlementUiServices {
+    #[must_use]
+    pub const fn new(port: Arc<dyn WalletDustSettlementUiPort>) -> Self {
+        Self { port }
+    }
+
+    fn port(&self) -> Arc<dyn WalletDustSettlementUiPort> {
+        Arc::clone(&self.port)
     }
 }
 
@@ -448,12 +500,14 @@ pub struct CredentialUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+    list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
     standalone_credential_offer: Option<String>,
     credential_issuance_ready: bool,
     prepare_credential_presentation: Arc<dyn PrepareCredentialPresentationUseCase>,
     accept_credential_presentation: Arc<dyn AcceptCredentialPresentationUseCase>,
     cancel_credential_presentation: Arc<dyn CancelCredentialPresentationUseCase>,
     refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
+    list_credential_presentation_activity: Arc<dyn ListCredentialPresentationActivityUseCase>,
     standalone_openid4vp_request: Option<String>,
 }
 
@@ -491,6 +545,7 @@ pub struct CredentialIssuanceUiServices {
     accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
     refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+    list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
     standalone_credential_offer: Option<String>,
     credential_issuance_ready: bool,
 }
@@ -501,6 +556,7 @@ pub struct CredentialPresentationUiServices {
     accept: Arc<dyn AcceptCredentialPresentationUseCase>,
     cancel: Arc<dyn CancelCredentialPresentationUseCase>,
     refuse: Arc<dyn RefuseCredentialPresentationUseCase>,
+    activity: Arc<dyn ListCredentialPresentationActivityUseCase>,
     standalone_request: Option<String>,
 }
 
@@ -511,6 +567,7 @@ impl CredentialPresentationUiServices {
         accept: Arc<dyn AcceptCredentialPresentationUseCase>,
         cancel: Arc<dyn CancelCredentialPresentationUseCase>,
         refuse: Arc<dyn RefuseCredentialPresentationUseCase>,
+        activity: Arc<dyn ListCredentialPresentationActivityUseCase>,
         standalone_request: Option<String>,
     ) -> Self {
         Self {
@@ -518,6 +575,7 @@ impl CredentialPresentationUiServices {
             accept,
             cancel,
             refuse,
+            activity,
             standalone_request,
         }
     }
@@ -577,6 +635,7 @@ impl CredentialIssuanceUiServices {
         accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase>,
         refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
         list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+        list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
         standalone_credential_offer: Option<String>,
         credential_issuance_ready: bool,
     ) -> Self {
@@ -585,6 +644,7 @@ impl CredentialIssuanceUiServices {
             accept_credential_issuance,
             refuse_credential_issuance,
             list_credential_issuances,
+            list_credential_issuance_activity,
             standalone_credential_offer,
             credential_issuance_ready,
         }
@@ -612,12 +672,14 @@ impl CredentialUiServices {
             accept_credential_issuance: issuance.accept_credential_issuance,
             refuse_credential_issuance: issuance.refuse_credential_issuance,
             list_credential_issuances: issuance.list_credential_issuances,
+            list_credential_issuance_activity: issuance.list_credential_issuance_activity,
             standalone_credential_offer: issuance.standalone_credential_offer,
             credential_issuance_ready: issuance.credential_issuance_ready,
             prepare_credential_presentation: presentation.prepare,
             accept_credential_presentation: presentation.accept,
             cancel_credential_presentation: presentation.cancel,
             refuse_credential_presentation: presentation.refuse,
+            list_credential_presentation_activity: presentation.activity,
             standalone_openid4vp_request: presentation.standalone_request,
         }
     }
@@ -849,62 +911,6 @@ impl WalletSecurityUiServices {
     }
 }
 
-/// Midnight account use cases consumed by the Assets page.
-pub struct WalletRealmSyncUiServices {
-    sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
-    get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
-    cancel: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
-}
-
-impl WalletRealmSyncUiServices {
-    #[must_use]
-    pub const fn new(
-        sync: Arc<dyn SyncSelectedWalletRealmUseCase>,
-        get: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
-        cancel: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
-    ) -> Self {
-        Self { sync, get, cancel }
-    }
-}
-
-/// Midnight account use cases consumed by the Assets page.
-pub struct WalletAccountUiServices {
-    list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
-    select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
-    derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
-    get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
-    sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
-    sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
-    get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
-    cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
-    public_text_exporter: Arc<dyn PublicTextExportPort>,
-}
-
-impl WalletAccountUiServices {
-    #[must_use]
-    pub fn new(
-        list_wallet_networks: Arc<dyn ListWalletNetworksUseCase>,
-        select_wallet_network: Arc<dyn SelectWalletNetworkUseCase>,
-        derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase>,
-        get_wallet_account: Arc<dyn GetWalletAccountUseCase>,
-        sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
-        realm_sync: WalletRealmSyncUiServices,
-        public_text_exporter: Arc<dyn PublicTextExportPort>,
-    ) -> Self {
-        Self {
-            list_wallet_networks,
-            select_wallet_network,
-            derive_wallet_account,
-            get_wallet_account,
-            sync_wallet_account,
-            sync_selected_wallet_realm: realm_sync.sync,
-            get_selected_wallet_realm_sync: realm_sync.get,
-            cancel_selected_wallet_realm_sync: realm_sync.cancel,
-            public_text_exporter,
-        }
-    }
-}
-
 /// Key-scoped DUST synchronization use cases consumed by the Assets page.
 pub struct WalletDustSyncUiServices {
     get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
@@ -923,66 +929,6 @@ impl WalletDustSyncUiServices {
             get_wallet_dust_sync_status,
             start_wallet_dust_sync,
             cancel_wallet_dust_sync,
-        }
-    }
-}
-
-/// Protected DUST-key registration lifecycle consumed beside account sync.
-///
-/// This remains separate from transfer preparation and submission so an
-/// incoming adapter cannot accidentally present registration as a payment.
-pub struct WalletDustRegistrationUiServices {
-    prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
-    authorize: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
-    submit: Arc<dyn SubmitWalletDustRegistrationUseCase>,
-    get: Arc<dyn GetWalletDustRegistrationUseCase>,
-    get_status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
-    cancel: Arc<dyn CancelWalletDustRegistrationSubmissionUseCase>,
-    reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
-}
-
-/// Public recovery operations for a retained or ambiguously submitted DUST
-/// registration.
-pub struct WalletDustRegistrationRecoveryUiServices {
-    get: Arc<dyn GetWalletDustRegistrationUseCase>,
-    get_status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
-    cancel: Arc<dyn CancelWalletDustRegistrationSubmissionUseCase>,
-    reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
-}
-
-impl WalletDustRegistrationRecoveryUiServices {
-    #[must_use]
-    pub const fn new(
-        get: Arc<dyn GetWalletDustRegistrationUseCase>,
-        get_status: Arc<dyn GetWalletDustRegistrationStatusUseCase>,
-        cancel: Arc<dyn CancelWalletDustRegistrationSubmissionUseCase>,
-        reconcile: Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
-    ) -> Self {
-        Self {
-            get,
-            get_status,
-            cancel,
-            reconcile,
-        }
-    }
-}
-
-impl WalletDustRegistrationUiServices {
-    #[must_use]
-    pub fn new(
-        prepare: Arc<dyn PrepareWalletDustRegistrationUseCase>,
-        authorize: Arc<dyn AuthorizeWalletDustRegistrationUseCase>,
-        submit: Arc<dyn SubmitWalletDustRegistrationUseCase>,
-        recovery: WalletDustRegistrationRecoveryUiServices,
-    ) -> Self {
-        Self {
-            prepare,
-            authorize,
-            submit,
-            get: recovery.get,
-            get_status: recovery.get_status,
-            cancel: recovery.cancel,
-            reconcile: recovery.reconcile,
         }
     }
 }
@@ -1097,7 +1043,7 @@ impl WalletUiServices {
         screen_privacy: Arc<dyn ScreenPrivacyPort>,
     ) -> Self {
         let dust = operations.dust;
-        let dust_registration = operations.dust_registration;
+        let dust_settlement = operations.dust_settlement;
         let shielded = operations.shielded;
         let transactions = operations.transactions;
         let vault = operations.vault;
@@ -1116,7 +1062,6 @@ impl WalletUiServices {
             proof_benchmark: None,
             #[cfg(feature = "proof-benchmark")]
             process_resource_sampler: Arc::new(UnavailableProcessResourceSampler),
-            #[cfg(any(target_os = "ios", target_os = "android"))]
             diagnostic_events: diagnostics.events,
             get_diagnostic_snapshot: diagnostics.get,
             clear_diagnostics: diagnostics.clear,
@@ -1147,19 +1092,11 @@ impl WalletUiServices {
             derive_wallet_account: account.derive_wallet_account,
             get_wallet_account: account.get_wallet_account,
             sync_wallet_account: account.sync_wallet_account,
-            sync_selected_wallet_realm: account.sync_selected_wallet_realm,
-            get_selected_wallet_realm_sync: account.get_selected_wallet_realm_sync,
-            cancel_selected_wallet_realm_sync: account.cancel_selected_wallet_realm_sync,
+            realm_sync: account.realm_sync,
             get_wallet_dust_sync_status: dust.get_wallet_dust_sync_status,
             start_wallet_dust_sync: dust.start_wallet_dust_sync,
             cancel_wallet_dust_sync: dust.cancel_wallet_dust_sync,
-            prepare_wallet_dust_registration: dust_registration.prepare,
-            authorize_wallet_dust_registration: dust_registration.authorize,
-            submit_wallet_dust_registration: dust_registration.submit,
-            get_wallet_dust_registration: dust_registration.get,
-            get_wallet_dust_registration_status: dust_registration.get_status,
-            cancel_wallet_dust_registration_submission: dust_registration.cancel,
-            reconcile_wallet_dust_registration_submission: dust_registration.reconcile,
+            wallet_dust_settlement: dust_settlement,
             get_wallet_shielded_sync_status: shielded.get_wallet_shielded_sync_status,
             start_wallet_shielded_sync: shielded.start_wallet_shielded_sync,
             cancel_wallet_shielded_sync: shielded.cancel_wallet_shielded_sync,
@@ -1193,18 +1130,22 @@ impl WalletUiServices {
             accept_credential_issuance: credentials.accept_credential_issuance,
             refuse_credential_issuance: credentials.refuse_credential_issuance,
             list_credential_issuances: credentials.list_credential_issuances,
+            list_credential_issuance_activity: credentials.list_credential_issuance_activity,
             standalone_credential_offer: credentials.standalone_credential_offer,
             credential_issuance_ready: credentials.credential_issuance_ready,
             prepare_credential_presentation: credentials.prepare_credential_presentation,
             accept_credential_presentation: credentials.accept_credential_presentation,
             cancel_credential_presentation: credentials.cancel_credential_presentation,
             refuse_credential_presentation: credentials.refuse_credential_presentation,
+            list_credential_presentation_activity: credentials
+                .list_credential_presentation_activity,
             standalone_openid4vp_request: credentials.standalone_openid4vp_request,
             prepare_self_issued_authentication: authentication.prepare,
             accept_self_issued_authentication: authentication.accept,
             refuse_self_issued_authentication: authentication.refuse,
             standalone_self_issued_request: authentication.standalone_request,
             list_passport_vault_locks: vault.list,
+            list_passport_vault_activity: vault.activity,
             create_passport_vault_lock: vault.create,
             deposit_passport_vault_lock: vault.deposit,
             claim_passport_vault_lock: vault.claim,
@@ -1290,6 +1231,11 @@ impl WalletUiServices {
     #[must_use]
     pub fn get_diagnostic_snapshot(&self) -> Arc<dyn GetDiagnosticSnapshotUseCase> {
         Arc::clone(&self.get_diagnostic_snapshot)
+    }
+
+    #[must_use]
+    pub fn diagnostic_events(&self) -> Arc<dyn DiagnosticEventSinkPort> {
+        Arc::clone(&self.diagnostic_events)
     }
 
     #[must_use]
@@ -1388,23 +1334,6 @@ impl WalletUiServices {
     }
 
     #[must_use]
-    pub fn sync_selected_wallet_realm(&self) -> Arc<dyn SyncSelectedWalletRealmUseCase> {
-        Arc::clone(&self.sync_selected_wallet_realm)
-    }
-
-    #[must_use]
-    pub fn get_selected_wallet_realm_sync(&self) -> Arc<dyn GetSelectedWalletRealmSyncUseCase> {
-        Arc::clone(&self.get_selected_wallet_realm_sync)
-    }
-
-    #[must_use]
-    pub fn cancel_selected_wallet_realm_sync(
-        &self,
-    ) -> Arc<dyn CancelSelectedWalletRealmSyncUseCase> {
-        Arc::clone(&self.cancel_selected_wallet_realm_sync)
-    }
-
-    #[must_use]
     pub fn get_wallet_dust_sync_status(&self) -> Arc<dyn GetWalletDustSyncStatusUseCase> {
         Arc::clone(&self.get_wallet_dust_sync_status)
     }
@@ -1420,48 +1349,8 @@ impl WalletUiServices {
     }
 
     #[must_use]
-    pub fn prepare_wallet_dust_registration(
-        &self,
-    ) -> Arc<dyn PrepareWalletDustRegistrationUseCase> {
-        Arc::clone(&self.prepare_wallet_dust_registration)
-    }
-
-    #[must_use]
-    pub fn authorize_wallet_dust_registration(
-        &self,
-    ) -> Arc<dyn AuthorizeWalletDustRegistrationUseCase> {
-        Arc::clone(&self.authorize_wallet_dust_registration)
-    }
-
-    #[must_use]
-    pub fn submit_wallet_dust_registration(&self) -> Arc<dyn SubmitWalletDustRegistrationUseCase> {
-        Arc::clone(&self.submit_wallet_dust_registration)
-    }
-
-    #[must_use]
-    pub fn get_wallet_dust_registration(&self) -> Arc<dyn GetWalletDustRegistrationUseCase> {
-        Arc::clone(&self.get_wallet_dust_registration)
-    }
-
-    #[must_use]
-    pub fn get_wallet_dust_registration_status(
-        &self,
-    ) -> Arc<dyn GetWalletDustRegistrationStatusUseCase> {
-        Arc::clone(&self.get_wallet_dust_registration_status)
-    }
-
-    #[must_use]
-    pub fn cancel_wallet_dust_registration_submission(
-        &self,
-    ) -> Arc<dyn CancelWalletDustRegistrationSubmissionUseCase> {
-        Arc::clone(&self.cancel_wallet_dust_registration_submission)
-    }
-
-    #[must_use]
-    pub fn reconcile_wallet_dust_registration_submission(
-        &self,
-    ) -> Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase> {
-        Arc::clone(&self.reconcile_wallet_dust_registration_submission)
+    pub fn wallet_dust_settlement(&self) -> Arc<dyn WalletDustSettlementUiPort> {
+        self.wallet_dust_settlement.port()
     }
 
     #[must_use]
@@ -1630,6 +1519,13 @@ impl WalletUiServices {
     }
 
     #[must_use]
+    pub fn list_credential_issuance_activity(
+        &self,
+    ) -> Arc<dyn ListCredentialIssuanceActivityUseCase> {
+        Arc::clone(&self.list_credential_issuance_activity)
+    }
+
+    #[must_use]
     pub fn standalone_credential_offer(&self) -> Option<String> {
         self.standalone_credential_offer.clone()
     }
@@ -1657,6 +1553,13 @@ impl WalletUiServices {
     #[must_use]
     pub fn refuse_credential_presentation(&self) -> Arc<dyn RefuseCredentialPresentationUseCase> {
         Arc::clone(&self.refuse_credential_presentation)
+    }
+
+    #[must_use]
+    pub fn list_credential_presentation_activity(
+        &self,
+    ) -> Arc<dyn ListCredentialPresentationActivityUseCase> {
+        Arc::clone(&self.list_credential_presentation_activity)
     }
 
     #[must_use]
@@ -1710,7 +1613,8 @@ enum HomeQuickAction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HomeQuickActionTarget {
     ReceiveSheet,
-    Primary(PrimaryDestination),
+    Send,
+    Present,
     Scan,
 }
 
@@ -1736,8 +1640,8 @@ impl HomeQuickAction {
     const fn target(self) -> HomeQuickActionTarget {
         match self {
             Self::Receive => HomeQuickActionTarget::ReceiveSheet,
-            Self::Send => HomeQuickActionTarget::Primary(PrimaryDestination::Wallet),
-            Self::Present => HomeQuickActionTarget::Primary(PrimaryDestination::Documents),
+            Self::Send => HomeQuickActionTarget::Send,
+            Self::Present => HomeQuickActionTarget::Present,
             Self::Scan => HomeQuickActionTarget::Scan,
         }
     }
@@ -1757,6 +1661,15 @@ impl PrimaryDestination {
             Self::Wallet => "Wallet",
             Self::Documents => "Documents",
             Self::Activity => "Activity",
+        }
+    }
+
+    const fn accessibility_id(self) -> &'static str {
+        match self {
+            Self::Home => "nav-home",
+            Self::Wallet => "nav-wallet",
+            Self::Documents => "nav-documents",
+            Self::Activity => "nav-activity",
         }
     }
 
@@ -1787,9 +1700,34 @@ const PRIMARY_DESTINATIONS: [PrimaryDestination; 4] = [
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettingsSection {
+    Hub,
+    Security,
+    Backup,
+    Recovery,
+    Preferences,
+    About,
+}
+
+impl SettingsSection {
+    const fn route(self) -> Route {
+        match self {
+            Self::Hub => Route::Settings,
+            Self::Security => Route::Security,
+            Self::Backup => Route::Backup,
+            Self::Recovery => Route::Recovery,
+            Self::Preferences => Route::Preferences,
+            Self::About => Route::About,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Route {
     Home,
     Receive,
+    Send,
+    Present,
     Wallet,
     Documents,
     Activity,
@@ -1798,6 +1736,11 @@ enum Route {
     CredentialRequest,
     DidAuthenticationRequest,
     Settings,
+    Security,
+    Backup,
+    Recovery,
+    Preferences,
+    About,
     BackupRecovery,
     Diagnostics,
     #[cfg(feature = "ui-profile-dev")]
@@ -1816,6 +1759,8 @@ impl Route {
         match self {
             Self::Home => "Home",
             Self::Receive => "Receive",
+            Self::Send => "Send",
+            Self::Present => "Present",
             Self::Wallet => "Wallet",
             Self::Documents => "Documents",
             Self::Activity => "Activity",
@@ -1824,6 +1769,11 @@ impl Route {
             Self::CredentialRequest => "Review document request",
             Self::DidAuthenticationRequest => "Review login request",
             Self::Settings => "Settings",
+            Self::Security => "Security",
+            Self::Backup => "Backup",
+            Self::Recovery => "Recovery",
+            Self::Preferences => "Preferences",
+            Self::About => "About",
             Self::BackupRecovery => "Backup & recovery",
             Self::Diagnostics => "Diagnostics",
             #[cfg(feature = "ui-profile-dev")]
@@ -1845,11 +1795,18 @@ impl Route {
             Self::Documents => Some(PrimaryDestination::Documents),
             Self::Activity => Some(PrimaryDestination::Activity),
             Self::Receive
+            | Self::Send
+            | Self::Present
             | Self::PassportVault
             | Self::ManageIdentities
             | Self::CredentialRequest
             | Self::DidAuthenticationRequest
             | Self::Settings
+            | Self::Security
+            | Self::Backup
+            | Self::Recovery
+            | Self::Preferences
+            | Self::About
             | Self::BackupRecovery
             | Self::Diagnostics
             | Self::Profile => None,
@@ -1862,15 +1819,49 @@ impl Route {
     }
 }
 
+const fn review_route_title(
+    route: Route,
+    pending_kind: Option<IdentityRequestKind>,
+) -> &'static str {
+    match (route, pending_kind) {
+        (Route::Send, _) => "Review NIGHT payment",
+        (Route::CredentialRequest, Some(IdentityRequestKind::CredentialIssuance)) => {
+            "Review credential offer"
+        }
+        (Route::CredentialRequest, Some(IdentityRequestKind::CredentialPresentation)) => {
+            "Review presentation request"
+        }
+        (Route::DidAuthenticationRequest, Some(IdentityRequestKind::SelfIssuedAuthentication)) => {
+            "Review login request"
+        }
+        _ => route.title(),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RouteStack {
     routes: Vec<Route>,
+    transition: RouteTransition,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum RouteTransition {
+    #[default]
+    ResetPageContentToTopAndFocusDestination,
+    BackRestoresOriginAtTop,
+}
+
+impl RouteTransition {
+    const fn resets_page_content_to_top(self) -> bool {
+        true
+    }
 }
 
 impl Default for RouteStack {
     fn default() -> Self {
         Self {
             routes: vec![Route::Home],
+            transition: RouteTransition::ResetPageContentToTopAndFocusDestination,
         }
     }
 }
@@ -1884,6 +1875,7 @@ impl RouteStack {
         self.routes.last().copied().unwrap_or(Route::Home)
     }
 
+    #[cfg(test)]
     fn active_primary(&self) -> PrimaryDestination {
         self.routes
             .first()
@@ -1898,6 +1890,7 @@ impl RouteStack {
     fn select_primary(&mut self, destination: PrimaryDestination) {
         self.routes.clear();
         self.routes.push(destination.route());
+        self.transition = RouteTransition::ResetPageContentToTopAndFocusDestination;
     }
 
     fn push(&mut self, route: Route) {
@@ -1913,6 +1906,7 @@ impl RouteStack {
         } else {
             self.routes.push(route);
         }
+        self.transition = RouteTransition::ResetPageContentToTopAndFocusDestination;
     }
 
     fn push_from(&mut self, destination: PrimaryDestination, route: Route) {
@@ -1935,10 +1929,15 @@ impl RouteStack {
     fn pop(&mut self) -> bool {
         if self.can_go_back() {
             self.routes.pop();
+            self.transition = RouteTransition::BackRestoresOriginAtTop;
             true
         } else {
             false
         }
+    }
+
+    fn transition(&self) -> RouteTransition {
+        self.transition
     }
 
     fn route_identity_request(&mut self, kind: IdentityRequestKind) {
@@ -1948,6 +1947,15 @@ impl RouteStack {
             | IdentityRequestKind::CredentialPresentation => Route::CredentialRequest,
         };
         self.push_from(PrimaryDestination::Documents, route);
+    }
+
+    fn route_scanned_identity_request(&mut self, kind: IdentityRequestKind) {
+        let route = match kind {
+            IdentityRequestKind::SelfIssuedAuthentication => Route::DidAuthenticationRequest,
+            IdentityRequestKind::CredentialIssuance
+            | IdentityRequestKind::CredentialPresentation => Route::CredentialRequest,
+        };
+        self.push(route);
     }
 
     fn dismiss_identity_request(&mut self) {
@@ -2056,7 +2064,7 @@ enum PortableBackupUiState {
     Working(&'static str),
     Succeeded(String),
     CompleteExported(WalletBackupReceiptView),
-    Cancelled,
+    Cancelled(&'static str),
     Failed(String),
 }
 
@@ -2066,6 +2074,18 @@ enum BackupReceiptState {
     Ready(Option<WalletBackupReceiptView>),
     Failed,
 }
+
+const fn backup_receipt_label(export_recorded: bool, supported: bool) -> &'static str {
+    if export_recorded {
+        "Export recorded"
+    } else if supported {
+        "Available"
+    } else {
+        "Fail closed"
+    }
+}
+
+const BACKUP_EXPORT_EVIDENCE: &str = "The app recorded this export, but has not tested recovery and cannot guarantee that the external document remains available. Store the document and recovery secret separately.";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum DidPageState {
@@ -2179,6 +2199,11 @@ impl CredentialIssuanceTerminalError {
 struct PendingIdentityRequest {
     kind: IdentityRequestKind,
     request_uri: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingPaymentRequest {
+    recipient: String,
 }
 
 impl PendingIdentityRequest {
@@ -2380,8 +2405,36 @@ fn credential_issuance_review_blocks_replacement(
 }
 
 fn credential_issuance_review_is_terminal(prepared: Option<&CredentialIssuanceView>) -> bool {
-    prepared
-        .is_some_and(|review| matches!(review.state.as_str(), "succeeded" | "refused" | "failed"))
+    prepared.is_some_and(|review| {
+        matches!(
+            review.state.as_str(),
+            "succeeded" | "refused" | "failed" | "expired" | "outcome_unknown"
+        )
+    })
+}
+
+fn credential_issuance_terminal_heading(state: &str) -> &'static str {
+    match state {
+        "succeeded" => "Credential added to wallet",
+        "refused" => "Credential offer refused",
+        "expired" => "Credential offer expired",
+        "outcome_unknown" => "Check credential status",
+        "failed" => "Credential was not added",
+        _ => "Credential offer closed",
+    }
+}
+
+fn credential_issuance_terminal_note(state: &str) -> &'static str {
+    match state {
+        "succeeded" => "The credential is in the protected inventory below.",
+        "refused" => "Nothing was issued or stored. You can safely review another offer.",
+        "expired" => "Nothing was issued. Ask the issuer for a fresh offer.",
+        "outcome_unknown" => {
+            "Do not accept the offer again. Reopen Documents to check whether the credential was stored."
+        }
+        "failed" => "Nothing was stored. Review the error before trying a fresh offer.",
+        _ => "No further action is available for this one-time offer.",
+    }
 }
 
 fn retained_identity_review_route(
@@ -2393,7 +2446,7 @@ fn retained_identity_review_route(
     }) {
         return Some(Route::CredentialRequest);
     }
-    manual_credential_review_locked.then_some(Route::Documents)
+    manual_credential_review_locked.then_some(Route::CredentialRequest)
 }
 
 fn credential_review_escape_is_visible(
@@ -2420,6 +2473,7 @@ enum AccountPageState {
         networks: WalletNetworkListView,
         account: Box<WalletAccountView>,
         security: WalletSecurityStatusView,
+        custody_recovery_required: bool,
         busy: Option<AccountOperation>,
     },
     Failed(String),
@@ -2428,7 +2482,11 @@ enum AccountPageState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ReceiveSheetState {
     Loading,
-    Ready(Box<WalletAccountView>),
+    Ready {
+        account: Box<WalletAccountView>,
+        #[cfg(feature = "standalone-deployment-profile")]
+        deployment: Option<oxid_capabilities_application::DeploymentProfileView>,
+    },
     Failed,
 }
 
@@ -2462,59 +2520,6 @@ enum AccountOperation {
     Syncing,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DustRegistrationAvailability {
-    Ready,
-    ProtectionLocked,
-    AccountNotDerived,
-    AccountNotSynchronized,
-    Unavailable,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct DustRegistrationPublicStatus {
-    state: String,
-    registration_observation: String,
-    dust_readiness: String,
-    cancellation_allowed: bool,
-    reconciliation_allowed: bool,
-}
-
-impl From<&WalletDustRegistrationSubmissionStatusView> for DustRegistrationPublicStatus {
-    fn from(status: &WalletDustRegistrationSubmissionStatusView) -> Self {
-        Self {
-            state: status.state.clone(),
-            registration_observation: status.registration_observation.clone(),
-            dust_readiness: status.dust_readiness.clone(),
-            cancellation_allowed: status.cancellation_allowed,
-            reconciliation_allowed: status.reconciliation_allowed,
-        }
-    }
-}
-
-#[derive(Clone)]
-enum DustRegistrationPanelState {
-    Idle,
-    Preparing,
-    Prepared(Box<WalletDustRegistrationPreviewView>),
-    Authorizing(Box<WalletDustRegistrationPreviewView>),
-    Authorized(Box<WalletDustRegistrationPreviewView>),
-    Submitting(Box<WalletDustRegistrationPreviewView>),
-    Cancelling,
-    Pending {
-        preview: Box<WalletDustRegistrationPreviewView>,
-        status: DustRegistrationPublicStatus,
-        reconciling: bool,
-        operation_error: Option<String>,
-    },
-    Registered(Box<WalletDustRegistrationPreviewView>),
-    Cancelled(Box<WalletDustRegistrationPreviewView>),
-    Failed {
-        message: String,
-        retained: Option<Box<WalletDustRegistrationPreviewView>>,
-    },
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SubmissionRecoveryPaneState {
     Loading,
@@ -2544,35 +2549,15 @@ enum TransferPanelState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SendWizardStep {
-    Recipient,
-    Amount,
-}
-
-impl SendWizardStep {
-    const fn number(self) -> u8 {
-        match self {
-            Self::Recipient => 1,
-            Self::Amount => 2,
-        }
-    }
-
-    const fn title(self) -> &'static str {
-        match self {
-            Self::Recipient => "Recipient",
-            Self::Amount => "Amount",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TransferRecovery {
     Edit,
     RetryAuthorized,
     ReconcileUnknown,
 }
 
-const SECRET_MODE_REVEAL_TIMEOUT: Duration = Duration::from_secs(30);
+const SECRET_MODE_REVEAL_MINUTES: u64 = 10;
+const SECRET_MODE_REVEAL_DURATION_LABEL: &str = "10 minutes";
+const SECRET_MODE_REVEAL_TIMEOUT: Duration = Duration::from_secs(SECRET_MODE_REVEAL_MINUTES * 60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SecretModeState {
@@ -3015,7 +3000,7 @@ async fn execute_demo_data_action(
             .await
             .map_err(|error| error.to_string())??;
             if !demo_funding_source_is_safe(
-                &account.source,
+                account.source.as_str(),
                 &account.network_id,
                 &account.network_environment,
             ) {
@@ -3536,6 +3521,8 @@ pub fn App() -> Element {
 fn WalletApp() -> Element {
     let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
+    #[cfg(feature = "desktop-developer-pager-driver")]
+    desktop_developer_pager_driver::use_desktop_developer_pager_driver();
     #[cfg(feature = "desktop-test-click-driver")]
     desktop_test_driver::use_desktop_test_driver();
     let mut profile_session = use_signal(|| ProfileSessionState::Loading);
@@ -3552,6 +3539,7 @@ fn WalletApp() -> Element {
         state: secret_mode_state,
     };
     let mut pending_identity_request = use_signal(|| None::<PendingIdentityRequest>);
+    let pending_payment_request = use_signal(|| None::<PendingPaymentRequest>);
     let manual_credential_review_lock = use_signal(|| false);
     let mut identity_ingress_notice = use_signal(|| None::<String>);
     let identity_scan_busy = use_signal(|| false);
@@ -3559,6 +3547,16 @@ fn WalletApp() -> Element {
     let mut identity_link_wake = use_signal(|| 0_u64);
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let identity_link_wake = use_signal(|| 0_u64);
+    let mut realm_lifecycle_wake = use_signal(|| WalletRealmLifecycleWake::INITIAL);
+    let realm_projection_wake = use_signal(|| 0_u64);
+    use_context_provider(|| realm_lifecycle_wake);
+    use_context_provider(|| WalletRealmProjectionWake(realm_projection_wake));
+    wallet_realm_lifecycle::use_wallet_realm_lifecycle_driver(
+        services.clone(),
+        profile_session,
+        realm_lifecycle_wake,
+        realm_projection_wake,
+    );
     let services_for_load = services.clone();
     use_effect(move || {
         let services = services_for_load.clone();
@@ -3576,6 +3574,8 @@ fn WalletApp() -> Element {
     let screen_privacy_for_lifecycle = Arc::clone(&screen_privacy);
     #[cfg(any(target_os = "ios", target_os = "android"))]
     let diagnostic_events_for_lifecycle = Arc::clone(&services.diagnostic_events);
+    #[cfg(any(target_os = "ios", target_os = "android"))]
+    let realm_lifecycle_for_app_events = services.reconcile_wallet_realm_lifecycle();
     use_effect(move || {
         let screen_privacy_enabled =
             secret_mode_state().masked || route_forces_screen_privacy(navigation.read().current());
@@ -3592,6 +3592,10 @@ fn WalletApp() -> Element {
                     identity_link_wake.set(identity_link_wake().wrapping_add(1));
                 }
                 dioxus::mobile::tao::event::Event::Suspended => {
+                    diagnostic_events_for_lifecycle.record(
+                        DiagnosticCode::WalletLifecycleSuspended,
+                        DiagnosticSeverity::Info,
+                    );
                     // Protect the OS snapshot immediately. Dioxus signal writes
                     // wait until Resumed, when the WebView is active again.
                     protect_suspended_snapshot(
@@ -3599,9 +3603,15 @@ fn WalletApp() -> Element {
                         diagnostic_events_for_lifecycle.as_ref(),
                     );
                     secret_mode.rearm();
+                    wallet_realm_lifecycle::background(&realm_lifecycle_for_app_events);
                 }
                 dioxus::mobile::tao::event::Event::Resumed => {
+                    diagnostic_events_for_lifecycle.record(
+                        DiagnosticCode::WalletLifecycleResumed,
+                        DiagnosticSeverity::Info,
+                    );
                     identity_link_wake.set(identity_link_wake().wrapping_add(1));
+                    realm_lifecycle_wake.set(realm_lifecycle_wake().resumed());
                     secret_mode.rearm();
                 }
                 _ => {}
@@ -3688,6 +3698,7 @@ fn WalletApp() -> Element {
             style { {BASE_STYLES} }
             {demo_gateway_drawer}
             div {
+                class: "profile-gateway-frame",
                 aria_hidden: if demo_gateway_hidden { "true" } else { "false" },
                 inert: html_boolean_attribute(demo_gateway_inert),
                 DeveloperProfileBanner { state: developer_notice_state }
@@ -3698,10 +3709,12 @@ fn WalletApp() -> Element {
                     lifecycle_wake: identity_link_wake,
                     on_selected: move |profile| {
                         profile_session.set(ProfileSessionState::Active(profile));
+                        realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                         navigation.write().select_primary(PrimaryDestination::Home);
                     },
                     on_root_recovered: move |profile| {
                         profile_session.set(ProfileSessionState::Active(profile));
+                        realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                         navigation.write().select_primary(PrimaryDestination::Wallet);
                     },
                     on_retry: move |_| {
@@ -3723,6 +3736,16 @@ fn WalletApp() -> Element {
     };
 
     let active_route = navigation.read().current();
+    let active_route_title = review_route_title(
+        active_route,
+        pending_identity_request
+            .read()
+            .as_ref()
+            .map(|request| request.kind),
+    );
+    use_effect(move || {
+        apply_route_transition(navigation.read().transition());
+    });
     let receive_sheet_open = active_route == Route::Receive;
     let content_route = retained_identity_review_route(
         &pending_identity_request.read(),
@@ -3735,7 +3758,6 @@ fn WalletApp() -> Element {
             active_route
         }
     });
-    let active_primary = navigation.read().active_primary();
     let can_go_back = navigation.read().can_go_back();
     let profile_monogram = profile_monogram(&active_profile.display_name, brand.wordmark());
     let pending_identity_request_has_raw_uri = pending_identity_request
@@ -3749,8 +3771,12 @@ fn WalletApp() -> Element {
     );
     let home_scanner = services.qr_scanner();
     let home_router = services.route_identity_request();
+    let home_scan_services = services.clone();
+    let home_scan_profile_id = active_profile.id.clone();
     let navigation_scanner = services.qr_scanner();
     let navigation_router = services.route_identity_request();
+    let navigation_scan_services = services.clone();
+    let navigation_scan_profile_id = active_profile.id.clone();
     #[cfg(feature = "ui-profile-demo")]
     let demo_shell_banner = demo_profile_banner(demo_drawer_open);
     #[cfg(not(feature = "ui-profile-demo"))]
@@ -3792,22 +3818,7 @@ fn WalletApp() -> Element {
             PublicStandaloneGenesisBanner { state: public_genesis_notice_state }
             {demo_shell_banner}
             header { class: "app-header",
-                button {
-                    class: if header_menu() == HeaderMenu::ProfileSwitcher { "profile-shortcut active" } else { "profile-shortcut" },
-                    r#type: "button",
-                    aria_label: "Switch wallet profile; current profile {active_profile.display_name}",
-                    aria_controls: "profile-switcher-menu",
-                    aria_expanded: if header_menu() == HeaderMenu::ProfileSwitcher { "true" } else { "false" },
-                    aria_haspopup: "menu",
-                    title: "Switch wallet profile",
-                    onclick: move |_| header_menu.set(header_menu().toggle_profile_switcher()),
-                    "{profile_monogram}"
-                }
-                div { class: "app-header__title",
-                    strong { "{active_route.title()}" }
-                    small { "{brand.product_name()} {brand.tagline()}" }
-                }
-                div { class: "app-header__actions",
+                div { class: "app-header__leading",
                     if can_go_back {
                         button {
                             class: "back-action",
@@ -3817,9 +3828,33 @@ fn WalletApp() -> Element {
                                 navigation.write().pop();
                                 header_menu.set(HeaderMenu::Closed);
                             },
-                            span { aria_hidden: "true", "←" }
-                            span { "Back" }
+                            span { class: "back-action__icon", aria_hidden: "true", "←" }
+                            span { class: "back-action__label", "Back" }
                         }
+                    }
+                }
+                div { class: "app-header__title",
+                    strong {
+                        id: "destination-heading",
+                        role: "heading",
+                        aria_level: "1",
+                        tabindex: "-1",
+                        "{active_route_title}"
+                    }
+                    small { "{brand.product_name()} {brand.tagline()}" }
+                }
+                div { class: "app-header__actions",
+                    button {
+                        class: if header_menu() == HeaderMenu::ProfileSwitcher { "profile-shortcut active" } else { "profile-shortcut" },
+                        r#type: "button",
+                        aria_label: "Switch wallet profile",
+                        aria_controls: "profile-switcher-menu",
+                        aria_expanded: if header_menu() == HeaderMenu::ProfileSwitcher { "true" } else { "false" },
+                        aria_haspopup: "menu",
+                        title: "Switch wallet profile",
+                        onclick: move |_| header_menu.set(header_menu().toggle_profile_switcher()),
+                        span { class: "visually-hidden", "Switch wallet profile" }
+                        span { aria_hidden: "true", "{profile_monogram}" }
                     }
                     GlobalMenuTrigger {
                         open: header_menu() == HeaderMenu::Global,
@@ -3833,9 +3868,6 @@ fn WalletApp() -> Element {
                     span { class: "status-dot" }
                     "{active_profile.display_name}"
                 }
-                if let Some(primary_label) = page_context_primary_label(content_route, active_primary) {
-                    span { class: "page-context__title", "{primary_label}" }
-                }
             }
 
             if header_menu() == HeaderMenu::ProfileSwitcher {
@@ -3846,6 +3878,7 @@ fn WalletApp() -> Element {
                     on_selected: move |profile| {
                         secret_mode.rearm();
                         profile_session.set(ProfileSessionState::Active(profile));
+                        realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                         navigation.write().select_primary(PrimaryDestination::Home);
                         header_menu.set(HeaderMenu::Closed);
                     },
@@ -3910,26 +3943,61 @@ fn WalletApp() -> Element {
                                 navigation.write().push(Route::Receive);
                                 header_menu.set(HeaderMenu::Closed);
                             },
+                            on_send: move |_| {
+                                navigation.write().push(Route::Send);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
+                            on_present: move |_| {
+                                navigation.write().push(Route::Present);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
                             on_scan: move |_| {
                                 start_identity_scan(
-                                    Arc::clone(&home_scanner),
-                                    Arc::clone(&home_router),
-                                    identity_scan_busy,
-                                    identity_ingress_notice,
-                                    pending_identity_request,
-                                    navigation,
-                                    header_menu,
+                                    IdentityScanDependencies {
+                                        services: home_scan_services.clone(),
+                                        profile_id: home_scan_profile_id.clone(),
+                                        scanner: Arc::clone(&home_scanner),
+                                        router: Arc::clone(&home_router),
+                                    },
+                                    IdentityScanSignals {
+                                        busy: identity_scan_busy,
+                                        notice: identity_ingress_notice,
+                                        pending_request: pending_identity_request,
+                                        pending_payment: pending_payment_request,
+                                        navigation,
+                                        header_menu,
+                                    },
                                 );
                             },
                         }
                     },
                     Route::Receive => rsx! {},
-                    Route::Wallet => rsx! { AssetsPage { active_profile: active_profile.clone(), secret_mode } },
+                    Route::Wallet | Route::Send => rsx! { AssetsPage {
+                        active_profile: active_profile.clone(),
+                        secret_mode,
+                        send_entry: content_route == Route::Send,
+                        pending_payment_request,
+                        on_realm_changed: move |_| {
+                            realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
+                        },
+                    } },
+                    Route::Present => rsx! {
+                        PresentationPage {
+                            active_profile: active_profile.clone(),
+                            pending_identity_request,
+                        }
+                    },
                     Route::Documents => rsx! {
                         DocumentsPage {
                             active_profile: active_profile.clone(),
-                            pending_identity_request,
-                            manual_credential_review_lock,
+                            on_add_document: move |_| {
+                                navigation.write().push(Route::CredentialRequest);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
+                            on_present: move |_| {
+                                navigation.write().push(Route::Present);
+                                header_menu.set(HeaderMenu::Closed);
+                            },
                             on_manage_identities: move |_| {
                                 navigation.write().push(Route::ManageIdentities);
                                 header_menu.set(HeaderMenu::Closed);
@@ -3970,38 +4038,62 @@ fn WalletApp() -> Element {
                         }
                     },
                     #[cfg(feature = "ui-profile-dev")]
-                    Route::DeveloperManifest => rsx! {
+                    Route::DeveloperManifest
+                    | Route::DeveloperProofBenchmark
+                    | Route::DeveloperDiagnostics => rsx! {
                         DeveloperSectionNav {
                             current: content_route,
                             on_select: move |route| navigation.write().replace_secondary(route),
                         }
-                        DeveloperCapabilitiesPage {}
-                    },
-                    #[cfg(feature = "ui-profile-dev")]
-                    Route::DeveloperProofBenchmark => rsx! {
-                        DeveloperSectionNav {
+                        DeveloperSectionPager {
                             current: content_route,
                             on_select: move |route| navigation.write().replace_secondary(route),
+                            section {
+                                class: "developer-section-pager__page",
+                                tabindex: -1,
+                                aria_hidden: if content_route == Route::DeveloperManifest { "false" } else { "true" },
+                                inert: html_boolean_attribute(content_route != Route::DeveloperManifest),
+                                DeveloperCapabilitiesPage {}
+                            }
+                            section {
+                                class: "developer-section-pager__page",
+                                tabindex: -1,
+                                aria_hidden: if content_route == Route::DeveloperProofBenchmark { "false" } else { "true" },
+                                inert: html_boolean_attribute(content_route != Route::DeveloperProofBenchmark),
+                                DeveloperProofBenchmarkPage {}
+                            }
+                            section {
+                                class: "developer-section-pager__page",
+                                tabindex: -1,
+                                aria_hidden: if content_route == Route::DeveloperDiagnostics { "false" } else { "true" },
+                                inert: html_boolean_attribute(content_route != Route::DeveloperDiagnostics),
+                                DeveloperDiagnosticsPage {}
+                            }
                         }
-                        DeveloperProofBenchmarkPage {}
                     },
-                    #[cfg(feature = "ui-profile-dev")]
-                    Route::DeveloperDiagnostics => rsx! {
-                        DeveloperSectionNav {
-                            current: content_route,
-                            on_select: move |route| navigation.write().replace_secondary(route),
-                        }
-                        DeveloperDiagnosticsPage {}
-                    },
-                    Route::Settings | Route::BackupRecovery => rsx! {
+                    Route::Settings
+                    | Route::Security
+                    | Route::Backup
+                    | Route::Recovery
+                    | Route::Preferences
+                    | Route::About
+                    | Route::BackupRecovery => rsx! {
                         SettingsPage {
                             active_profile: active_profile.clone(),
                             lifecycle_wake: identity_link_wake,
                             secret_mode,
-                            backup_only: content_route == Route::BackupRecovery,
+                            section: match content_route {
+                                Route::Security => SettingsSection::Security,
+                                Route::Backup | Route::BackupRecovery => SettingsSection::Backup,
+                                Route::Recovery => SettingsSection::Recovery,
+                                Route::Preferences => SettingsSection::Preferences,
+                                Route::About => SettingsSection::About,
+                                _ => SettingsSection::Hub,
+                            },
                             on_root_recovered: move |_| {
                                 navigation.write().select_primary(PrimaryDestination::Wallet);
                             },
+                            on_open_section: move |section: SettingsSection| navigation.write().push(section.route()),
                             on_open_profile: move |_| navigation.write().push(Route::Profile),
                             on_open_diagnostics: move |_| navigation.write().push(Route::Diagnostics),
                             on_open_developer: move |_| {
@@ -4016,6 +4108,7 @@ fn WalletApp() -> Element {
                             on_selected: move |profile| {
                                 secret_mode.rearm();
                                 profile_session.set(ProfileSessionState::Active(profile));
+                                realm_lifecycle_wake.set(realm_lifecycle_wake().realm_changed());
                                 navigation.write().select_primary(PrimaryDestination::Home);
                             },
                         }
@@ -4027,7 +4120,7 @@ fn WalletApp() -> Element {
                 nav { class: "bottom-nav", aria_label: "Primary wallet destinations",
                 for destination in PRIMARY_DESTINATIONS[..2].iter().copied() {
                     {
-                        let is_active = active_primary == destination;
+                        let is_active = primary_destination_is_active(content_route, destination);
                         rsx! {
                             PrimaryNavigationButton {
                                 key: "{destination.label()}",
@@ -4042,23 +4135,31 @@ fn WalletApp() -> Element {
                     }
                 }
                 button {
+                    id: "nav-scan",
                     class: "bottom-nav__scan",
                     r#type: "button",
-                    aria_label: "Scan identity QR code",
-                    title: "Scan identity QR code",
+                    aria_label: "Scan QR code",
+                    title: "Scan QR code",
                     disabled: identity_scan_busy(),
                     onclick: {
                         let scanner = Arc::clone(&navigation_scanner);
                         let router = Arc::clone(&navigation_router);
                         move |_| {
                             start_identity_scan(
-                                Arc::clone(&scanner),
-                                Arc::clone(&router),
-                                identity_scan_busy,
-                                identity_ingress_notice,
-                                pending_identity_request,
-                                navigation,
-                                header_menu,
+                                IdentityScanDependencies {
+                                    services: navigation_scan_services.clone(),
+                                    profile_id: navigation_scan_profile_id.clone(),
+                                    scanner: Arc::clone(&scanner),
+                                    router: Arc::clone(&router),
+                                },
+                                IdentityScanSignals {
+                                    busy: identity_scan_busy,
+                                    notice: identity_ingress_notice,
+                                    pending_request: pending_identity_request,
+                                    pending_payment: pending_payment_request,
+                                    navigation,
+                                    header_menu,
+                                },
                             );
                         }
                     },
@@ -4071,7 +4172,7 @@ fn WalletApp() -> Element {
                 }
                 for destination in PRIMARY_DESTINATIONS[2..].iter().copied() {
                     {
-                        let is_active = active_primary == destination;
+                        let is_active = primary_destination_is_active(content_route, destination);
                         rsx! {
                             PrimaryNavigationButton {
                                 key: "{destination.label()}",
@@ -4113,6 +4214,7 @@ fn PrimaryNavigationButton(
 ) -> Element {
     rsx! {
         button {
+            id: "{destination.accessibility_id()}",
             class: if active { "bottom-nav__item active" } else { "bottom-nav__item" },
             r#type: "button",
             aria_label: "{destination.label()}",
@@ -4126,57 +4228,6 @@ fn PrimaryNavigationButton(
             span { class: "bottom-nav__label", "{destination.label()}" }
         }
     }
-}
-
-const fn identity_scan_is_admitted(scan_busy: bool, request_pending: bool) -> bool {
-    !scan_busy && !request_pending
-}
-
-fn start_identity_scan(
-    scanner: Arc<dyn QrScannerPort>,
-    router: Arc<dyn RouteIdentityRequestUseCase>,
-    mut busy: Signal<bool>,
-    mut notice: Signal<Option<String>>,
-    mut pending_request: Signal<Option<PendingIdentityRequest>>,
-    mut navigation: Signal<RouteStack>,
-    mut header_menu: Signal<HeaderMenu>,
-) {
-    if !identity_scan_is_admitted(busy(), pending_request.read().is_some()) {
-        return;
-    }
-    busy.set(true);
-    notice.set(None);
-    header_menu.set(HeaderMenu::Closed);
-    spawn(async move {
-        match scanner.scan().await {
-            Ok(payload) => {
-                if !identity_scan_is_admitted(false, pending_request.read().is_some()) {
-                    busy.set(false);
-                    return;
-                }
-                let request_uri = payload.into_inner();
-                match router.execute(RouteIdentityRequestCommand {
-                    request_uri: request_uri.clone(),
-                }) {
-                    Ok(kind) => {
-                        pending_request.set(Some(PendingIdentityRequest { kind, request_uri }));
-                        navigation.write().route_identity_request(kind);
-                        notice.set(Some(format!(
-                            "QR recognized as {}. Review the request before consent.",
-                            ui::identity_request_kind(kind)
-                        )));
-                    }
-                    Err(error) => {
-                        notice.set(Some(identity_request_routing_message(error)));
-                    }
-                }
-            }
-            Err(error) => {
-                notice.set(Some(qr_scan_message(error)));
-            }
-        }
-        busy.set(false);
-    });
 }
 
 fn load_profile_session(services: &WalletUiServices) -> ProfileSessionState {
@@ -4322,7 +4373,7 @@ fn OnboardingFlow(
             section { class: "page-heading onboarding-heading",
                 p { class: "eyebrow", "Welcome to {brand.product_name()}" }
                 h1 { "Your Midnight identity wallet" }
-                p { "Create a private wallet, restore its 24-word phrase, or recover one complete encrypted {brand.product_name()} backup." }
+                p { "Create a private wallet, restore its 24-word recovery phrase, or recover one complete encrypted backup." }
             }
             section { class: "profile-card surface-card onboarding-choice-card",
                 if services.wallet_onboarding.is_some() {
@@ -4336,7 +4387,7 @@ fn OnboardingFlow(
                         class: "secondary-action",
                         r#type: "button",
                         onclick: move |_| step.set(OnboardingStep::RestorePhraseProfile),
-                        "Restore recovery phrase"
+                        "Restore 24-word recovery phrase"
                     }
                 } else {
                     p { class: "form-hint", role: "status",
@@ -4347,7 +4398,7 @@ fn OnboardingFlow(
                     class: "secondary-action",
                     r#type: "button",
                     onclick: move |_| step.set(OnboardingStep::RestoreBackup),
-                    "Restore complete backup"
+                    "Restore from backup"
                 }
                 {root_recovery_choice}
             }
@@ -4405,13 +4456,6 @@ fn OnboardingFlow(
                 on_complete: move |profile| on_selected.call(profile),
             }
         },
-        #[cfg(feature = "public-standalone-genesis")]
-        OnboardingStep::SharedDeveloper(profile) => rsx! {
-            OnboardingProtection {
-                profile,
-                on_continue: move |profile| on_selected.call(profile),
-            }
-        },
         OnboardingStep::RestoreBackup => rsx! {
             section { class: "page-heading onboarding-heading",
                 button {
@@ -4422,11 +4466,18 @@ fn OnboardingFlow(
                     "← Back"
                 }
                 p { class: "eyebrow", "Existing wallet" }
-                h1 { "Restore from backup" }
-                p { "Recovery creates the authenticated wallet from your encrypted document." }
+                h1 { "Restore encrypted backup" }
+                p { "Recover the complete authenticated wallet from an encrypted backup document." }
             }
             FreshInstallRecovery {
                 on_recovered: move |profile| on_selected.call(profile),
+            }
+        },
+        #[cfg(feature = "public-standalone-genesis")]
+        OnboardingStep::SharedDeveloper(profile) => rsx! {
+            OnboardingProtection {
+                profile,
+                on_continue: move |profile| on_selected.call(profile),
             }
         },
         #[cfg(feature = "preprod-observation")]
@@ -4563,9 +4614,9 @@ fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Elemen
                 p { "Backup completed at {ui::format_epoch_millis(receipt.completed_at_millis)}." }
             }
         },
-        PortableBackupUiState::Cancelled => rsx! {
+        PortableBackupUiState::Cancelled(message) => rsx! {
             div { class: "result", role: "status",
-                p { "Document selection cancelled. No recovery was started." }
+                p { "{message}" }
             }
         },
         PortableBackupUiState::Failed(message) => rsx! {
@@ -4646,7 +4697,7 @@ fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Elemen
                                                 confirmed: true,
                                             },
                                         })
-                                        .map_err(|error| error.to_string())?;
+                                        .map_err(|error| portable_backup_recovery_error_message(&error))?;
                                     let active_profile = services
                                         .get_active_wallet_profile
                                         .execute()
@@ -4660,7 +4711,9 @@ fn FreshInstallRecovery(on_recovered: EventHandler<WalletProfileView>) -> Elemen
                                 }
                             }
                             Err(PortableWalletBackupDocumentError::Cancelled) => {
-                                recovery_state.set(PortableBackupUiState::Cancelled);
+                                recovery_state.set(PortableBackupUiState::Cancelled(
+                                    "Document selection cancelled. Your Restore from backup task is still selected; no recovery was started.",
+                                ));
                                 return;
                             }
                             Err(error) => Err(error.to_string()),
@@ -4693,6 +4746,21 @@ fn complete_recovery_message(summary: &CompleteWalletRecoverySummary) -> String 
         "Recovered {} protected key(s), {} DID record(s), and {} credential(s).",
         summary.restored_key_count, summary.restored_did_count, summary.restored_credential_count,
     )
+}
+
+fn portable_backup_recovery_error_message(
+    error: &oxid_wallet_application::WalletPortableBackupUseCaseError,
+) -> String {
+    if matches!(
+        error,
+        oxid_wallet_application::WalletPortableBackupUseCaseError::Operation(
+            oxid_wallet_application::WalletPortableBackupPortError::UnsupportedVersion
+        )
+    ) {
+        "This backup appears to use a newer format. Update Oxid and try again. If it still fails, check the file.".to_owned()
+    } else {
+        error.to_string()
+    }
 }
 
 #[component]
@@ -4891,6 +4959,8 @@ fn HomePage(
     on_open_vault: EventHandler<MouseEvent>,
     on_open_settings: EventHandler<MouseEvent>,
     on_receive: EventHandler<MouseEvent>,
+    on_send: EventHandler<MouseEvent>,
+    on_present: EventHandler<MouseEvent>,
     on_scan: EventHandler<MouseEvent>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
@@ -4913,10 +4983,10 @@ fn HomePage(
         HomePageState::Loading => rsx! {
             section { class: "home-hero home-hero--loading", role: "status", aria_busy: "true",
                 p { class: "eyebrow", "Current realm" }
-                h1 { class: "home-hero__realm-title", "Loading network…" }
+                h2 { class: "home-hero__realm-title", "Loading network…" }
                 p { class: "home-hero__hint", "Preparing {active_profile.display_name} without carrying values across profiles." }
             }
-            HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
+            HomeQuickActions { scan_busy, on_receive, on_send, on_present, on_scan }
             section { class: "home-card-stack", aria_label: "Loading wallet products", aria_busy: "true",
                 for label in ["Wallet", "Newest document", "Passport Vault"] {
                     article { class: "home-card home-card--loading", key: "{label}",
@@ -4940,10 +5010,10 @@ fn HomePage(
                     p { class: "eyebrow", "Current realm" }
                     span { class: "status-pill warning", "Unavailable" }
                 }
-                h1 { class: "home-hero__realm-title", "{active_profile.display_name}" }
+                h2 { class: "home-hero__realm-title", "{active_profile.display_name}" }
                 p { class: "home-hero__hint", "The selected network context could not be loaded safely." }
             }
-            HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
+            HomeQuickActions { scan_busy, on_receive, on_send, on_present, on_scan }
             article { class: "empty-state surface-card", role: "alert",
                 h2 { "Home is unavailable" }
                 p { "Your complete wallet and documents are still available from their tabs." }
@@ -4976,7 +5046,7 @@ fn HomePage(
             } = *projection;
             rsx! {
                 HomeHero { active_profile: active_profile.clone(), account: (*account).clone() }
-                HomeQuickActions { scan_busy, on_select_primary, on_receive, on_scan }
+                HomeQuickActions { scan_busy, on_receive, on_send, on_present, on_scan }
                 HomeProductStack {
                     account: (*account).clone(),
                     credentials,
@@ -4993,8 +5063,8 @@ fn HomePage(
 
 #[component]
 fn HomeHero(active_profile: WalletProfileView, account: WalletAccountView) -> Element {
-    let source = ui::account_source(&account.source);
-    let freshness = ui::sync_state(&account.sync.state);
+    let source = ui::account_source(account.source);
+    let freshness = ui::account_sync_state(account.sync.state);
     let status_class = if matches!(
         account.source.as_str(),
         "simulated" | "cached" | "unavailable"
@@ -5014,9 +5084,9 @@ fn HomeHero(active_profile: WalletProfileView, account: WalletAccountView) -> El
                     "{source} · {freshness}"
                 }
             }
-            h1 { class: "home-hero__realm-title", "{account.network_name}" }
+            h2 { class: "home-hero__realm-title", "{account.network_name}" }
             p { class: "home-hero__profile", "{active_profile.display_name} · {account.chain}" }
-            p { class: "home-hero__hint", "{ui::account_source_note(&account.source)}" }
+            p { class: "home-hero__hint", "{ui::account_source_note(account.source)}" }
         }
     }
 }
@@ -5024,8 +5094,9 @@ fn HomeHero(active_profile: WalletProfileView, account: WalletAccountView) -> El
 #[component]
 fn HomeQuickActions(
     scan_busy: bool,
-    on_select_primary: EventHandler<PrimaryDestination>,
     on_receive: EventHandler<MouseEvent>,
+    on_send: EventHandler<MouseEvent>,
+    on_present: EventHandler<MouseEvent>,
     on_scan: EventHandler<MouseEvent>,
 ) -> Element {
     rsx! {
@@ -5040,9 +5111,8 @@ fn HomeQuickActions(
                     onclick: move |event| {
                         match action.target() {
                             HomeQuickActionTarget::ReceiveSheet => on_receive.call(event),
-                            HomeQuickActionTarget::Primary(destination) => {
-                                on_select_primary.call(destination);
-                            }
+                            HomeQuickActionTarget::Send => on_send.call(event),
+                            HomeQuickActionTarget::Present => on_present.call(event),
                             HomeQuickActionTarget::Scan => on_scan.call(event),
                         }
                     },
@@ -5063,6 +5133,26 @@ const fn home_quick_action_disabled(action: HomeQuickAction, scan_busy: bool) ->
 }
 
 #[component]
+fn PresentationPage(
+    active_profile: WalletProfileView,
+    pending_identity_request: Signal<Option<PendingIdentityRequest>>,
+) -> Element {
+    rsx! {
+        section { class: "page-heading",
+            p { class: "eyebrow", "Selective disclosure" }
+            h1 { "Present a document" }
+            p {
+                "Review who is asking and choose exactly what to share. Nothing leaves this wallet without consent."
+            }
+        }
+        CredentialPresentationPanel {
+            profile_id: active_profile.id,
+            pending_identity_request,
+        }
+    }
+}
+
+#[component]
 fn ReceiveSheet(
     active_profile: WalletProfileView,
     masked: bool,
@@ -5073,20 +5163,45 @@ fn ReceiveSheet(
     let mut state = use_signal(|| ReceiveSheetState::Loading);
     let mut selected_kind = use_signal(|| None::<String>);
     let mut export_notice = use_signal(|| None::<String>);
+    let watch_session = use_signal(|| false);
+    let watch_generation = use_signal(|| 0_u64);
     let profile_id = active_profile.id.clone();
+    let action_watch_projection =
+        use_action_watch_projection(services.clone(), WalletActionWatchContext::Receive);
+    use_effect(|| {
+        let _ = dioxus_document::eval(
+            "window.scrollTo({ top: 0, behavior: 'instant' }); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; document.querySelector('.page-content')?.scrollTo({ top: 0, behavior: 'instant' }); window.requestAnimationFrame(() => document.querySelector('.receive-sheet__body')?.scrollTo({ top: 0, behavior: 'instant' }));",
+        );
+    });
     let services_for_load = services.clone();
     use_effect(move || {
         let services = services_for_load.clone();
         let profile_id = profile_id.clone();
         spawn(async move {
-            let next = run_ui_blocking(move || load_receive_sheet(&services, &profile_id))
+            let query_services = services.clone();
+            let query_profile = profile_id.clone();
+            let next = run_ui_blocking(move || load_receive_sheet(&query_services, &query_profile))
                 .await
                 .unwrap_or(ReceiveSheetState::Failed);
-            if let ReceiveSheetState::Ready(account) = &next {
+            record_receive_availability_diagnostic(&services, &next);
+            if let ReceiveSheetState::Ready { account, .. } = &next {
                 selected_kind.set(default_receive_kind(account));
             }
             state.set(next);
         });
+    });
+    let watch_services = services.clone();
+    let watch_profile = active_profile.id.clone();
+    use_effect(move || {
+        if let (Some(_), ReceiveSheetState::Ready { account, .. }) = (selected_kind(), state()) {
+            start_receive_watch(
+                watch_services.clone(),
+                watch_profile.clone(),
+                *account,
+                selected_kind,
+                (watch_session, watch_generation),
+            );
+        }
     });
 
     let content = match state.read().clone() {
@@ -5108,14 +5223,19 @@ fn ReceiveSheet(
                         let services = services.clone();
                         let profile_id = active_profile.id.clone();
                         export_notice.set(None);
+                        selected_kind.set(None);
+                        reset_receive_watch((watch_session, watch_generation));
                         state.set(ReceiveSheetState::Loading);
                         spawn(async move {
+                            let query_services = services.clone();
+                            let query_profile = profile_id.clone();
                             let next = run_ui_blocking(move || {
-                                load_receive_sheet(&services, &profile_id)
+                                load_receive_sheet(&query_services, &query_profile)
                             })
                             .await
                             .unwrap_or(ReceiveSheetState::Failed);
-                            if let ReceiveSheetState::Ready(account) = &next {
+                            record_receive_availability_diagnostic(&services, &next);
+                            if let ReceiveSheetState::Ready { account, .. } = &next {
                                 selected_kind.set(default_receive_kind(account));
                             }
                             state.set(next);
@@ -5125,7 +5245,11 @@ fn ReceiveSheet(
                 }
             }
         },
-        ReceiveSheetState::Ready(account) => {
+        ReceiveSheetState::Ready {
+            account,
+            #[cfg(feature = "standalone-deployment-profile")]
+            deployment,
+        } => {
             let Some(addresses) = protected_receive_addresses(&account) else {
                 return rsx! {
                     button {
@@ -5143,8 +5267,8 @@ fn ReceiveSheet(
                         div { class: "receive-sheet__heading",
                             div {
                                 p { class: "card-eyebrow", "Midnight account" }
-                                h2 { id: "receive-sheet-title", "Receive NIGHT" }
-                                p { "Choose exactly which public receive destination to share." }
+                                h2 { id: "receive-sheet-title", "Receive assets" }
+                                p { "Choose exactly which receive destination to share." }
                             }
                             button {
                                 class: "receive-sheet__close",
@@ -5154,14 +5278,16 @@ fn ReceiveSheet(
                                 "Close"
                             }
                         }
-                        div { class: "receive-sheet__state",
-                            strong { "Protected receive addresses are not ready" }
-                            p { "Activate and derive this profile's protected Midnight account before sharing a holder-controlled address." }
-                            button {
-                                class: "primary-action",
-                                r#type: "button",
-                                onclick: move |event| on_open_wallet.call(event),
-                                "Open Wallet to activate"
+                        div { class: "receive-sheet__body",
+                            div { class: "receive-sheet__state",
+                                strong { "Protected receive addresses are not ready" }
+                                p { "Activate and derive this profile's protected Midnight account before sharing a holder-controlled address." }
+                                button {
+                                    class: "primary-action",
+                                    r#type: "button",
+                                    onclick: move |event| on_open_wallet.call(event),
+                                    "Open Wallet to activate"
+                                }
                             }
                         }
                     }
@@ -5174,7 +5300,7 @@ fn ReceiveSheet(
                 .find(|address| Some(address.kind.as_str()) == selected_kind_value.as_deref())
                 .cloned()
                 .unwrap_or_else(|| addresses[0].clone());
-            let source = ui::account_source(&account.source);
+            let source = ui::account_source(account.source);
             let status_class = if matches!(
                 account.source.as_str(),
                 "simulated" | "cached" | "unavailable"
@@ -5183,8 +5309,37 @@ fn ReceiveSheet(
             } else {
                 "status-pill"
             };
-            let qr = render_qr_svg(&selected.value);
+            let receive_request = oxid_wallet_application::encode_midnight_night_receive_request(
+                &account.network_id,
+                &selected,
+            );
+            let address_is_exportable =
+                receive_address_is_exportable(&selected.kind, &account.network_id, &selected.value);
+            let qr_payload = receive_request.as_deref().unwrap_or(&selected.value);
+            let qr = address_is_exportable
+                .then(|| render_qr_svg(qr_payload))
+                .flatten();
+            let address_kind = ui::address_kind(&selected.kind);
+            let qr_label = if receive_request.is_some() {
+                "QR code for public NIGHT receive request".to_owned()
+            } else {
+                format!("QR code for {address_kind} receive address")
+            };
             let preview = grouped_address_preview(&selected.value);
+            #[cfg(feature = "standalone-deployment-profile")]
+            let route_class = Some(
+                deployment
+                    .map(|profile| ui::deployment_route_class(profile.route_class().as_str()))
+                    .unwrap_or("Unavailable"),
+            );
+            #[cfg(not(feature = "standalone-deployment-profile"))]
+            let route_class: Option<&str> = None;
+            #[cfg(feature = "standalone-deployment-profile")]
+            let funding_action = receive_request
+                .is_some()
+                .then(|| standalone_funding_action(deployment));
+            #[cfg(not(feature = "standalone-deployment-profile"))]
+            let funding_action: Option<Element> = None;
             let copy_exporter = services.public_text_exporter();
             let copy_value = selected.value.clone();
             let share_exporter = services.public_text_exporter();
@@ -5192,7 +5347,11 @@ fn ReceiveSheet(
             rsx! {
                 div { class: "receive-sheet__status",
                     span { class: "{status_class}", "{source}" }
-                    span { "{account.network_name}" }
+                    span { "{active_profile.display_name}" }
+                    span { "{ui::midnight_network(&account.network_id)} ({account.network_id}) · {ui::receive_asset(&selected.kind)}" }
+                    if let Some(route_class) = route_class {
+                        span { "{route_class}" }
+                    }
                 }
                 div { class: "receive-sheet__selectors", role: "group", aria_label: "Receive address type",
                     for address in addresses.iter() {
@@ -5217,55 +5376,83 @@ fn ReceiveSheet(
                     }
                 }
                 div { class: "receive-sheet__address",
-                    div {
-                        strong { "{ui::address_kind(&selected.kind)}" }
-                        p { "{ui::address_purpose(&selected.kind)}" }
-                    }
-                    div {
-                        class: "address-qr privacy-qr",
-                        role: "img",
-                        aria_label: "QR code for {ui::address_kind(&selected.kind)} receive address",
-                        if let Some(svg) = qr {
-                            div { class: "address-qr__frame", dangerous_inner_html: "{svg}" }
-                        } else {
-                            p { role: "alert", "This address could not be encoded as a QR code." }
+                        div {
+                            p { class: "card-eyebrow", "Selected destination" }
+                            strong { "{ui::address_kind(&selected.kind)} on {ui::midnight_network(&account.network_id)}" }
+                            p { "{ui::address_purpose(&selected.kind)}" }
+                        }
+                        div {
+                            class: "address-qr privacy-qr",
+                            if let Some(svg) = qr {
+                                div {
+                                    class: "address-qr__frame",
+                                    role: "img",
+                                    aria_label: "{qr_label}",
+                                    dangerous_inner_html: "{svg}"
+                                }
+                            } else if address_is_exportable {
+                                p { role: "alert", "This address could not be encoded as a QR code." }
+                            } else {
+                                div { class: "receive-sheet__state", role: "alert",
+                                    p { "This receive address is unavailable. Refresh the account before sharing it." }
+                                    button {
+                                        class: "secondary-action",
+                                        r#type: "button",
+                                        onclick: move |event| on_open_wallet.call(event),
+                                        "Open Wallet"
+                                    }
+                                }
+                            }
+                        }
+                        if address_is_exportable {
+                            code {
+                                class: "receive-sheet__preview privacy-value",
+                                aria_label: "Full validated raw {ui::address_kind(&selected.kind)} receive address {selected.value}",
+                                "{preview}"
+                            }
+                        }
+                        if receive_request.is_some() {
+                            p { "The QR carries a versioned public NIGHT request; copy and share export the raw address shown." }
                         }
                     }
-                    code {
-                        class: "receive-sheet__preview privacy-value",
-                        aria_label: "Full {ui::address_kind(&selected.kind)} receive address {selected.value}",
-                        "{preview}"
+                    div { class: "receive-sheet__actions",
+                        button {
+                            class: "receive-sheet__action",
+                            r#type: "button",
+                            aria_label: "Copy {ui::address_kind(&selected.kind)} receive address",
+                            disabled: !address_is_exportable,
+                            onclick: move |_| {
+                                let result = PublicReceiveAddress::new(copy_value.clone())
+                                    .and_then(|address| copy_exporter.copy_receive_address(address));
+                                export_notice.set(Some(public_export_message(result, false)));
+                            },
+                            "Copy address"
+                        }
+                        button {
+                            class: "receive-sheet__action",
+                            r#type: "button",
+                            aria_label: "Share {ui::address_kind(&selected.kind)} receive address",
+                            disabled: !address_is_exportable,
+                            onclick: move |_| {
+                                let result = PublicReceiveAddress::new(share_value.clone())
+                                    .and_then(|address| share_exporter.share_receive_address(address));
+                                export_notice.set(Some(public_export_message(result, true)));
+                            },
+                            "Share"
+                        }
                     }
-                }
-                div { class: "receive-sheet__actions",
-                    button {
-                        class: "receive-sheet__action",
-                        r#type: "button",
-                        aria_label: "Copy {ui::address_kind(&selected.kind)} receive address",
-                        onclick: move |_| {
-                            let result = PublicReceiveAddress::new(copy_value.clone())
-                                .and_then(|address| copy_exporter.copy_receive_address(address));
-                            export_notice.set(Some(public_export_message(result, false)));
-                        },
-                        "Copy address"
+                    if let Some(message) = export_notice.read().as_deref() {
+                        p { class: "address-export-notice", role: "status", "{message}" }
                     }
-                    button {
-                        class: "receive-sheet__action",
-                        r#type: "button",
-                        aria_label: "Share {ui::address_kind(&selected.kind)} receive address",
-                        onclick: move |_| {
-                            let result = PublicReceiveAddress::new(share_value.clone())
-                                .and_then(|address| share_exporter.share_receive_address(address));
-                            export_notice.set(Some(public_export_message(result, true)));
-                        },
-                        "Share"
-                    }
-                }
-                if let Some(message) = export_notice.read().as_deref() {
-                    p { class: "address-export-notice", role: "status", "{message}" }
+                if let Some(action) = funding_action {
+                    {action}
                 }
                 p { class: "receive-sheet__guarantee",
-                    "Each QR, clipboard copy, and share sheet contains exactly the public receive address shown. The grouped preview is display-only."
+                    if receive_request.is_some() {
+                        "QR: versioned public NIGHT request. Copy/share: validated raw address."
+                    } else {
+                        "QR, copy, and share contain the protected address shown. Automatic arrival confirmation is shown only for Public NIGHT."
+                    }
                 }
             }
         }
@@ -5287,8 +5474,8 @@ fn ReceiveSheet(
             div { class: "receive-sheet__heading",
                 div {
                     p { class: "card-eyebrow", "Midnight account" }
-                    h2 { id: "receive-sheet-title", "Receive NIGHT" }
-                    p { "Choose exactly which public receive destination to share." }
+                    h2 { id: "receive-sheet-title", "Receive assets" }
+                    p { "Choose exactly which receive destination to share." }
                 }
                 button {
                     class: "receive-sheet__close",
@@ -5298,7 +5485,14 @@ fn ReceiveSheet(
                     "Close"
                 }
             }
-            {content}
+            div { class: "receive-sheet__body",
+                if watch_session() {
+                    if let Some(projection) = action_watch_projection() {
+                        WalletActionWatchStatus { projection }
+                    }
+                }
+                {content}
+            }
         }
     }
 }
@@ -5309,36 +5503,29 @@ fn load_receive_sheet(services: &WalletUiServices, profile_id: &str) -> ReceiveS
         .execute(WalletAccountQuery {
             profile_id: profile_id.to_owned(),
         })
-        .map(|account| ReceiveSheetState::Ready(Box::new(account)))
+        .map(|account| ReceiveSheetState::Ready {
+            account: Box::new(account),
+            #[cfg(feature = "standalone-deployment-profile")]
+            deployment: services
+                .deployment_profile()
+                .map(|profile| profile.execute()),
+        })
         .unwrap_or(ReceiveSheetState::Failed)
 }
 
-fn protected_receive_addresses(account: &WalletAccountView) -> Option<&[WalletAddressView]> {
-    has_protected_account(account).then_some(account.addresses.as_slice())
-}
-
-fn default_receive_kind(account: &WalletAccountView) -> Option<String> {
-    protected_receive_addresses(account)
-        .and_then(|addresses| addresses.first())
-        .map(|address| address.kind.clone())
-}
-
-fn grouped_address_preview(value: &str) -> String {
-    let characters = value.chars().collect::<Vec<_>>();
-    let visible = if characters.len() > 32 {
-        let mut shortened = characters[..20].to_vec();
-        shortened.extend(['…', '…', '…']);
-        shortened.extend_from_slice(&characters[characters.len() - 8..]);
-        shortened
-    } else {
-        characters
+fn record_receive_availability_diagnostic(services: &WalletUiServices, state: &ReceiveSheetState) {
+    let code = match state {
+        ReceiveSheetState::Failed => DiagnosticCode::WalletReceiveAccountReadFailed,
+        ReceiveSheetState::Ready { account, .. }
+            if protected_receive_addresses(account).is_none() =>
+        {
+            DiagnosticCode::WalletReceiveAddressesUnavailable
+        }
+        ReceiveSheetState::Loading | ReceiveSheetState::Ready { .. } => return,
     };
-
-    visible
-        .chunks(4)
-        .map(|chunk| chunk.iter().collect::<String>())
-        .collect::<Vec<_>>()
-        .join(" ")
+    services
+        .diagnostic_events()
+        .record(code, DiagnosticSeverity::Warning);
 }
 
 #[component]
@@ -5433,8 +5620,8 @@ fn home_wallet_summary(account: &WalletAccountView) -> (String, String) {
         account.network_name.clone(),
         format!(
             "{} · {}",
-            ui::sync_state(&account.sync.state),
-            ui::account_source(&account.source),
+            ui::account_sync_state(account.sync.state),
+            ui::account_source(account.source),
         ),
     )
 }
@@ -5446,7 +5633,7 @@ fn HomeSecurityStrip(
     on_open_settings: EventHandler<MouseEvent>,
 ) -> Element {
     let backup_status = match backup_receipt {
-        HomeResource::Ready(Some(_)) => "Backed up",
+        HomeResource::Ready(Some(_)) => "Backup exported",
         HomeResource::Ready(None) => ui::backup_capability(security.portable_backup_supported),
         HomeResource::Unavailable => "Backup status unavailable",
     };
@@ -5513,29 +5700,175 @@ fn HomeActivityPreview(
 #[component]
 fn DocumentsPage(
     active_profile: WalletProfileView,
-    pending_identity_request: Signal<Option<PendingIdentityRequest>>,
-    manual_credential_review_lock: Signal<bool>,
+    on_add_document: EventHandler<MouseEvent>,
+    on_present: EventHandler<MouseEvent>,
     on_manage_identities: EventHandler<MouseEvent>,
 ) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut state = use_signal(|| CredentialPageState::Loading);
+    let mut selected_document = use_signal(|| None::<String>);
+    let profile_id = active_profile.id.clone();
+    let load_services = services.clone();
+    let load_profile = profile_id.clone();
+    use_effect(move || {
+        let services = load_services.clone();
+        let profile_id = load_profile.clone();
+        selected_document.set(None);
+        spawn(async move {
+            state.set(
+                run_ui_blocking(move || load_credential_page(&services, &profile_id))
+                    .await
+                    .unwrap_or_else(|error| CredentialPageState::Failed(error.to_string())),
+            );
+        });
+    });
+
     rsx! {
-        article { class: "documents-identity-card surface-card",
-            div {
-                p { class: "card-eyebrow", "Identity controls" }
-                h2 { "Wallet identities" }
-                p { "DIDs stay available one level below your documents." }
+        if selected_document.read().is_none() {
+            section { class: "page-heading",
+                p { class: "eyebrow", "Your holder wallet" }
+                p { "Review what is stored, who issued it, and whether it is ready to use." }
             }
-            button {
-                class: "secondary-action",
-                r#type: "button",
-                aria_label: "Manage identities",
-                onclick: move |event| on_manage_identities.call(event),
-                "Manage identities"
+            div { class: "documents-actions",
+                button {
+                    class: "primary-action", r#type: "button",
+                    onclick: move |event| on_add_document.call(event),
+                    "Add document"
+                }
+                button {
+                    class: "secondary-action", r#type: "button",
+                    onclick: move |event| on_present.call(event),
+                    "Present"
+                }
+                button {
+                    class: "secondary-action", r#type: "button",
+                    aria_label: "Manage identities",
+                    onclick: move |event| on_manage_identities.call(event),
+                    "Manage identities"
+                }
             }
         }
-        CredentialsPage {
-            active_profile,
-            pending_identity_request,
-            manual_credential_review_lock,
+        match state.read().clone() {
+            CredentialPageState::Loading => rsx! {
+                article { class: "empty-state surface-card", role: "status", aria_busy: "true",
+                    span { class: "loading-mark", aria_hidden: "true" }
+                    h2 { "Loading documents" }
+                    p { "Checking the protected inventory for this wallet profile." }
+                }
+            },
+            CredentialPageState::Failed(message) => rsx! {
+                article { class: "empty-state surface-card", role: "alert",
+                    span { class: "empty-state__mark", aria_hidden: "true", "◇" }
+                    h2 { "Documents unavailable" }
+                    p { "{message}" }
+                    button {
+                        class: "secondary-action", r#type: "button",
+                        onclick: move |_| {
+                            let services = services.clone();
+                            let profile_id = profile_id.clone();
+                            state.set(CredentialPageState::Loading);
+                            spawn(async move {
+                                state.set(
+                                    run_ui_blocking(move || load_credential_page(&services, &profile_id))
+                                        .await
+                                        .unwrap_or_else(|error| CredentialPageState::Failed(error.to_string())),
+                                );
+                            });
+                        },
+                        "Retry"
+                    }
+                }
+            },
+            CredentialPageState::Ready { credentials, operation_error, reverification_applied } => rsx! {
+                if reverification_applied {
+                    p {
+                        class: "form-hint credential-reverification-success",
+                        role: "status",
+                        aria_label: CREDENTIAL_REVERIFICATION_APPLIED_MARKER,
+                        "{CREDENTIAL_REVERIFICATION_APPLIED_MARKER}"
+                    }
+                }
+                if let Some(error) = operation_error.as_deref() {
+                    p { class: "field-error credential-operation-error", role: "alert",
+                        strong { "Document operation error" }
+                        br {}
+                        "{error}"
+                    }
+                }
+                if let Some(selected_id) = selected_document.read().as_ref() {
+                    if let Some(credential) = credentials
+                        .iter()
+                        .find(|credential| credential.id == *selected_id)
+                    {
+                        {
+                            let retained = credentials.clone();
+                            rsx! {
+                                div { class: "document-detail-header",
+                                    button {
+                                        class: "did-back-action",
+                                        r#type: "button",
+                                        aria_label: "Back to documents",
+                                        onclick: move |_| selected_document.set(None),
+                                        span { aria_hidden: "true", "‹" }
+                                    }
+                                    div {
+                                        p { class: "eyebrow", "Document details" }
+                                    }
+                                }
+                                div { "data-testid": "identity-document-detail",
+                                    CredentialRecordCard {
+                                        profile_id: profile_id.clone(),
+                                        credential: credential.clone(),
+                                        item_index: 0,
+                                        on_change: move |change| {
+                                            let deleted = matches!(&change, CredentialChange::Deleted(_));
+                                            state.set(credential_page_after_change(retained.clone(), change));
+                                            if deleted {
+                                                selected_document.set(None);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        article { class: "empty-state surface-card", role: "status",
+                            h2 { "Document no longer available" }
+                            p { "Return to the document list and choose another credential." }
+                            button {
+                                class: "secondary-action",
+                                r#type: "button",
+                                onclick: move |_| selected_document.set(None),
+                                "Back to documents"
+                            }
+                        }
+                    }
+                } else if credentials.is_empty() {
+                    IdentityEmptyState {
+                        title: "No documents yet".to_owned(),
+                        description: "Add a credential offer to review it before anything is stored in your wallet.".to_owned(),
+                        scope: "Profile scoped".to_owned(),
+                        class: String::new(),
+                    }
+                } else {
+                    section { class: "credential-inventory", aria_label: "Saved documents",
+                        "data-testid": "identity-document-inventory",
+                        for (index, credential) in credentials.clone().into_iter().enumerate() {
+                            {
+                                let current_id = credential.id.clone();
+                                rsx! {
+                                    CredentialInventoryCard {
+                                        key: "{current_id}",
+                                        credential,
+                                        item_index: index,
+                                        on_open: move |_| selected_document.set(Some(current_id.clone())),
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
         }
     }
 }
@@ -5558,29 +5891,29 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
         });
     });
 
+    let retry_profile_id = active_profile.id.clone();
     rsx! {
         section { class: "page-heading",
             p { class: "eyebrow", "Wallet history" }
-            h1 { "Activity" }
-            p { "Midnight transfers and recoverable submissions appear here." }
+            p { "Midnight transfers, Passport Vault operations, credential issuance, and recoverable submissions appear here." }
         }
         match state.read().clone() {
             AccountPageState::Loading => rsx! {
                 article { class: "empty-state surface-card", role: "status", aria_busy: "true",
                     span { class: "loading-mark", aria_hidden: "true" }
-                    h2 { "Loading activity" }
+                    h2 { "Loading wallet activity" }
                 }
             },
             AccountPageState::Failed(error) => rsx! {
                 article { class: "empty-state surface-card", role: "alert",
-                    h2 { "Activity unavailable" }
+                    h2 { "Wallet activity unavailable" }
                     p { "{error}" }
                     button {
                         class: "secondary-action",
                         r#type: "button",
                         onclick: move |_| {
                             let services = services.clone();
-                            let profile_id = active_profile.id.clone();
+                            let profile_id = retry_profile_id.clone();
                             state.set(AccountPageState::Loading);
                             spawn(async move {
                                 state.set(
@@ -5590,44 +5923,77 @@ fn ActivityPage(active_profile: WalletProfileView) -> Element {
                                 );
                             });
                         },
-                        "Retry"
+                        "Retry wallet activity"
                     }
                 }
             },
             AccountPageState::Ready { account, .. } => {
-                let unavailable = account.source == "unavailable";
-                rsx! {
-                    AccountActivityCard { account: *account, unavailable }
-                    SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
-                }
+                let unavailable = account.source == WalletAccountSource::Unavailable;
+                rsx! { AccountActivityCard { account: *account, unavailable } }
             },
         }
+        PassportVaultActivitySection { profile_id: active_profile.id.clone() }
+        CredentialIssuanceActivitySection { profile_id: active_profile.id.clone() }
+        CredentialPresentationActivitySection { profile_id: active_profile.id.clone() }
+        SubmissionRecoveryPane { profile_id: active_profile.id.clone() }
     }
 }
 
 #[component]
 fn AccountActivityCard(account: WalletAccountView, unavailable: bool) -> Element {
+    let source_label = ui::account_source(account.source);
+    let source_freshness = wallet_activity_freshness(account.source);
     rsx! {
         article { class: "surface-card",
-            p { class: "card-eyebrow", "Activity" }
+            p { class: "card-eyebrow", "Wallet activity" }
+            h2 { "On-chain transfers" }
+            p { class: "activity-source-note", "Source: Midnight wallet account. Passport Vault and credential issuance activity are listed separately below." }
+            div { class: "activity-filters", role: "group", aria_label: "Activity sources",
+                span { class: "status-pill", "Wallet" }
+                span { class: "status-pill", "Passport Vault" }
+                span { class: "status-pill", "Credential issuance" }
+            }
             if account.transactions.is_empty() {
-                h2 { "No synced history" }
-                p { if unavailable { "A live Midnight account source is not connected." } else { "Connect the account to synchronize transaction history." } }
+                p { class: "activity-empty-state",
+                    if unavailable { "Wallet activity is unavailable because a live Midnight account source is not connected. Open Wallet to restore the selected realm." } else { "No synced wallet activity is available for this profile yet. Receive or send NIGHT to create the first transaction." }
+                }
             } else {
-                div { class: "activity-list",
+                div { class: "activity-list", aria_label: "Wallet transaction activity",
                     for transaction in account.transactions.iter() {
-                        div { class: "activity-row", key: "{transaction.transaction_id}",
+                        article { class: "activity-row", key: "{transaction.transaction_id}",
                             span { class: "activity-row__mark", aria_hidden: "true", "{ui::transaction_mark(&transaction.direction)}" }
                             div {
                                 strong { "{ui::transaction_direction(&transaction.direction)}" }
                                 small { class: "privacy-value", "{transaction_status_line(transaction)}" }
+                                small { class: "activity-row__source", "{source_label} · {source_freshness}" }
+                                small { class: "privacy-value", "{activity_observed_at_line(transaction.observed_at_millis)}" }
                             }
-                            code { class: "privacy-value", "{truncate_middle(&transaction.transaction_id, 12, 6)}" }
+                            details { class: "activity-row__details",
+                                summary { "Transaction details" }
+                                dl { class: "preview-list",
+                                    div { dt { "Source" } dd { "{source_label} · {source_freshness}" } }
+                                    div { dt { "Status" } dd { "{ui::transaction_status(&transaction.status)}" } }
+                                    div { dt { "Observed" } dd { "{activity_observed_at_line(transaction.observed_at_millis)}" } }
+                                    div { dt { "Transaction" } dd { class: "privacy-value", title: "{transaction.transaction_id}", "{truncate_middle(&transaction.transaction_id, 12, 6)}" } }
+                                    if let Some(block_height) = transaction.block_height {
+                                        div { dt { "Block" } dd { "{block_height}" } }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+const fn wallet_activity_freshness(source: WalletAccountSource) -> &'static str {
+    match source {
+        WalletAccountSource::Live => "Live account",
+        WalletAccountSource::Cached => "Saved snapshot",
+        WalletAccountSource::Simulated => "Simulated fixture",
+        WalletAccountSource::Unavailable => "Source unavailable",
     }
 }
 
@@ -5781,24 +6147,26 @@ fn SubmissionRecoveryPane(profile_id: String) -> Element {
 #[component]
 fn AccountSyncCard(
     profile_id: String,
+    secret_mode: SecretModeController,
     can_sync: bool,
     account_unavailable: bool,
     on_account_updated: EventHandler<WalletAccountView>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
-    let mut state = use_signal(|| AccountSyncCardState::Loading);
+    let mut realm_lifecycle_wake = consume_context::<Signal<WalletRealmLifecycleWake>>();
+    let WalletRealmProjectionWake(realm_projection_wake) =
+        consume_context::<WalletRealmProjectionWake>();
+    let state = use_signal(|| AccountSyncCardState::Loading);
     let load_services = services.clone();
     let load_profile = profile_id.clone();
     use_effect(move || {
-        let services = load_services.clone();
-        let profile_id = load_profile.clone();
-        spawn(async move {
-            state.set(
-                run_ui_blocking(move || load_account_sync_card(&services, &profile_id))
-                    .await
-                    .unwrap_or_else(|error| AccountSyncCardState::Failed(error.to_string())),
-            );
-        });
+        let _projection_generation = realm_projection_wake();
+        begin_account_sync_card_observation(
+            load_services.clone(),
+            load_profile.clone(),
+            state,
+            on_account_updated,
+        );
     });
 
     match state.read().clone() {
@@ -5825,16 +6193,12 @@ fn AccountSyncCard(
                         class: "secondary-action",
                         r#type: "button",
                         onclick: move |_| {
-                            let services = retry_services.clone();
-                            let profile_id = retry_profile.clone();
-                            state.set(AccountSyncCardState::Loading);
-                            spawn(async move {
-                                state.set(
-                                    run_ui_blocking(move || load_account_sync_card(&services, &profile_id))
-                                        .await
-                                        .unwrap_or_else(|error| AccountSyncCardState::Failed(error.to_string())),
-                                );
-                            });
+                            reload_account_sync_card(
+                                retry_services.clone(),
+                                retry_profile.clone(),
+                                state,
+                                on_account_updated,
+                            );
                         },
                         "Retry"
                     }
@@ -5842,15 +6206,18 @@ fn AccountSyncCard(
             }
         }
         AccountSyncCardState::Ready {
-            realm,
+            realm: projection,
             action_busy,
             operation_error,
         } => {
-            let syncing = selected_realm_is_syncing(&realm);
-            let overall_state = selected_realm_sync_state(&realm);
-            let provenance = selected_realm_provenance(&realm);
-            let chain_tip = selected_realm_chain_tip(&realm);
-            let progress = selected_realm_sync_progress(&realm);
+            let retained_projection = projection.clone();
+            let realm = &projection.view;
+            let syncing = selected_realm_is_syncing(realm);
+            let overall_state = selected_realm_sync_state(realm);
+            let lifecycle = selected_realm_lifecycle_presentation(overall_state);
+            let provenance = selected_realm_provenance(realm);
+            let chain_tip = selected_realm_chain_tip(realm);
+            let progress = selected_realm_sync_progress(realm);
             let dust_balance = selected_realm_dust_balance(&realm.dust);
             let dust_state = selected_realm_dust_state(&realm.dust);
             let dust_note = selected_realm_dust_note(&realm.dust);
@@ -5863,7 +6230,7 @@ fn AccountSyncCard(
                     .map_or_else(|| "—".to_owned(), |count| count.to_string()),
                 _ => "—".to_owned(),
             };
-            let retained_realm = realm.clone();
+            let retained_realm = retained_projection.clone();
             let action_services = services.clone();
             let action_profile = profile_id.clone();
             let mut action_state = state;
@@ -5871,45 +6238,65 @@ fn AccountSyncCard(
                 article { class: "surface-card account-sync-card",
                     div { class: "wallet-sync-row__heading",
                         div {
-                            p { class: "card-eyebrow", "Account sync" }
-                            h2 { "Midnight account" }
+                            p { class: "card-eyebrow", "Selected realm" }
+                            h2 { "Wallet status" }
                         }
-                        span { class: "{dust_status_pill_class(overall_state)}", "{ui::sync_state(overall_state)}" }
+                        span { class: "{dust_status_pill_class(overall_state)}", "{lifecycle.label}" }
                     }
-                    p { class: "account-sync-card__provenance", "{provenance}" }
-                    p { class: "account-sync-card__provenance", "{chain_tip}" }
-                    p { "Refresh the public account, DUST balance, and shielded notes together. Each source retains its own authoritative status." }
-                    div { class: "account-sync-card__rows",
-                        div { class: "account-sync-card__row",
-                            div {
-                                strong { class: "privacy-value", "{dust_balance}" }
-                                small { "{dust_note}" }
+                    p { class: "account-sync-card__summary", "{lifecycle.note}" }
+                    if cfg!(feature = "ui-profile-dev") {
+                    details { class: "account-sync-card__details",
+                        summary { "Synchronization details" }
+                        p { class: "account-sync-card__provenance", "{provenance}" }
+                        p { class: "account-sync-card__provenance", "{chain_tip}" }
+                        div { class: "account-sync-card__rows",
+                            div { class: "account-sync-card__row",
+                                div {
+                                    strong {
+                                        class: "privacy-value",
+                                        aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                        "{dust_balance}"
+                                    }
+                                    small { "{dust_note}" }
+                                }
+                                span { class: "{dust_status_pill_class(dust_state)}", "{ui::sync_state(dust_state)}" }
                             }
-                            span { class: "{dust_status_pill_class(dust_state)}", "{ui::sync_state(dust_state)}" }
-                        }
-                        div { class: "account-sync-card__row",
-                            div {
-                                strong { class: "privacy-value", "{shielded_night}" }
-                                small { "Shielded NIGHT · {owned_notes} protected notes" }
-                                small { "{shielded_note}" }
+                            div { class: "account-sync-card__row",
+                                div {
+                                    strong {
+                                        class: "privacy-value",
+                                        aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                        "{shielded_night}"
+                                    }
+                                    small {
+                                        aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                        "Shielded NIGHT · {owned_notes} protected notes"
+                                    }
+                                    small { "{shielded_note}" }
+                                }
+                                span { class: "{dust_status_pill_class(shielded_state)}", "{ui::sync_state(shielded_state)}" }
                             }
-                            span { class: "{dust_status_pill_class(shielded_state)}", "{ui::sync_state(shielded_state)}" }
                         }
-                    }
-                    if let WalletRealmFamilyView::Ready(shielded) = &realm.shielded {
-                        if non_native_shielded_balances(shielded).next().is_some() {
-                            div { class: "activity-list", aria_label: "Shielded token balances",
-                                for balance in non_native_shielded_balances(shielded) {
-                                    div { class: "activity-row", key: "{balance.token_type_hex}",
-                                        span { class: "activity-row__mark", aria_hidden: "true", "◈" }
-                                        div {
-                                            strong { class: "privacy-value", "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}" }
-                                            small { title: "{balance.token_type_hex}", "Protected token" }
+                        if let WalletRealmFamilyView::Ready(shielded) = &realm.shielded {
+                            if non_native_shielded_balances(shielded).next().is_some() {
+                                div { class: "activity-list", aria_label: "Shielded token balances",
+                                    for balance in non_native_shielded_balances(shielded) {
+                                        div { class: "activity-row", key: "{balance.token_type_hex}",
+                                            span { class: "activity-row__mark", aria_hidden: "true", "◈" }
+                                            div {
+                                                strong {
+                                                    class: "privacy-value",
+                                                    aria_hidden: if secret_mode.is_masked() { "true" } else { "false" },
+                                                    "{ui::format_shielded_amount(&balance.token_type_hex, &balance.atomic_units)}"
+                                                }
+                                                small { title: "{balance.token_type_hex}", "Protected token" }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
+                    }
                     }
                     if let Some(percent) = progress {
                         div { class: "wallet-sync-progress", aria_label: "Account synchronization progress",
@@ -5919,10 +6306,11 @@ fn AccountSyncCard(
                     if let Some(message) = operation_error {
                         p { class: "wallet-sync-error", role: "alert", "{message}" }
                     }
+                    if lifecycle.retry && !syncing && can_sync && !account_unavailable {
                     button {
                         class: "secondary-action wallet-sync-action",
                         r#type: "button",
-                        disabled: action_busy || (!syncing && (!can_sync || account_unavailable)),
+                        disabled: action_busy,
                         onclick: move |_| {
                             action_state.set(AccountSyncCardState::Ready {
                                 realm: retained_realm.clone(),
@@ -5936,19 +6324,30 @@ fn AccountSyncCard(
                                 let command = SelectedWalletRealmSyncCommand {
                                     profile_id: profile_id.clone(),
                                 };
-                                let result = if syncing {
-                                    let service = services.cancel_selected_wallet_realm_sync();
-                                    run_ui_blocking(move || service.execute(command)).await
-                                } else {
-                                    let service = services.sync_selected_wallet_realm();
-                                    run_ui_future(async move { service.execute(command).await }).await
-                                };
+                                let result = run_ui_future(
+                                    wallet_realm_lifecycle::explicit_retry(
+                                        services.clone(),
+                                        command,
+                                    ),
+                                )
+                                .await;
+                                realm_lifecycle_wake.set(
+                                    realm_lifecycle_wake().realm_changed(),
+                                );
                                 match result {
                                     Ok(Ok(updated)) => {
-                                        let should_poll = selected_realm_is_syncing(&updated);
-                                        if let WalletRealmFamilyView::Ready(account) = &updated.account {
+                                        if !account_sync_card_accepts_projection(
+                                            &action_state.read(),
+                                            &updated,
+                                        ) {
+                                            finish_account_sync_card_action(action_state, &retained, None);
+                                            return;
+                                        }
+                                        let should_poll = updated.observation.poll_after().is_some();
+                                        if let WalletRealmFamilyView::Ready(account) = &updated.view.account {
                                             on_account_updated.call(account.clone());
                                         }
+                                        let poll_projection = updated.clone();
                                         action_state.set(AccountSyncCardState::Ready {
                                             realm: Box::new(updated),
                                             action_busy: false,
@@ -5958,842 +6357,35 @@ fn AccountSyncCard(
                                             poll_account_sync(
                                                 services,
                                                 profile_id,
+                                                poll_projection,
                                                 action_state,
                                                 on_account_updated,
                                             );
                                         }
                                     }
-                                    Ok(Err(error)) => action_state.set(AccountSyncCardState::Ready {
-                                        realm: retained,
-                                        action_busy: false,
-                                        operation_error: Some(error.to_string()),
-                                    }),
-                                    Err(error) => action_state.set(AccountSyncCardState::Ready {
-                                        realm: retained,
-                                        action_busy: false,
-                                        operation_error: Some(error.to_string()),
-                                    }),
+                                    Ok(Err(error)) => finish_account_sync_card_action(
+                                        action_state,
+                                        &retained,
+                                        Some(error.to_string()),
+                                    ),
+                                    Err(error) => finish_account_sync_card_action(
+                                        action_state,
+                                        &retained,
+                                        Some(error.to_string()),
+                                    ),
                                 }
                             });
                         },
-                        if syncing {
-                            if action_busy { "Cancelling sync…" } else { "Cancel sync" }
-                        } else if !can_sync {
-                            "Unlock wallet to sync"
-                        } else if account_unavailable {
-                            "Sync unavailable"
-                        } else if action_busy {
-                            "Starting sync…"
+                        if action_busy {
+                            "Retrying…"
                         } else {
-                            "Sync now"
+                            "Retry"
                         }
                     }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn DustRegistrationPanel(
-    profile_id: String,
-    availability: DustRegistrationAvailability,
-) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let mut state = use_signal(initial_dust_registration_panel_state);
-
-    match state.read().clone() {
-        DustRegistrationPanelState::Idle => {
-            let prepare_services = services.clone();
-            let prepare_profile = profile_id.clone();
-            let available = availability == DustRegistrationAvailability::Ready;
-            rsx! {
-                article {
-                    id: "dust-registration",
-                    class: "surface-card account-sync-card",
-                    aria_label: DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL,
-                    p { class: "card-eyebrow", "DUST generation" }
-                    h2 { "Register protected DUST key" }
-                    p {
-                        "Fresh wallets begin with 0 DUST. After NIGHT funding is synchronized, review the public NIGHT aggregate and the generated DUST fee allowance before registering this account's protected DUST key."
-                    }
-                    p { class: "consent-copy", "Registration never starts automatically and does not authorize a transfer." }
-                    if let Some(note) = dust_registration_availability_note(availability) {
-                        p {
-                            class: if availability == DustRegistrationAvailability::Unavailable { "wallet-sync-error" } else { "consent-copy" },
-                            role: if availability == DustRegistrationAvailability::Unavailable { "alert" } else { "status" },
-                            "{note}"
-                        }
-                    }
-                    button {
-                        class: "primary-action",
-                        r#type: "button",
-                        disabled: !available,
-                        aria_label: "Register protected DUST key",
-                        onclick: move |_| {
-                            state.set(DustRegistrationPanelState::Preparing);
-                            let service = prepare_services.prepare_wallet_dust_registration();
-                            let profile_id = prepare_profile.clone();
-                            spawn(async move {
-                                match run_ui_blocking(move || {
-                                    service.execute(PrepareWalletDustRegistrationCommand {
-                                        profile_id,
-                                    })
-                                })
-                                .await
-                                {
-                                    Ok(Ok(preview)) => state.set(
-                                        DustRegistrationPanelState::Prepared(Box::new(preview)),
-                                    ),
-                                    Ok(Err(error)) => state.set(
-                                        DustRegistrationPanelState::Failed {
-                                            message: error.to_string(),
-                                            retained: None,
-                                        },
-                                    ),
-                                    Err(error) => state.set(DustRegistrationPanelState::Failed {
-                                        message: error.to_string(),
-                                        retained: None,
-                                    }),
-                                }
-                            });
-                        },
-                        "{dust_registration_action_label(availability)}"
                     }
                 }
             }
         }
-        DustRegistrationPanelState::Preparing => rsx! {
-            article {
-                id: "dust-registration",
-                class: "surface-card account-sync-card submitting-card",
-                role: "status",
-                aria_live: "polite",
-                aria_busy: "true",
-                span { class: "loading-mark", aria_hidden: "true" }
-                div {
-                    p { class: "card-eyebrow", "DUST generation" }
-                    h2 { "Preparing registration review" }
-                    p { "Checking synchronized NIGHT eligibility and the current public DUST fee allowance." }
-                }
-            }
-        },
-        DustRegistrationPanelState::Prepared(preview) => {
-            let authorize_services = services.clone();
-            let authorize_profile = profile_id.clone();
-            let authorize_preview = preview.clone();
-            let command_preview = preview.clone();
-            rsx! {
-                article {
-                    id: "dust-registration",
-                    class: "surface-card account-sync-card review-card",
-                    aria_label: "Review protected DUST registration",
-                    p { class: "card-eyebrow", "Review registration" }
-                    h2 { "Authorize DUST registration?" }
-                    DustRegistrationReview { preview: (*preview).clone() }
-                    p { class: "consent-copy", "Device protection authorizes only this exact registration. Proving and Midnight submission remain a separate action." }
-                    div { class: "transfer-actions",
-                        button {
-                            class: "secondary-action",
-                            r#type: "button",
-                            aria_label: "Decline DUST registration authorization",
-                            onclick: move |_| state.set(DustRegistrationPanelState::Idle),
-                            "Not now"
-                        }
-                        button {
-                            class: "primary-action",
-                            r#type: "button",
-                            aria_label: DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL,
-                            onclick: move |_| {
-                                state.set(DustRegistrationPanelState::Authorizing(
-                                    authorize_preview.clone(),
-                                ));
-                                let service = authorize_services
-                                    .authorize_wallet_dust_registration();
-                                let profile_id = authorize_profile.clone();
-                                let preview = command_preview.clone();
-                                let command = AuthorizeWalletDustRegistrationCommand {
-                                    profile_id,
-                                    draft_id: preview.draft_id.clone(),
-                                    authorization_challenge: preview
-                                        .authorization_challenge
-                                        .clone(),
-                                    confirmation: authorize_dust_registration_confirmation(
-                                        &preview,
-                                        true,
-                                    ),
-                                };
-                                spawn(async move {
-                                    match run_ui_blocking(move || service.execute(command)).await {
-                                        Ok(Ok(authorized)) => state.set(
-                                            DustRegistrationPanelState::Authorized(Box::new(
-                                                authorized,
-                                            )),
-                                        ),
-                                        Ok(Err(error)) => state.set(
-                                            DustRegistrationPanelState::Failed {
-                                                message: error.to_string(),
-                                                retained: Some(preview),
-                                            },
-                                        ),
-                                        Err(error) => state.set(
-                                            DustRegistrationPanelState::Failed {
-                                                message: error.to_string(),
-                                                retained: Some(preview),
-                                            },
-                                        ),
-                                    }
-                                });
-                            },
-                            "Authorize DUST registration"
-                        }
-                    }
-                }
-            }
-        }
-        DustRegistrationPanelState::Authorizing(preview) => rsx! {
-            article {
-                id: "dust-registration",
-                class: "surface-card account-sync-card submitting-card",
-                role: "status",
-                aria_live: "polite",
-                aria_busy: "true",
-                span { class: "loading-mark", aria_hidden: "true" }
-                div {
-                    p { class: "card-eyebrow", "Authorizing" }
-                    h2 { "Confirm DUST registration with device protection" }
-                    p { "Authorizing {format_dust_registration_asset(&preview.registered_night)} without exposing the protected key or NIGHT inputs." }
-                }
-            }
-        },
-        DustRegistrationPanelState::Authorized(preview) => {
-            let submit_services = services.clone();
-            let submit_profile = profile_id.clone();
-            let submit_preview = preview.clone();
-            let retained_preview = preview.clone();
-            rsx! {
-                article {
-                    id: "dust-registration",
-                    class: "surface-card account-sync-card confirm-sheet",
-                    aria_label: "Authorized protected DUST registration",
-                    p { class: "card-eyebrow", "Device confirmed" }
-                    h2 { "Register on Midnight?" }
-                    DustRegistrationReview { preview: (*preview).clone() }
-                    p { class: "consent-copy", "This separate action proves the registration, saves public recovery state, and submits it to Midnight." }
-                    button {
-                        class: "primary-action",
-                        r#type: "button",
-                        aria_label: DUST_REGISTRATION_SUBMIT_ACCESSIBLE_LABEL,
-                        onclick: move |_| {
-                            state.set(DustRegistrationPanelState::Submitting(
-                                submit_preview.clone(),
-                            ));
-                            let service = submit_services.submit_wallet_dust_registration();
-                            let recovery_services = submit_services.clone();
-                            let profile_id = submit_profile.clone();
-                            let recovery_profile = profile_id.clone();
-                            let preview = retained_preview.clone();
-                            let recovery_preview = preview.clone();
-                            let command = SubmitWalletDustRegistrationCommand {
-                                profile_id,
-                                draft_id: preview.draft_id.clone(),
-                                confirmation: submit_dust_registration_confirmation(
-                                    &preview,
-                                    true,
-                                ),
-                            };
-                            spawn(async move {
-                                match run_ui_future(async move { service.execute(command).await })
-                                    .await
-                                {
-                                    Ok(Ok(submitted)) => state.set(
-                                        DustRegistrationPanelState::Registered(Box::new(
-                                            submitted.registration,
-                                        )),
-                                    ),
-                                    Ok(Err(error)) => {
-                                        let message = error.to_string();
-                                        let fallback = recovery_preview.clone();
-                                        match run_ui_blocking(move || {
-                                            recover_dust_registration_state(
-                                                &recovery_services,
-                                                &recovery_profile,
-                                                &fallback,
-                                                Some(message),
-                                            )
-                                        })
-                                        .await
-                                        {
-                                            Ok(recovered) => state.set(recovered),
-                                            Err(error) => state.set(
-                                                DustRegistrationPanelState::Failed {
-                                                    message: error.to_string(),
-                                                    retained: Some(recovery_preview),
-                                                },
-                                            ),
-                                        }
-                                    }
-                                    Err(error) => state.set(
-                                        DustRegistrationPanelState::Failed {
-                                            message: error.to_string(),
-                                            retained: Some(recovery_preview),
-                                        },
-                                    ),
-                                }
-                            });
-                        },
-                        "Register on Midnight"
-                    }
-                }
-            }
-        }
-        DustRegistrationPanelState::Submitting(preview) => {
-            let cancel_services = services.clone();
-            let cancel_profile = profile_id.clone();
-            let cancel_command_preview = preview.clone();
-            rsx! {
-                article {
-                    id: "dust-registration",
-                    class: "surface-card account-sync-card submitting-card",
-                    role: "status",
-                    aria_live: "polite",
-                    aria_busy: "true",
-                    span { class: "loading-mark", aria_hidden: "true" }
-                    div {
-                        p { class: "card-eyebrow", "Registration pending" }
-                        h2 { "Registering protected DUST key" }
-                        p { "Proving locally and saving public recovery state. Cancellation is safe only before broadcast." }
-                        button {
-                            class: "secondary-action",
-                            r#type: "button",
-                            aria_label: "Cancel DUST registration before broadcast",
-                            onclick: move |_| {
-                                state.set(DustRegistrationPanelState::Cancelling);
-                                let services = cancel_services.clone();
-                                let profile_id = cancel_profile.clone();
-                                let preview = cancel_command_preview.clone();
-                                spawn(async move {
-                                    let service = services
-                                        .cancel_wallet_dust_registration_submission();
-                                    let command = CancelWalletDustRegistrationSubmissionCommand {
-                                        profile_id: profile_id.clone(),
-                                        draft_id: preview.draft_id.clone(),
-                                    };
-                                    match run_ui_blocking(move || service.execute(command)).await {
-                                        Ok(Ok(status)) => poll_dust_registration_status(
-                                            services,
-                                            profile_id,
-                                            preview,
-                                            state,
-                                            status,
-                                        ),
-                                        Ok(Err(error)) => state.set(
-                                            DustRegistrationPanelState::Failed {
-                                                message: error.to_string(),
-                                                retained: Some(preview),
-                                            },
-                                        ),
-                                        Err(error) => state.set(
-                                            DustRegistrationPanelState::Failed {
-                                                message: error.to_string(),
-                                                retained: Some(preview),
-                                            },
-                                        ),
-                                    }
-                                });
-                            },
-                            "Cancel before broadcast"
-                        }
-                    }
-                }
-            }
-        }
-        DustRegistrationPanelState::Cancelling => rsx! {
-            article {
-                id: "dust-registration",
-                class: "surface-card account-sync-card submitting-card",
-                role: "status",
-                aria_live: "polite",
-                aria_busy: "true",
-                span { class: "loading-mark", aria_hidden: "true" }
-                div {
-                    p { class: "card-eyebrow", "Cancelling" }
-                    h2 { "Stopping DUST registration safely" }
-                    p { "Waiting for the worker to acknowledge a pre-broadcast cancellation boundary." }
-                }
-            }
-        },
-        DustRegistrationPanelState::Pending {
-            preview,
-            status,
-            reconciling,
-            operation_error,
-        } => {
-            let refresh_services = services.clone();
-            let refresh_profile = profile_id.clone();
-            let refresh_preview = preview.clone();
-            let retained_status = status.clone();
-            let reconcile_services = services.clone();
-            let reconcile_profile = profile_id.clone();
-            let reconcile_preview = preview.clone();
-            rsx! {
-                article {
-                    id: "dust-registration",
-                    class: "surface-card account-sync-card submission-recovery-card",
-                    role: "status",
-                    aria_live: "polite",
-                    aria_busy: if reconciling { "true" } else { "false" },
-                    p { class: "card-eyebrow", "Registration pending" }
-                    h2 { "Midnight outcome requires confirmation" }
-                    p { "The wallet will not submit a replacement while this registration may have reached Midnight." }
-                    dl { class: "preview-list",
-                        div { dt { "State" } dd { "{dust_registration_status_label(&status.state)}" } }
-                        div { dt { "Registration" } dd { "{dust_registration_observation_label(&status.registration_observation)}" } }
-                        div { dt { "DUST readiness" } dd { "{dust_registration_readiness_label(&status.dust_readiness)}" } }
-                    }
-                    if let Some(error) = operation_error {
-                        p { class: "wallet-sync-error", role: "alert", "{error}" }
-                    }
-                    div { class: "transfer-actions",
-                        if status.cancellation_allowed {
-                            button {
-                                class: "secondary-action",
-                                r#type: "button",
-                                disabled: reconciling,
-                                aria_label: "Cancel DUST registration before broadcast",
-                                onclick: move |_| {
-                                    state.set(DustRegistrationPanelState::Cancelling);
-                                    let services = refresh_services.clone();
-                                    let profile_id = refresh_profile.clone();
-                                    let preview = refresh_preview.clone();
-                                    let retained_status = retained_status.clone();
-                                    spawn(async move {
-                                        let service = services
-                                            .cancel_wallet_dust_registration_submission();
-                                        let command =
-                                            CancelWalletDustRegistrationSubmissionCommand {
-                                                profile_id: profile_id.clone(),
-                                                draft_id: preview.draft_id.clone(),
-                                            };
-                                        match run_ui_blocking(move || service.execute(command)).await {
-                                            Ok(Ok(status)) => poll_dust_registration_status(
-                                                services,
-                                                profile_id,
-                                                preview,
-                                                state,
-                                                status,
-                                            ),
-                                            Ok(Err(error)) => state.set(
-                                                DustRegistrationPanelState::Pending {
-                                                    preview,
-                                                    status: retained_status.clone(),
-                                                    reconciling: false,
-                                                    operation_error: Some(error.to_string()),
-                                                },
-                                            ),
-                                            Err(error) => state.set(
-                                                DustRegistrationPanelState::Pending {
-                                                    preview,
-                                                    status: retained_status.clone(),
-                                                    reconciling: false,
-                                                    operation_error: Some(error.to_string()),
-                                                },
-                                            ),
-                                        }
-                                    });
-                                },
-                                "Cancel before broadcast"
-                            }
-                        }
-                        if status.reconciliation_allowed {
-                            button {
-                                class: "primary-action",
-                                r#type: "button",
-                                disabled: reconciling,
-                                aria_label: DUST_REGISTRATION_RECONCILE_ACCESSIBLE_LABEL,
-                                onclick: move |_| {
-                                    state.set(DustRegistrationPanelState::Pending {
-                                        preview: reconcile_preview.clone(),
-                                        status: status.clone(),
-                                        reconciling: true,
-                                        operation_error: None,
-                                    });
-                                    let service = reconcile_services
-                                        .reconcile_wallet_dust_registration_submission();
-                                    let profile_id = reconcile_profile.clone();
-                                    let preview = reconcile_preview.clone();
-                                    let draft_id = preview.draft_id.clone();
-                                    let retained_status = status.clone();
-                                    spawn(async move {
-                                        match run_ui_future(async move {
-                                            service
-                                                .execute(
-                                                    ReconcileWalletDustRegistrationSubmissionCommand {
-                                                        profile_id,
-                                                        draft_id,
-                                                    },
-                                                )
-                                                .await
-                                        })
-                                        .await
-                                        {
-                                            Ok(Ok(status)) => state.set(
-                                                dust_registration_state_from_status(
-                                                    preview,
-                                                    &status,
-                                                    None,
-                                                ),
-                                            ),
-                                            Ok(Err(error)) => state.set(
-                                                DustRegistrationPanelState::Pending {
-                                                    preview,
-                                                    status: retained_status,
-                                                    reconciling: false,
-                                                    operation_error: Some(error.to_string()),
-                                                },
-                                            ),
-                                            Err(error) => state.set(
-                                                DustRegistrationPanelState::Pending {
-                                                    preview,
-                                                    status: retained_status,
-                                                    reconciling: false,
-                                                    operation_error: Some(error.to_string()),
-                                                },
-                                            ),
-                                        }
-                                    });
-                                },
-                                if reconciling { "Reconciling…" } else { "Reconcile with Midnight" }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        DustRegistrationPanelState::Registered(preview) => rsx! {
-            article {
-                id: "dust-registration",
-                class: "surface-card account-sync-card submitted-card",
-                role: "status",
-                aria_live: "polite",
-                span { class: "transfer-status-mark", aria_hidden: "true", "✓" }
-                p { class: "card-eyebrow", "Registration finalized" }
-                h2 { "DUST key registered" }
-                p { "Waiting for spendable DUST — registration is included, but the protected DUST balance requires DUST synchronization before it can be used." }
-                dl { class: "preview-list",
-                    div { dt { "Registered NIGHT" } dd { "{format_dust_registration_asset(&preview.registered_night)}" } }
-                    div { dt { "DUST readiness" } dd { "Requires DUST synchronization" } }
-                }
-            }
-        },
-        DustRegistrationPanelState::Cancelled(preview) => rsx! {
-            article {
-                id: "dust-registration",
-                class: "surface-card account-sync-card",
-                role: "status",
-                aria_live: "polite",
-                p { class: "card-eyebrow", "Registration cancelled" }
-                h2 { "Nothing was broadcast" }
-                p { "The authorized registration remains available for an explicit retry." }
-                button {
-                    class: "secondary-action",
-                    r#type: "button",
-                    aria_label: "Return to authorized DUST registration",
-                    onclick: move |_| state.set(
-                        DustRegistrationPanelState::Authorized(preview.clone()),
-                    ),
-                    "Review registration again"
-                }
-            }
-        },
-        DustRegistrationPanelState::Failed { message, retained } => {
-            let retained_for_retry = retained.clone();
-            rsx! {
-                article {
-                    id: "dust-registration",
-                    class: "surface-card account-sync-card failed-card",
-                    role: "alert",
-                    p { class: "card-eyebrow", "Registration not completed" }
-                    h2 { "Protected DUST registration needs attention" }
-                    p { "{message}" }
-                    if let Some(preview) = retained_for_retry {
-                        button {
-                            class: "secondary-action",
-                            r#type: "button",
-                            aria_label: "Return to DUST registration review",
-                            onclick: move |_| state.set(
-                                dust_registration_retry_state(preview.clone()),
-                            ),
-                            "Return to registration review"
-                        }
-                    } else {
-                        button {
-                            class: "secondary-action",
-                            r#type: "button",
-                            onclick: move |_| state.set(DustRegistrationPanelState::Idle),
-                            "Try again"
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn DustRegistrationReview(preview: WalletDustRegistrationPreviewView) -> Element {
-    let review = dust_registration_review(&preview);
-    rsx! {
-        dl { class: "preview-list", aria_label: "Public DUST registration summary",
-            div { dt { "NIGHT aggregate" } dd { "{review.registered_night}" } }
-            div { dt { "Eligible inputs" } dd { "{review.input_count}" } }
-            div { dt { "Maximum DUST fee allowance" } dd { "{review.maximum_fee_allowance}" } }
-            div { dt { "Network" } dd { "{ui::midnight_network(&preview.network_id)}" } }
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct DustRegistrationReviewCopy {
-    registered_night: String,
-    input_count: u16,
-    maximum_fee_allowance: String,
-}
-
-fn dust_registration_review(
-    preview: &WalletDustRegistrationPreviewView,
-) -> DustRegistrationReviewCopy {
-    DustRegistrationReviewCopy {
-        registered_night: format_dust_registration_asset(&preview.registered_night),
-        input_count: preview.input_count,
-        maximum_fee_allowance: format_dust_registration_asset(&preview.maximum_fee_allowance),
-    }
-}
-
-fn poll_dust_registration_status(
-    services: WalletUiServices,
-    profile_id: String,
-    preview: Box<WalletDustRegistrationPreviewView>,
-    mut state: Signal<DustRegistrationPanelState>,
-    initial: WalletDustRegistrationSubmissionStatusView,
-) {
-    spawn(async move {
-        let mut status = initial;
-        loop {
-            if !matches!(status.state.as_str(), "running" | "cancellation_requested") {
-                state.set(dust_registration_state_from_status(preview, &status, None));
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            let service = services.get_wallet_dust_registration_status();
-            let command = GetWalletDustRegistrationStatusCommand {
-                profile_id: profile_id.clone(),
-                draft_id: preview.draft_id.clone(),
-            };
-            match run_ui_blocking(move || service.execute(command)).await {
-                Ok(Ok(updated)) => status = updated,
-                Ok(Err(error)) => {
-                    state.set(DustRegistrationPanelState::Pending {
-                        preview,
-                        status: DustRegistrationPublicStatus::from(&status),
-                        reconciling: false,
-                        operation_error: Some(error.to_string()),
-                    });
-                    break;
-                }
-                Err(error) => {
-                    state.set(DustRegistrationPanelState::Pending {
-                        preview,
-                        status: DustRegistrationPublicStatus::from(&status),
-                        reconciling: false,
-                        operation_error: Some(error.to_string()),
-                    });
-                    break;
-                }
-            }
-        }
-    });
-}
-
-fn recover_dust_registration_state(
-    services: &WalletUiServices,
-    profile_id: &str,
-    fallback: &WalletDustRegistrationPreviewView,
-    operation_error: Option<String>,
-) -> DustRegistrationPanelState {
-    let preview = services
-        .get_wallet_dust_registration()
-        .execute(GetWalletDustRegistrationCommand {
-            profile_id: profile_id.to_owned(),
-            draft_id: fallback.draft_id.clone(),
-        })
-        .unwrap_or_else(|_| fallback.clone());
-    match services.get_wallet_dust_registration_status().execute(
-        GetWalletDustRegistrationStatusCommand {
-            profile_id: profile_id.to_owned(),
-            draft_id: preview.draft_id.clone(),
-        },
-    ) {
-        Ok(status) => {
-            dust_registration_state_from_status(Box::new(preview), &status, operation_error)
-        }
-        Err(error) => DustRegistrationPanelState::Failed {
-            message: operation_error.unwrap_or_else(|| error.to_string()),
-            retained: Some(Box::new(preview)),
-        },
-    }
-}
-
-fn dust_registration_state_from_status(
-    preview: Box<WalletDustRegistrationPreviewView>,
-    status: &WalletDustRegistrationSubmissionStatusView,
-    operation_error: Option<String>,
-) -> DustRegistrationPanelState {
-    match status.state.as_str() {
-        "included" => DustRegistrationPanelState::Registered(preview),
-        "cancelled" => DustRegistrationPanelState::Cancelled(preview),
-        "not_started" => DustRegistrationPanelState::Failed {
-            message: operation_error
-                .unwrap_or_else(|| "Registration was not submitted to Midnight.".to_owned()),
-            retained: Some(preview),
-        },
-        _ => DustRegistrationPanelState::Pending {
-            preview,
-            status: DustRegistrationPublicStatus::from(status),
-            reconciling: false,
-            operation_error,
-        },
-    }
-}
-
-fn dust_registration_retry_state(
-    preview: Box<WalletDustRegistrationPreviewView>,
-) -> DustRegistrationPanelState {
-    if preview.submission_ready {
-        DustRegistrationPanelState::Authorized(preview)
-    } else {
-        DustRegistrationPanelState::Prepared(preview)
-    }
-}
-
-const fn initial_dust_registration_panel_state() -> DustRegistrationPanelState {
-    DustRegistrationPanelState::Idle
-}
-
-const fn dust_registration_availability(
-    protection_unlocked: bool,
-    protected_account: bool,
-    account_synchronized: bool,
-    unavailable: bool,
-) -> DustRegistrationAvailability {
-    if unavailable {
-        DustRegistrationAvailability::Unavailable
-    } else if !protection_unlocked {
-        DustRegistrationAvailability::ProtectionLocked
-    } else if !protected_account {
-        DustRegistrationAvailability::AccountNotDerived
-    } else if !account_synchronized {
-        DustRegistrationAvailability::AccountNotSynchronized
-    } else {
-        DustRegistrationAvailability::Ready
-    }
-}
-
-const fn dust_registration_action_label(
-    availability: DustRegistrationAvailability,
-) -> &'static str {
-    match availability {
-        DustRegistrationAvailability::Ready => "Register protected DUST key",
-        DustRegistrationAvailability::ProtectionLocked => "Unlock wallet to register",
-        DustRegistrationAvailability::AccountNotDerived => "Derive account to register",
-        DustRegistrationAvailability::AccountNotSynchronized => "Sync NIGHT before registration",
-        DustRegistrationAvailability::Unavailable => "Registration unavailable",
-    }
-}
-
-const fn dust_registration_availability_note(
-    availability: DustRegistrationAvailability,
-) -> Option<&'static str> {
-    match availability {
-        DustRegistrationAvailability::Ready => None,
-        DustRegistrationAvailability::ProtectionLocked => {
-            Some("Unlock wallet protection before reviewing a registration.")
-        }
-        DustRegistrationAvailability::AccountNotDerived => {
-            Some("Derive the protected Midnight account before registration.")
-        }
-        DustRegistrationAvailability::AccountNotSynchronized => {
-            Some("Synchronize funded NIGHT before reviewing registration eligibility.")
-        }
-        DustRegistrationAvailability::Unavailable => {
-            Some("Protected DUST registration is unavailable in this wallet composition.")
-        }
-    }
-}
-
-fn authorize_dust_registration_confirmation(
-    preview: &WalletDustRegistrationPreviewView,
-    confirmed: bool,
-) -> SensitiveOperationConfirmation {
-    SensitiveOperationConfirmation {
-        title: "Authorize DUST registration".to_owned(),
-        summary: format!(
-            "Authorize registration of {} from {} eligible NIGHT inputs on {} with a maximum fee allowance of {}.",
-            format_dust_registration_asset(&preview.registered_night),
-            preview.input_count,
-            ui::midnight_network(&preview.network_id),
-            format_dust_registration_asset(&preview.maximum_fee_allowance),
-        ),
-        confirmed,
-    }
-}
-
-fn submit_dust_registration_confirmation(
-    preview: &WalletDustRegistrationPreviewView,
-    confirmed: bool,
-) -> SensitiveOperationConfirmation {
-    SensitiveOperationConfirmation {
-        title: "Register on Midnight".to_owned(),
-        summary: format!(
-            "Prove and submit the authorized DUST registration for {} on {}.",
-            format_dust_registration_asset(&preview.registered_night),
-            ui::midnight_network(&preview.network_id),
-        ),
-        confirmed,
-    }
-}
-
-fn format_dust_registration_asset(asset: &WalletDustRegistrationAssetView) -> String {
-    ui::format_asset_amount(&asset.atomic_units, asset.decimals, &asset.symbol)
-}
-
-const fn dust_registration_status_label(state: &str) -> &'static str {
-    match state.as_bytes() {
-        b"running" => "Proving and saving recovery state",
-        b"cancellation_requested" => "Cancellation requested",
-        b"broadcasting" => "Broadcasting — cancellation unavailable",
-        b"outcome_unknown" => "Outcome unknown — reconciliation required",
-        b"rejected" => "Rejected by Midnight",
-        b"expired" => "Registration expired",
-        b"included" => "Included",
-        b"cancelled" => "Cancelled before broadcast",
-        _ => "Not started",
-    }
-}
-
-fn dust_registration_observation_label(observation: &str) -> &'static str {
-    if observation == "included" {
-        "DUST key registered"
-    } else {
-        "Not yet observed as included"
-    }
-}
-
-fn dust_registration_readiness_label(readiness: &str) -> &'static str {
-    if readiness == "requires_synchronization" {
-        "Waiting for spendable DUST — requires DUST synchronization"
-    } else {
-        "Not established"
     }
 }
 
@@ -6814,29 +6406,20 @@ fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPa
             Ok(security) => security,
             Err(error) => return AccountPageState::Failed(error.to_string()),
         };
-    if !account_read_is_noninteractive(security.state_name()) {
-        let Some(account) = protected_account_placeholder(&networks) else {
-            return AccountPageState::Failed("selected Midnight network is unavailable".to_owned());
-        };
-        return AccountPageState::Ready {
-            networks,
-            account: Box::new(account),
-            security,
-            busy: None,
-        };
-    }
-    let account = match services.get_wallet_account().execute(query) {
-        Ok(account) => account,
-        Err(WalletAccountError::Port(
-            WalletAccountPortError::ProtectionNotInitialized
-            | WalletAccountPortError::ProtectionLocked,
-        )) if matches!(security.state_name(), "Uninitialized" | "Locked") => {
+    let (account, custody_recovery_required) = match services.get_wallet_account().execute(query) {
+        Ok(account) => (account, false),
+        Err(error)
+            if account_placeholder_recovery_required(security.state_name(), &error).is_some() =>
+        {
+            let custody_recovery_required =
+                account_placeholder_recovery_required(security.state_name(), &error)
+                    .expect("guard proves the placeholder state");
             let Some(account) = protected_account_placeholder(&networks) else {
                 return AccountPageState::Failed(
                     "selected Midnight network is unavailable".to_owned(),
                 );
             };
-            account
+            (account, custody_recovery_required)
         }
         Err(error) => return AccountPageState::Failed(error.to_string()),
     };
@@ -6844,7 +6427,26 @@ fn load_account_page(services: &WalletUiServices, profile_id: &str) -> AccountPa
         networks,
         account: Box::new(account),
         security,
+        custody_recovery_required,
         busy: None,
+    }
+}
+
+fn account_placeholder_recovery_required(
+    security_state: &str,
+    error: &WalletAccountError,
+) -> Option<bool> {
+    match (security_state, error) {
+        (
+            "Uninitialized",
+            WalletAccountError::Port(WalletAccountPortError::ProtectionNotInitialized),
+        ) => Some(true),
+        ("Locked", WalletAccountError::Port(WalletAccountPortError::ProtectionLocked))
+        | ("Uninitialized", WalletAccountError::Port(WalletAccountPortError::NotFound)) => {
+            Some(false)
+        }
+        ("Unlocked", WalletAccountError::Port(WalletAccountPortError::NotFound)) => Some(false),
+        _ => None,
     }
 }
 
@@ -6883,10 +6485,6 @@ fn load_home_page(services: &WalletUiServices, profile_id: &str) -> HomePageStat
     }))
 }
 
-fn account_read_is_noninteractive(security_state: &str) -> bool {
-    !matches!(security_state, "Uninitialized" | "Locked")
-}
-
 fn protected_account_placeholder(networks: &WalletNetworkListView) -> Option<WalletAccountView> {
     let network = networks
         .networks
@@ -6898,11 +6496,11 @@ fn protected_account_placeholder(networks: &WalletNetworkListView) -> Option<Wal
         network_name: network.display_name.clone(),
         network_environment: network.environment.clone(),
         account_id: None,
-        source: "unavailable".to_owned(),
+        source: WalletAccountSource::Unavailable,
         addresses: Vec::new(),
         balances: Vec::new(),
         sync: WalletSyncStatusView {
-            state: "unavailable".to_owned(),
+            state: WalletSyncState::Unavailable,
             current_cursor: None,
             target_cursor: None,
             chain_tip_height: None,
@@ -6910,67 +6508,6 @@ fn protected_account_placeholder(networks: &WalletNetworkListView) -> Option<Wal
         },
         transactions: Vec::new(),
     })
-}
-
-async fn activate_protected_account(
-    services: WalletUiServices,
-    profile_id: String,
-    current: WalletSecurityStatusView,
-) -> Result<WalletSecurityStatusView, String> {
-    match run_ui_blocking(move || {
-        let command = || WalletProfileSecurityCommand {
-            profile_id: profile_id.clone(),
-        };
-        let security = match current.state_name() {
-            "Uninitialized" => services
-                .initialize_wallet_security()
-                .execute(command())
-                .map_err(|error| error.to_string())?,
-            "Locked" => services
-                .unlock_wallet()
-                .execute(command())
-                .map_err(|error| error.to_string())?,
-            "Unlocked" => current,
-            _ => return Err("wallet protection is unavailable".to_owned()),
-        };
-        services
-            .derive_wallet_account()
-            .execute(DeriveWalletAccountCommand {
-                profile_id,
-                account_index: 0,
-                address_index: 0,
-            })
-            .map_err(|error| error.to_string())?;
-        Ok(security)
-    })
-    .await
-    {
-        Ok(result) => result,
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn account_activation_operation(status: WalletSecurityStatusView) -> AccountOperation {
-    match status.state_name() {
-        "Uninitialized" => AccountOperation::Initializing,
-        "Locked" => AccountOperation::Unlocking,
-        _ => AccountOperation::Deriving,
-    }
-}
-
-fn has_protected_account(account: &WalletAccountView) -> bool {
-    account
-        .account_id
-        .as_deref()
-        .is_some_and(|account_id| account_id.starts_with("midnight_account_"))
-        && account
-            .addresses
-            .iter()
-            .any(|address| address.kind == "unshielded")
-        && account
-            .addresses
-            .iter()
-            .any(|address| address.kind == "shielded")
 }
 
 #[component]
@@ -7042,72 +6579,72 @@ fn ReceiveAddress(kind: String, value: String) -> Element {
     }
 }
 
-fn public_export_message(result: Result<(), PublicTextExportError>, share: bool) -> String {
-    match result {
-        Ok(()) if share => "Native share sheet opened for this public receive address.".to_owned(),
-        Ok(()) => "Public receive address copied to the native clipboard.".to_owned(),
-        Err(PublicTextExportError::Unavailable) => {
-            "Native copy/share is unavailable on this device.".to_owned()
-        }
-        Err(PublicTextExportError::InvalidPublicText) => {
-            "This receive address is not safe to export.".to_owned()
-        }
-        Err(PublicTextExportError::Failed) => {
-            "The public receive address could not be exported.".to_owned()
-        }
-    }
-}
-
-#[component]
-fn SendWizardProgress(current: SendWizardStep) -> Element {
-    let steps = [SendWizardStep::Recipient, SendWizardStep::Amount];
-    rsx! {
-        ol { class: "send-wizard__progress", aria_label: "Send progress",
-            for step in steps {
-                {
-                    let class = if step == current {
-                        "send-wizard__step is-active"
-                    } else if step.number() < current.number() {
-                        "send-wizard__step is-complete"
-                    } else {
-                        "send-wizard__step"
-                    };
-                    rsx! {
-                        li {
-                            key: "{step.number()}",
-                            class,
-                            aria_current: if step == current { "step" } else { "false" },
-                            span { class: "send-wizard__step-mark", aria_hidden: "true", "{step.number()}" }
-                            strong { "{step.title()}" }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[component]
 fn SendTransferPanel(
     profile_id: String,
+    active_network_id: String,
     unshielded_receive_address: String,
     shielded_receive_address: String,
     night_balance: Option<oxid_wallet_application::WalletAssetBalanceView>,
+    mut pending_payment_request: Signal<Option<PendingPaymentRequest>>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
     let brand = consume_context::<BrandProfile>();
     let mut panel = use_signal(|| TransferPanelState::Editing);
     let mut wizard_step = use_signal(|| SendWizardStep::Recipient);
     let mut confirmation_open = use_signal(|| false);
-    let mut recipient = use_signal(String::new);
+    let scanned_recipient = pending_payment_request
+        .read()
+        .as_ref()
+        .map(|request| request.recipient.clone());
+    let mut recipient = use_signal(|| scanned_recipient.clone().unwrap_or_default());
     let mut using_own_address = use_signal(|| false);
     let mut amount = use_signal(String::new);
     let mut shielded = use_signal(|| false);
+    let mut shielded_status = use_signal(|| None::<Result<WalletShieldedSyncView, String>>);
+    let recipient_scan_busy = use_signal(|| false);
+    let mut recipient_scan_notice = use_signal(|| {
+        scanned_recipient.as_ref().map(|_| {
+            "Scanned public NIGHT recipient loaded. Confirm it before choosing an amount."
+                .to_owned()
+        })
+    });
+    let recipient_scanner = services.qr_scanner();
+    let action_watch_projection =
+        use_action_watch_projection(services.clone(), WalletActionWatchContext::Send);
+    use_effect(move || {
+        if pending_payment_request.read().is_some() {
+            pending_payment_request.set(None);
+        }
+    });
+    let show_action_watch = matches!(*panel.read(), TransferPanelState::Submitted(_));
+    let shielded_status_services = services.clone();
+    let shielded_status_profile = profile_id.clone();
+    use_effect(move || {
+        let service = shielded_status_services.get_wallet_shielded_sync_status();
+        let profile_id = shielded_status_profile.clone();
+        spawn(async move {
+            let result = run_ui_blocking(move || {
+                service.execute(oxid_wallet_application::WalletShieldedSyncCommand { profile_id })
+            })
+            .await;
+            shielded_status.set(Some(match result {
+                Ok(Ok(status)) => Ok(status),
+                Ok(Err(error)) => Err(error.to_string()),
+                Err(error) => Err(error.to_string()),
+            }));
+        });
+    });
 
-    match panel.read().clone() {
+    let content = match panel.read().clone() {
         TransferPanelState::Editing => match wizard_step() {
             SendWizardStep::Recipient => {
-                let can_continue = !recipient.read().trim().is_empty();
+                let scan_busy = recipient_scan_busy();
+                let can_continue = !scan_busy && !recipient.read().trim().is_empty();
+                let scan_notice = recipient_scan_notice();
+                let active_network_id = active_network_id.clone();
+                let manual_network_id = active_network_id.clone();
+                let scanner = Arc::clone(&recipient_scanner);
                 rsx! {
                     article { class: "surface-card transfer-card send-wizard",
                         p { class: "card-eyebrow", "Send NIGHT" }
@@ -7121,9 +6658,11 @@ fn SendTransferPanel(
                             aria_label: "Recipient address",
                             maxlength: 512,
                             autocomplete: "off",
+                            disabled: scan_busy,
                             value: "{recipient}",
                             oninput: move |event| {
                                 using_own_address.set(false);
+                                recipient_scan_notice.set(None);
                                 recipient.set(event.value());
                             },
                         }
@@ -7132,11 +6671,35 @@ fn SendTransferPanel(
                                 "Address entered. {brand.product_name()} validates its network and privacy kind before review."
                             }
                         }
+                        p { class: "send-wizard__recipient-note",
+                            "Public NIGHT · {ui::midnight_network(&active_network_id)}"
+                        }
                         button {
                             class: "inline-action",
                             r#type: "button",
+                            aria_label: "Scan public NIGHT receive request",
+                            disabled: scan_busy,
+                            onclick: move |_| start_recipient_scan(
+                                Arc::clone(&scanner),
+                                active_network_id.clone(),
+                                recipient_scan_busy,
+                                recipient_scan_notice,
+                                recipient,
+                                using_own_address,
+                                shielded,
+                            ),
+                            if scan_busy { "Scanning…" } else { "Scan receive request" }
+                        }
+                        if let Some(message) = scan_notice {
+                            p { class: "send-wizard__recipient-note", role: "status", "{message}" }
+                        }
+                        button {
+                            class: "inline-action",
+                            r#type: "button",
+                            disabled: scan_busy,
                             onclick: move |_| {
                                 using_own_address.set(true);
+                                recipient_scan_notice.set(None);
                                 recipient.set(if shielded() {
                                     shielded_receive_address.clone()
                                 } else {
@@ -7150,7 +6713,23 @@ fn SendTransferPanel(
                             r#type: "button",
                             disabled: !can_continue,
                             aria_label: "Continue to transfer amount",
-                            onclick: move |_| wizard_step.set(SendWizardStep::Amount),
+                            onclick: move |_| {
+                                let value = recipient().trim().to_owned();
+                                recipient.set(value.clone());
+                                if is_public_recipient_candidate(&value) {
+                                    match scanned_recipient_update(&manual_network_id, value) {
+                                        Ok(update) => {
+                                            shielded.set(update.shielded);
+                                            recipient.set(update.recipient);
+                                        }
+                                        Err(message) => {
+                                            recipient_scan_notice.set(Some(message));
+                                            return;
+                                        }
+                                    }
+                                }
+                                wizard_step.set(SendWizardStep::Amount);
+                            },
                             "Continue to amount"
                         }
                     }
@@ -7168,6 +6747,11 @@ fn SendTransferPanel(
                 let maximum_amount = night_balance.as_ref().map(|balance| {
                     ui::format_atomic_units(&balance.atomic_units, balance.decimals)
                 });
+                let shielded_available = shielded_status
+                    .read()
+                    .as_ref()
+                    .and_then(|result| result.as_ref().ok())
+                    .and_then(native_shielded_transfer_balance);
                 let public_address = unshielded_receive_address.clone();
                 let private_address = shielded_receive_address.clone();
                 rsx! {
@@ -7189,8 +6773,8 @@ fn SendTransferPanel(
                                     }
                                     shielded.set(false);
                                 },
-                                strong { "Public" }
-                                small { "Visible in public Midnight account history" }
+                                span { class: "privacy-choice__icon", aria_hidden: "true", dangerous_inner_html: SEND_PUBLIC_NIGHT_ICON }
+                                strong { "Public NIGHT" }
                             }
                             button {
                                 class: if shielded() { "privacy-choice__option selected" } else { "privacy-choice__option" },
@@ -7203,8 +6787,8 @@ fn SendTransferPanel(
                                     }
                                     shielded.set(true);
                                 },
-                                strong { "Shielded" }
-                                small { "Uses the synchronized private note set" }
+                                span { class: "privacy-choice__icon", aria_hidden: "true", dangerous_inner_html: SEND_SHIELDED_NIGHT_ICON }
+                                strong { "Shielded NIGHT" }
                             }
                         }
                         label { r#for: "transfer-amount", "Amount (NIGHT)" }
@@ -7222,7 +6806,18 @@ fn SendTransferPanel(
                         }
                         div { class: "send-wizard__balance",
                             if shielded() {
-                                span { "Private balance is validated from the latest shielded synchronization." }
+                                if let Some((available, maximum)) = shielded_available {
+                                    span { "Available privately {available}" }
+                                    button {
+                                        class: "inline-action",
+                                        r#type: "button",
+                                        aria_label: "Use maximum available shielded NIGHT amount",
+                                        onclick: move |_| amount.set(maximum.clone()),
+                                        "Max"
+                                    }
+                                } else {
+                                    span { "Shielded balance is validated before review." }
+                                }
                             } else if let Some(available) = available_label {
                                 span { "Available {available}" }
                                 if let Some(maximum) = maximum_amount {
@@ -7241,16 +6836,18 @@ fn SendTransferPanel(
                         p { class: "send-wizard__fee-note",
                             "The DUST fee is calculated while proving and cannot spend more NIGHT than the reviewed transfer allows."
                         }
-                        div { class: "transfer-actions",
+                        div { class: "transfer-actions send-wizard__actions",
                             button {
-                                class: "secondary-action",
+                                class: "secondary-action send-wizard__back",
                                 r#type: "button",
+                                aria_label: "Back to recipient",
                                 onclick: move |_| wizard_step.set(SendWizardStep::Recipient),
-                                "Back"
+                                span { class: "transfer-action__icon", aria_hidden: "true", dangerous_inner_html: SEND_BACK_ICON }
                             }
                             button {
                                 class: "primary-action",
                                 r#type: "button",
+                                aria_label: "Review exact transfer",
                                 disabled: !can_review,
                                 onclick: move |_| {
                                 match night_display_to_atomic_units(&amount.read()) {
@@ -7318,7 +6915,8 @@ fn SendTransferPanel(
                                     }),
                                 }
                             },
-                                "Review exact transfer"
+                                span { "Review" }
+                                span { class: "transfer-action__icon", aria_hidden: "true", dangerous_inner_html: SEND_REVIEW_ICON }
                             }
                         }
                     }
@@ -7338,6 +6936,11 @@ fn SendTransferPanel(
         TransferPanelState::Prepared(preview) => {
             let amount_label = format_transfer_asset(&preview.amount);
             let change_label = format_transfer_asset(&preview.change);
+            let fee_label = transfer_preview_fee_label(&preview);
+            let freshness_label = format!(
+                "Current inputs · valid until {}",
+                ui::format_epoch_millis(preview.expires_at_millis)
+            );
             let recipient_label = truncate_middle(&preview.recipient_address, 18, 8);
             let summary = preview.review_summary.clone();
             let review_title = preview.review_title.clone();
@@ -7418,7 +7021,8 @@ fn SendTransferPanel(
                                 div { dt { "Network" } dd { "{ui::midnight_network(&preview.network_id)}" } }
                                 div { dt { "Change" } dd { "{change_label}" } }
                                 div { dt { "Inputs" } dd { "{preview.input_count}" } }
-                                div { dt { "DUST fee" } dd { "Calculated during proving" } }
+                                div { dt { "Freshness" } dd { "{freshness_label}" } }
+                                div { dt { "DUST fee" } dd { "{fee_label}" } }
                             }
                         }
                         p { class: "consent-copy", "Only the exact transfer shown here can be authorized." }
@@ -7484,6 +7088,7 @@ fn SendTransferPanel(
                             panel.set(TransferPanelState::Submitting(submitting_preview.clone()));
                             let service = services.submit_wallet_transfer();
                             let drafts = services.get_wallet_transfer_draft();
+                            let action_watches = services.manage_wallet_action_watch();
                             let profile_id = profile_id.clone();
                             let draft_id = draft_id.clone();
                             let confirmation = confirmation.clone();
@@ -7499,7 +7104,13 @@ fn SendTransferPanel(
                                 })
                                 .await
                                 {
-                                    Ok(Ok(submitted)) => panel.set(TransferPanelState::Submitted(Box::new(submitted))),
+                                    Ok(Ok(submitted)) => {
+                                        selected_realm_sync::action_watch::record_included_transfer(
+                                            &action_watches,
+                                            &submitted.transaction_id,
+                                        );
+                                        panel.set(TransferPanelState::Submitted(Box::new(submitted)));
+                                    }
                                     Ok(Err(error)) => {
                                         let retained = drafts.execute(WalletTransferDraftQuery {
                                             profile_id,
@@ -7659,6 +7270,15 @@ fn SendTransferPanel(
             }
             }
         }
+    };
+
+    rsx! {
+        if show_action_watch {
+            if let Some(projection) = action_watch_projection() {
+                WalletActionWatchStatus { projection }
+            }
+        }
+        {content}
     }
 }
 
@@ -7724,26 +7344,34 @@ fn post_submission_recovery(retained_state: Option<&str>) -> TransferRecovery {
     }
 }
 
-fn render_qr_svg(value: &str) -> Option<String> {
-    use qrcode::{QrCode, render::svg};
-
-    QrCode::new(value.as_bytes()).ok().map(|code| {
-        code.render::<svg::Color<'_>>()
-            .min_dimensions(220, 220)
-            .max_dimensions(280, 280)
-            .quiet_zone(true)
-            .dark_color(svg::Color("#07111f"))
-            .light_color(svg::Color("#ffffff"))
-            .build()
-    })
-}
-
 fn night_display_to_atomic_units(value: &str) -> Result<String, &'static str> {
     ui::parse_night_amount(value, false)
 }
 
 fn format_transfer_asset(asset: &oxid_wallet_application::WalletTransferAssetView) -> String {
     ui::format_asset_amount(&asset.atomic_units, asset.decimals, &asset.symbol)
+}
+
+fn native_shielded_transfer_balance(status: &WalletShieldedSyncView) -> Option<(String, String)> {
+    if !status.is_complete() {
+        return None;
+    }
+    let atomic_units = status
+        .balances
+        .iter()
+        .find(|balance| balance.token_type_hex == NATIVE_SHIELDED_NIGHT_TOKEN_TYPE)
+        .map_or("0", |balance| balance.atomic_units.as_str());
+    Some((
+        ui::format_shielded_amount(NATIVE_SHIELDED_NIGHT_TOKEN_TYPE, atomic_units),
+        ui::format_atomic_units(atomic_units, 6),
+    ))
+}
+
+fn transfer_preview_fee_label(preview: &WalletTransferPreviewView) -> String {
+    preview.fee.as_ref().map_or_else(
+        || "Calculated during proving".to_owned(),
+        format_transfer_asset,
+    )
 }
 
 fn transfer_review_summary(preview: &WalletTransferPreviewView) -> String {
@@ -7860,7 +7488,7 @@ fn account_hint(account: &WalletAccountView, busy: Option<AccountOperation>) -> 
             AccountOperation::Syncing => "Synchronizing account state from the configured source…",
         }
     } else {
-        ui::account_source_note(&account.source)
+        ui::account_source_note(account.source)
     }
 }
 
@@ -7881,6 +7509,13 @@ fn transaction_status_line(transaction: &oxid_wallet_application::WalletTransact
     format!(
         "{} · block {block}",
         ui::transaction_status(&transaction.status)
+    )
+}
+
+fn activity_observed_at_line(observed_at_millis: Option<u64>) -> String {
+    observed_at_millis.map_or_else(
+        || "Observed timestamp unavailable".to_owned(),
+        |timestamp| format!("Observed {}", ui::format_epoch_millis(timestamp)),
     )
 }
 
@@ -7969,14 +7604,6 @@ fn active_managed_issuance_methods(records: &[DidRecordView]) -> Option<(String,
         })
 }
 
-fn did_confirmation(title: &str, summary: &str, confirmed: bool) -> DidOperationConfirmation {
-    DidOperationConfirmation {
-        title: title.to_owned(),
-        summary: summary.to_owned(),
-        confirmed,
-    }
-}
-
 #[component]
 fn ManagedDidControls(
     profile_id: String,
@@ -7990,7 +7617,6 @@ fn ManagedDidControls(
     let mut endpoint = use_signal(String::new);
     let mut algorithm = use_signal(|| "ed25519".to_owned());
     let mut relationship = use_signal(|| "assertionMethod".to_owned());
-    let mut confirmed = use_signal(|| false);
     let mut working = use_signal(|| false);
     let mut outcome = use_signal(|| None::<String>);
     let did = record.document.id.clone();
@@ -8018,7 +7644,6 @@ fn ManagedDidControls(
         operation_name.as_str(),
         "add_relationship" | "remove_relationship"
     );
-    let needs_confirmation = true;
 
     rsx! {
         details { class: "did-manager",
@@ -8032,7 +7657,6 @@ fn ManagedDidControls(
                 onchange: move |event| {
                     operation.set(event.value());
                     outcome.set(None);
-                    confirmed.set(false);
                 },
                 option { value: "add_alias", "Add also-known-as" }
                 option { value: "remove_alias", "Remove also-known-as" }
@@ -8105,25 +7729,11 @@ fn ManagedDidControls(
                     oninput: move |event| value.set(event.value()),
                 }
             }
-            if needs_confirmation {
-                label { class: "confirmation-row",
-                    input {
-                        r#type: "checkbox", checked: confirmed(),
-                        onchange: move |event| confirmed.set(event.checked()),
-                    }
-                    if operation_name == "deactivate" {
-                        "I understand this DID cannot be used after deactivation"
-                    } else if operation_name == "sign" {
-                        "Authorize signing this visible payload with the selected DID method"
-                    } else {
-                        "Authorize this visible change to the managed DID document"
-                    }
-                }
-            }
+            p { class: "form-hint", "Trusted DID approval is unavailable in this composition. Public records remain available; this form cannot authorize protected operations." }
             button {
                 class: if operation_name == "deactivate" { "danger-action" } else { "secondary-action" },
                 r#type: "button",
-                disabled: working() || is_deactivated || (needs_confirmation && !confirmed()),
+                disabled: working() || is_deactivated,
                 onclick: move |_| {
                     working.set(true);
                     outcome.set(None);
@@ -8138,7 +7748,6 @@ fn ManagedDidControls(
                     };
                     let relationship = VerificationRelationship::parse(relationship.read().as_str())
                         .unwrap_or(VerificationRelationship::AssertionMethod);
-                    let confirmed = confirmed();
                     let services = services.clone();
                     let profile_id = profile_id.clone();
                     let did = did.clone();
@@ -8150,12 +7759,7 @@ fn ManagedDidControls(
                                     profile_id,
                                     did,
                                     method_id: method_or_service,
-                                    payload: input_value.into_bytes(),
-                                    confirmation: did_confirmation(
-                                        "Sign identity challenge",
-                                        "Authorize the visible payload with this DID verification method",
-                                        confirmed,
-                                    ),
+                                    payload: input_value.as_bytes(),
                                 })
                                 .map(|signature| {
                                     (
@@ -8173,11 +7777,6 @@ fn ManagedDidControls(
                                 .execute(DeactivateDidCommand {
                                     profile_id,
                                     did,
-                                    confirmation: did_confirmation(
-                                        "Deactivate DID",
-                                        "Permanently disable further operations for this DID",
-                                        confirmed,
-                                    ),
                                 })
                                 .map(|record| {
                                     (Some(record), "DID document deactivated.".to_owned())
@@ -8202,11 +7801,6 @@ fn ManagedDidControls(
                                         profile_id,
                                         did,
                                         operation: update,
-                                        confirmation: did_confirmation(
-                                            "Update DID document",
-                                            "Authorize the selected visible change to this managed DID",
-                                            confirmed,
-                                        ),
                                     })
                                     .map(|record| {
                                         (Some(record), "DID document updated.".to_owned())
@@ -8297,10 +7891,20 @@ fn credential_issuance_protocol_error_for_message(message: &str) -> bool {
         })
 }
 
+fn clear_imported_credential_offer_notice(notice: &mut Option<String>) {
+    if notice.as_deref() == Some(IMPORTED_CREDENTIAL_OFFER_NOTICE) {
+        *notice = None;
+    }
+}
+
 fn credential_issuance_error_proves_no_retained_session(error: &CredentialIssuanceError) -> bool {
     matches!(
         error,
-        CredentialIssuanceError::NotFound | CredentialIssuanceError::Unavailable
+        CredentialIssuanceError::NotFound
+            | CredentialIssuanceError::Unavailable
+            | CredentialIssuanceError::Protocol(
+                oxid_protocol_application::IssuanceProtocolError::InvalidOffer
+            )
     )
 }
 
@@ -8327,7 +7931,10 @@ fn discard_open_credential_issuance_reviews(
     };
     for review in reviews {
         match review.state.as_str() {
-            "awaiting_consent" => {
+            "awaiting_consent" | "failed" | "outcome_unknown" => {
+                // The refusal use case performs an idempotent local protocol
+                // discard. For failed and uncertain sessions it preserves the
+                // historical outcome rather than rewriting it as refused.
                 match refuse_service.execute(RefuseCredentialIssuanceCommand {
                     profile_id: profile_id.to_owned(),
                     issuance_id: review.id,
@@ -8337,7 +7944,7 @@ fn discard_open_credential_issuance_reviews(
                     Err(error) => return Err(credential_issuance_message(error)),
                 }
             }
-            "failed" | "refused" | "succeeded" => {}
+            "refused" | "succeeded" => {}
             _ => {
                 return Err(
                     "Credential cleanup is still in progress. Retry after it finishes.".to_owned(),
@@ -8388,15 +7995,16 @@ const fn is_developer_route(_route: Route) -> bool {
     false
 }
 
-const fn page_context_primary_label(
-    content_route: Route,
-    active_primary: PrimaryDestination,
-) -> Option<&'static str> {
-    if is_developer_route(content_route) {
-        None
-    } else {
-        Some(active_primary.label())
+fn apply_route_transition(transition: RouteTransition) {
+    if transition.resets_page_content_to_top() {
+        let _ = dioxus_document::eval(
+            "document.querySelector('.page-content')?.scrollTo({ top: 0, behavior: 'instant' }); document.querySelector('#destination-heading')?.focus({ preventScroll: true });",
+        );
     }
+}
+
+fn primary_destination_is_active(content_route: Route, destination: PrimaryDestination) -> bool {
+    matches!(content_route.primary(), Some(primary) if primary == destination)
 }
 
 fn route_pending_identity_link(
@@ -8504,6 +8112,29 @@ fn initial_credential_presentation_selection(
     presentation: &CredentialPresentationView,
 ) -> Option<String> {
     (presentation.candidates.len() == 1).then(|| presentation.candidates[0].credential_id.clone())
+}
+
+fn presentation_terminal_copy(presentation: &CredentialPresentationView) -> Option<&'static str> {
+    match presentation.state.as_str() {
+        "succeeded" if presentation.presentation_generated && presentation.verifier_validated => {
+            Some(
+                "Presentation complete. The verifier confirmed the proof. You can safely return to Documents or preview a new request.",
+            )
+        }
+        "failed" => Some(
+            "Presentation failed. No presentation or vp_token was generated. Review the message above, then preview a new request.",
+        ),
+        "cancelled" => Some(
+            "Presentation cancelled. No presentation or vp_token was generated. You can safely preview a new request.",
+        ),
+        "timed_out" => Some(
+            "Presentation timed out. No presentation or vp_token was generated. Preview a new request to retry.",
+        ),
+        "refused" => Some(
+            "Presentation refused. No presentation or vp_token was generated. You can safely preview a new request.",
+        ),
+        _ => None,
+    }
 }
 
 fn presentation_claim_consent_copy(claim: &RequestedPresentationClaimView) -> String {
@@ -8631,7 +8262,9 @@ fn CredentialPresentationPanel(
                 if busy() { "Checking request…" } else { "Preview presentation request" }
             }
             if let Some(presentation) = preview.read().clone() {
-                div { class: "credential-offer-preview",
+                IdentityReviewSheet {
+                    test_id: "identity-presentation-review".to_owned(),
+                    review_state: ui::review_state(&presentation.state).to_owned(),
                     div { class: "consent-preview__heading",
                         h3 { "Presentation preview" }
                         span { class: "status-pill", "{ui::protocol_state(&presentation.state)}" }
@@ -8641,11 +8274,13 @@ fn CredentialPresentationPanel(
                     } else if presentation.state == "awaiting_consent" {
                         p { class: "privacy-consent-exemption", "Details shown for authorization." }
                         ol { class: "consent-questions", aria_label: "Credential presentation consent questions",
+                            "data-ui-primitive": "Stepper",
                             li { class: "consent-question",
                                 p { class: "card-eyebrow", "Who" }
                                 h4 { "Who is asking?" }
                                 code { title: "{presentation.verifier}", "{presentation.verifier}" }
                                 div { class: "consent-trust",
+                                    "data-ui-primitive": "IssuerIdentityBlock",
                                     span { class: "status-pill warning", "Unverified endpoint" }
                                     p { "Standalone mode has no production trust-registry or verified-domain signal." }
                                 }
@@ -8655,6 +8290,7 @@ fn CredentialPresentationPanel(
                                 h4 { "What will be shared?" }
                                 p { class: "form-hint", "Every item in this request is required and locked on. No optional claims are authorized by this plan." }
                                 div { class: "consent-required-claims", role: "list", aria_label: "Required presentation claims",
+                                    "data-ui-primitive": "ConsentChecklist",
                                     for claim in presentation.requested_claims.clone() {
                                         label { class: "consent-required-claim", key: "{claim.claim_path}", role: "listitem",
                                             input {
@@ -8682,8 +8318,9 @@ fn CredentialPresentationPanel(
                                 fieldset {
                                     class: "presentation-credential-choice",
                                     aria_label: "Matching credentials",
-                                    for candidate in presentation.candidates.clone() {
+                                    for (index, candidate) in presentation.candidates.clone().into_iter().enumerate() {
                                         {
+                                            let ordinal = index + 1;
                                             let credential_id = candidate.credential_id.clone();
                                             let card_credential_id = credential_id.clone();
                                             let selected = selected_credential_id.read().as_deref()
@@ -8694,6 +8331,8 @@ fn CredentialPresentationPanel(
                                                 label {
                                                     key: "{candidate.credential_id}",
                                                     class: if selected { "presentation-credential-option selected" } else { "presentation-credential-option" },
+                                                    "data-testid": "identity-presentation-document-{index}",
+                                                    "data-ui-primitive": "CredentialCard",
                                                     onclick: move |_| {
                                                         selected_credential_id.set(Some(card_credential_id.clone()));
                                                         consent.set(false);
@@ -8701,7 +8340,7 @@ fn CredentialPresentationPanel(
                                                     input {
                                                         r#type: "radio",
                                                         name: "presentation-credential",
-                                                        aria_label: "Use {candidate.display_name} issued by {candidate.issuer}, credential {reference}",
+                                                        aria_label: "Use {candidate.display_name}, matching document {ordinal}",
                                                         checked: selected,
                                                         onchange: move |event| {
                                                             if event.checked() {
@@ -8889,6 +8528,9 @@ fn CredentialPresentationPanel(
                     if !presentation.presentation_generated {
                         p { class: "form-hint", "No presentation or vp_token has been generated." }
                     }
+                    if let Some(terminal_copy) = presentation_terminal_copy(&presentation) {
+                        p { class: "form-hint", role: "status", aria_live: "polite", "{terminal_copy}" }
+                    }
                 }
             }
             if let Some(message) = notice.read().as_deref() {
@@ -9072,6 +8714,7 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
                     }
                     if let Some(candidate) = date_of_birth {
                         article { class: "passport-claim predicate",
+                            "data-ui-primitive": "PredicateRow",
                             div {
                                 span { class: "passport-claim__tier predicate", "{ui::claim_privacy(&candidate.privacy_tier)}" }
                                 h4 { "Date of birth" }
@@ -9146,6 +8789,7 @@ fn DigitalPassportClaims(profile_id: String, credential_id: String) -> Element {
 fn CredentialRecordCard(
     profile_id: String,
     credential: CredentialView,
+    item_index: usize,
     on_change: EventHandler<CredentialChange>,
 ) -> Element {
     let services = consume_context::<WalletUiServices>();
@@ -9168,6 +8812,8 @@ fn CredentialRecordCard(
     };
     rsx! {
         article { class: "surface-card credential-record", key: "{identifier}",
+            "data-testid": "identity-document-item-{item_index}",
+            "data-ui-primitive": "CredentialCard",
             div { class: "credential-record__heading",
                 div {
                     p { class: "card-eyebrow", "{ui::credential_format(&credential.format)}" }
@@ -9253,7 +8899,7 @@ fn CredentialRecordCard(
                 }
                 button {
                     class: "danger-action", r#type: "button",
-                    disabled: working() || !delete_confirmed(),
+                    disabled: !credential_removal_enabled(working(), delete_confirmed()),
                     onclick: move |_| {
                         let service = delete_services.delete_credential();
                         let profile_id = delete_profile.clone();
@@ -9284,6 +8930,10 @@ fn CredentialRecordCard(
             }
         }
     }
+}
+
+const fn credential_removal_enabled(working: bool, confirmed: bool) -> bool {
+    !working && confirmed
 }
 
 fn compact_credential_policy_summary(credential: &CredentialView) -> Option<String> {
@@ -9331,14 +8981,12 @@ fn CredentialsPage(
             offer_draft.write().import(request_uri);
             prepared_issuance.set(None);
             issuance_consent.set(false);
-            issuance_notice.set(Some(
-                "Imported credential offer loaded. Preview it before accepting.".to_owned(),
-            ));
+            issuance_notice.set(Some(IMPORTED_CREDENTIAL_OFFER_NOTICE.to_owned()));
         } else if offer_draft.read().has_imported_offer() {
             offer_draft.write().clear_imported();
             prepared_issuance.set(None);
             issuance_consent.set(false);
-            issuance_notice.set(None);
+            clear_imported_credential_offer_notice(&mut issuance_notice.write());
         }
     });
     let profile_id = active_profile.id.clone();
@@ -9409,6 +9057,10 @@ fn CredentialsPage(
                 .read()
                 .as_ref()
                 .is_some_and(|review| review.state == "succeeded");
+            let issuance_terminal_state = prepared_issuance
+                .read()
+                .as_ref()
+                .map(|review| review.state.clone());
             let issuance_action_label = credential_issuance_action_label(issuance_action());
             rsx! {
                 section { class: "page-heading",
@@ -9422,7 +9074,7 @@ fn CredentialsPage(
                         if issuance_succeeded {
                             "Credential added to wallet"
                         } else if issuance_terminal {
-                            "Credential offer closed"
+                            "{credential_issuance_terminal_heading(issuance_terminal_state.as_deref().unwrap_or_default())}"
                         } else {
                             "Accept a credential offer"
                         }
@@ -9431,7 +9083,7 @@ fn CredentialsPage(
                         if issuance_succeeded {
                             "The offer review is closed. Your credential is in the protected inventory below."
                         } else if issuance_terminal {
-                            "The offer review is closed. No further action is available for this one-time offer."
+                            "{credential_issuance_terminal_note(issuance_terminal_state.as_deref().unwrap_or_default())}"
                         } else {
                             "Preview an embedded offer before consent. The pre-authorized code, access token, nonce, and signed proof remain inside the protocol adapter."
                         }
@@ -9698,18 +9350,20 @@ fn CredentialsPage(
                         }
                     }
                     if let Some(preview) = prepared_issuance.read().clone() {
-                        div { class: if credential_issuance_review_is_terminal(Some(&preview)) { "credential-issued-receipt" } else { "credential-offer-preview" },
+                        IdentityReviewSheet {
+                            test_id: "identity-issuance-review".to_owned(),
+                            review_state: ui::review_state(&preview.state).to_owned(),
                             div { class: "consent-preview__heading",
                                 h3 {
                                     if preview.state == "succeeded" {
                                         "Saved to your wallet"
                                     } else if credential_issuance_review_is_terminal(Some(&preview)) {
-                                        "Offer closed"
+                                        "{credential_issuance_terminal_heading(&preview.state)}"
                                     } else {
                                         "Credential offer preview"
                                     }
                                 }
-                                span { class: "status-pill", "{ui::protocol_state(&preview.state)}" }
+                                span { class: "status-pill", "data-ui-primitive": "StatusPill", "{ui::protocol_state(&preview.state)}" }
                             }
                             if preview.state == "succeeded" {
                                 p {
@@ -9721,11 +9375,13 @@ fn CredentialsPage(
                             } else if preview.state == "awaiting_consent" {
                                 p { class: "privacy-consent-exemption", "Details shown for authorization." }
                                 ol { class: "consent-questions", aria_label: "Credential issuance consent questions",
+                                    "data-ui-primitive": "Stepper",
                                     li { class: "consent-question",
                                         p { class: "card-eyebrow", "Who" }
                                         h4 { "Who is issuing it?" }
                                         code { title: "{preview.issuer}", "{preview.issuer}" }
                                         div { class: "consent-trust",
+                                            "data-ui-primitive": "IssuerIdentityBlock",
                                             span { class: "status-pill warning", "Unverified endpoint" }
                                             p { "Standalone mode has no production trust-registry or verified-domain signal." }
                                         }
@@ -9987,7 +9643,8 @@ fn CredentialsPage(
                     }
                 } else {
                     section { class: "credential-inventory", aria_label: "Saved credentials",
-                        for credential in credentials.clone() {
+                        "data-testid": "identity-document-inventory",
+                        for (index, credential) in credentials.clone().into_iter().enumerate() {
                             {
                                 let retained = credentials.clone();
                                 let current_id = credential.id.clone();
@@ -9996,6 +9653,7 @@ fn CredentialsPage(
                                         key: "{current_id}",
                                         profile_id: profile_id.clone(),
                                         credential,
+                                        item_index: index,
                                         on_change: move |change| {
                                             state.set(credential_page_after_change(retained.clone(), change));
                                         }
@@ -10015,8 +9673,9 @@ fn SettingsPage(
     active_profile: WalletProfileView,
     lifecycle_wake: Signal<u64>,
     secret_mode: SecretModeController,
-    backup_only: bool,
+    section: SettingsSection,
     on_root_recovered: EventHandler<WalletProfileView>,
+    on_open_section: EventHandler<SettingsSection>,
     on_open_profile: EventHandler<MouseEvent>,
     on_open_diagnostics: EventHandler<MouseEvent>,
     on_open_developer: EventHandler<MouseEvent>,
@@ -10181,13 +9840,7 @@ fn SettingsPage(
                 BackupReceiptState::Ready(receipt) => receipt,
                 BackupReceiptState::Loading | BackupReceiptState::Failed => None,
             };
-            let receipt_label = if receipt.is_some() {
-                "Backed up"
-            } else if supported {
-                "Available"
-            } else {
-                "Fail closed"
-            };
+            let receipt_label = backup_receipt_label(receipt.is_some(), supported);
             let busy = matches!(*backup_state.read(), PortableBackupUiState::Working(_));
             let can_export = supported
                 && status.state_name() != "Uninitialized"
@@ -10219,7 +9872,7 @@ fn SettingsPage(
                     }
                     if let Some(receipt) = receipt {
                         p { class: "form-hint",
-                            "Latest completed export: {ui::format_epoch_millis(receipt.completed_at_millis)}. The external document can still be moved or deleted outside {brand.product_name()}."
+                            "Latest recorded export: {ui::format_epoch_millis(receipt.completed_at_millis)}. This receipt does not prove that recovery was tested, and the external document can still be moved or deleted outside {brand.product_name()}."
                         }
                     } else if matches!(*backup_receipt.read(), BackupReceiptState::Failed) {
                         p { class: "form-hint", "Backup completion status could not be read." }
@@ -10318,9 +9971,11 @@ fn SettingsPage(
                                             })
                                             .await;
                                             let next = match package {
-                                                Ok(Ok(package)) => match services
-                                                    .portable_wallet_backup_documents
-                                                    .export(
+                                                Ok(Ok(package)) => {
+                                                    backup_state.set(PortableBackupUiState::Working(
+                                                        "Waiting for a location to save the encrypted document",
+                                                    ));
+                                                    match services.portable_wallet_backup_documents.export(
                                                         PortableWalletBackupDocumentKind::CompleteWallet,
                                                         &package,
                                                     )
@@ -10347,11 +10002,14 @@ fn SettingsPage(
                                                         }
                                                     }
                                                     Err(PortableWalletBackupDocumentError::Cancelled) => {
-                                                        PortableBackupUiState::Cancelled
+                                                        PortableBackupUiState::Cancelled(
+                                                            "Export cancelled. Your Export backup task is still selected, and no export receipt was recorded.",
+                                                        )
                                                     }
                                                     Err(error) => PortableBackupUiState::Failed(
                                                         error.to_string(),
                                                     ),
+                                                }
                                                 },
                                                 Ok(Err(error)) => PortableBackupUiState::Failed(
                                                     error.to_string(),
@@ -10441,7 +10099,7 @@ fn SettingsPage(
                                                                     confirmed: true,
                                                                 },
                                                             })
-                                                            .map_err(|error| error.to_string())?;
+                                                            .map_err(|error| portable_backup_recovery_error_message(&error))?;
                                                         let status = services
                                                             .get_wallet_security_status
                                                             .execute(WalletProfileSecurityCommand {
@@ -10457,7 +10115,9 @@ fn SettingsPage(
                                                     }
                                                 }
                                                 Err(PortableWalletBackupDocumentError::Cancelled) => {
-                                                    backup_state.set(PortableBackupUiState::Cancelled);
+                                                    backup_state.set(PortableBackupUiState::Cancelled(
+                                                        "Document selection cancelled. Your legacy recovery task is still selected; no custody state was changed.",
+                                                    ));
                                                     return;
                                                 }
                                                 Err(error) => Err(error.to_string()),
@@ -10500,14 +10160,14 @@ fn SettingsPage(
                             div { class: "result success backup-celebration", role: "status", aria_live: "polite",
                                 span { class: "empty-state__mark", aria_hidden: "true", "✓" }
                                 div {
-                                    strong { "Backup complete" }
+                                    strong { "Backup document exported" }
                                     p { "Encrypted complete wallet backup saved at {ui::format_epoch_millis(receipt.completed_at_millis)}." }
-                                    small { "{brand.product_name()} recorded this export, but cannot guarantee that the external document remains available." }
+                                    small { "{brand.product_name()}: {BACKUP_EXPORT_EVIDENCE}" }
                                 }
                             }
                         },
-                        PortableBackupUiState::Cancelled => rsx! {
-                            div { class: "result", role: "status", p { "Document selection cancelled. No custody state was changed." } }
+                        PortableBackupUiState::Cancelled(message) => rsx! {
+                            div { class: "result", role: "status", p { "{message}" } }
                         },
                         PortableBackupUiState::Failed(message) => rsx! {
                             div { class: "result error", role: "alert", p { "{message}" } }
@@ -10572,13 +10232,43 @@ fn SettingsPage(
         rsx! {}
     };
 
-    rsx! {
-        section { class: "page-heading",
-            p { class: "eyebrow", if backup_only { "Wallet continuity" } else { "Local controls" } }
-            h1 { if backup_only { "Backup & recovery" } else { "Settings" } }
-            p { "Security-sensitive settings appear only when their application ports and platform adapters are available." }
+    let screen_id = settings_screen_id(section);
+    let view_state = match section {
+        SettingsSection::Security | SettingsSection::Backup | SettingsSection::Recovery => {
+            match &*security.read() {
+                SecurityCapabilityState::Loading => "loading",
+                SecurityCapabilityState::Ready(_) => "ready",
+                SecurityCapabilityState::Failed(_) => "error",
+            }
         }
-        if !backup_only {
+        SettingsSection::Hub | SettingsSection::Preferences | SettingsSection::About => "ready",
+    };
+    rsx! {
+        div { class: "settings-page", "data-screen": "{screen_id}", "data-view-state": "{view_state}",
+            section { class: "page-heading",
+                p { class: "eyebrow", "Local controls" }
+                p { "Security-sensitive settings appear only when their application ports and platform adapters are available." }
+            }
+            if section == SettingsSection::Hub {
+            section { class: "settings-task-hub", aria_label: "Settings tasks",
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Security", "data-action": "open-security", onclick: move |_| on_open_section.call(SettingsSection::Security),
+                    p { class: "card-eyebrow", "Protect" } h2 { "Security" } p { "Check device protection and its current custody state." }
+                }
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Backup", "data-action": "open-backup", onclick: move |_| on_open_section.call(SettingsSection::Backup),
+                    p { class: "card-eyebrow", "Keep a copy" } h2 { "Backup" } p { "Create an encrypted document and keep its recovery secret separately." }
+                }
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Recovery", "data-action": "open-recovery", onclick: move |_| on_open_section.call(SettingsSection::Recovery),
+                    p { class: "card-eyebrow", "Restore" } h2 { "Recovery" } p { "Complete-wallet restore and legacy custody-only recovery are different paths." }
+                }
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open Preferences", "data-action": "open-preferences", onclick: move |_| on_open_section.call(SettingsSection::Preferences),
+                    p { class: "card-eyebrow", "Control" } h2 { "Preferences" } p { "Manage your profile and how private values are shown." }
+                }
+                button { class: "settings-card surface-card", r#type: "button", aria_label: "Open About and diagnostics", "data-action": "open-about", onclick: move |_| on_open_section.call(SettingsSection::About),
+                    p { class: "card-eyebrow", "About" } h2 { "About & diagnostics" } p { "Review app information and bounded local runtime health." }
+                }
+            }
+        }
+        if section == SettingsSection::Preferences {
             article { class: "settings-card surface-card",
                 div {
                     p { class: "card-eyebrow", "Profile" }
@@ -10593,26 +10283,41 @@ fn SettingsPage(
                 }
             }
         }
-        {security_card}
-        {root_recovery_card}
-        {backup_card}
-        if !backup_only {
+        if section == SettingsSection::Security {
+            {security_card}
+        }
+        if section == SettingsSection::Backup {
+            {backup_card}
+        }
+        if section == SettingsSection::Recovery {
+            {root_recovery_card}
+            article { class: "settings-card surface-card",
+                p { class: "card-eyebrow", "Recovery paths" }
+                h2 { "Restore only into an empty wallet" }
+                p { "Complete-wallet restore is available during first-run setup. Legacy recovery restores only older custody keys into this exact empty profile and never overwrites or merges an initialized wallet." }
+                span { class: "status-pill", "Choose the recovery path that matches your backup" }
+            }
+        }
+        if section == SettingsSection::Preferences {
             {deployment_profile_card}
             article { class: "settings-card surface-card",
                 div {
                     p { class: "card-eyebrow", "Privacy" }
                     h2 { "Private values" }
-                    p { "Sensitive values for {active_profile.display_name} are hidden by default. A reveal lasts 30 seconds and ends immediately when you switch profiles or leave and resume the app." }
+                    p { "Sensitive values for {active_profile.display_name} are hidden by default. A reveal lasts {SECRET_MODE_REVEAL_DURATION_LABEL} and ends immediately when you switch profiles or leave and resume the app." }
                 }
                 button {
                     class: "secondary-action",
                     r#type: "button",
-                    aria_label: if secret_mode.is_masked() { "Reveal private values for 30 seconds" } else { "Hide private values now" },
+                    aria_label: if secret_mode.is_masked() { format!("Reveal private values for {SECRET_MODE_REVEAL_DURATION_LABEL}") } else { "Hide private values now".to_owned() },
+                    "data-action": if secret_mode.is_masked() { "reveal-private-values" } else { "hide-private-values" },
                     aria_pressed: if secret_mode.is_masked() { "false" } else { "true" },
                     onclick: move |_| secret_mode.toggle(),
-                    if secret_mode.is_masked() { "Reveal for 30 seconds" } else { "Hide now" }
+                    if secret_mode.is_masked() { "Reveal for {SECRET_MODE_REVEAL_DURATION_LABEL}" } else { "Hide now" }
                 }
             }
+        }
+        if section == SettingsSection::About {
             {developer_tools_card}
             article { class: "settings-card surface-card",
                 div {
@@ -10636,7 +10341,19 @@ fn SettingsPage(
                     "Open diagnostics"
                 }
             }
+            }
         }
+    }
+}
+
+const fn settings_screen_id(section: SettingsSection) -> &'static str {
+    match section {
+        SettingsSection::Hub => "settings-hub",
+        SettingsSection::Security => "settings-security",
+        SettingsSection::Backup => "settings-backup",
+        SettingsSection::Recovery => "settings-recovery",
+        SettingsSection::Preferences => "settings-preferences",
+        SettingsSection::About => "settings-about",
     }
 }
 
@@ -10646,59 +10363,6 @@ fn security_action_label(status: WalletSecurityStatusView) -> &'static str {
         "Locked" => "Unlock wallet",
         "Unlocked" => "Lock wallet",
         _ => "Unavailable",
-    }
-}
-
-#[component]
-fn ProfilePage(
-    active_profile: WalletProfileView,
-    on_selected: EventHandler<WalletProfileView>,
-) -> Element {
-    let services = consume_context::<WalletUiServices>();
-    let mut profiles = use_signal(|| ProfileListState::Loading);
-    use_effect(move || {
-        let service = services.list_wallet_profiles();
-        spawn(async move {
-            let result = run_ui_blocking(move || service.execute()).await;
-            profiles.set(match result {
-                Ok(Ok(profiles)) => ProfileListState::Ready(profiles),
-                Ok(Err(error)) => ProfileListState::Failed(error.to_string()),
-                Err(error) => ProfileListState::Failed(error.to_string()),
-            });
-        });
-    });
-
-    let content = match profiles.read().clone() {
-        ProfileListState::Loading => rsx! {
-            section { class: "gateway-state surface-card", role: "status", aria_busy: "true",
-                span { class: "loading-mark", aria_hidden: "true" }
-                strong { "Loading profiles" }
-            }
-        },
-        ProfileListState::Ready(loaded) => rsx! {
-            ProfileManager {
-                profiles: loaded,
-                active_profile_id: Some(active_profile.id),
-                onboarding: false,
-                allow_public_fixture: true,
-                on_selected,
-            }
-        },
-        ProfileListState::Failed(message) => rsx! {
-            section { class: "result error", role: "alert",
-                strong { "Profiles could not be loaded" }
-                p { "{message}" }
-            }
-        },
-    };
-
-    rsx! {
-        section { class: "page-heading profile-heading",
-            p { class: "eyebrow", "Wallet profile" }
-            h1 { "Manage profiles" }
-            p { "Choose the active public wallet context or add another. Account keys, DIDs, and credentials remain behind separate protected capabilities." }
-        }
-        {content}
     }
 }
 
@@ -10712,9 +10376,23 @@ const LUCIDE_SCAN_LINE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width=
 const LUCIDE_RECEIVE: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>"#;
 const LUCIDE_SEND: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>"#;
 
+// Transfer mode icons use the same NIGHT crescent. The quiet shield outline
+// distinguishes the private route without suggesting that DUST is sent.
+const SEND_PUBLIC_NIGHT_ICON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M14.5 5.7a6.6 6.6 0 1 0 3.8 11.5 7 7 0 0 1-3.8-11.5Z"/></svg>"#;
+const SEND_SHIELDED_NIGHT_ICON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 20 6v5.6c0 4.9-3 8.1-8 9.9-5-1.8-8-5-8-9.9V6l8-3.5Z"/><path d="M13.5 7a5 5 0 1 0 2.9 8.7A5.3 5.3 0 0 1 13.5 7Z"/></svg>"#;
+const SEND_BACK_ICON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>"#;
+const SEND_REVIEW_ICON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn destructive_credential_removal_requires_confirmation_and_an_idle_worker() {
+        assert!(!credential_removal_enabled(false, false));
+        assert!(credential_removal_enabled(false, true));
+        assert!(!credential_removal_enabled(true, true));
+    }
 
     #[cfg(feature = "preprod-observation")]
     #[test]
@@ -10745,21 +10423,30 @@ mod tests {
             true,
             "Uninitialized",
             false,
+            false,
         ));
         assert!(wallet_account_activation_available(
-            true, true, "Locked", false,
+            true, true, "Locked", false, false,
         ));
         assert!(wallet_account_activation_available(
-            true, true, "Unlocked", false,
+            true, true, "Unlocked", false, false,
         ));
         assert!(!wallet_account_activation_available(
-            true, true, "Unlocked", true,
+            true, true, "Unlocked", true, false,
         ));
         assert!(wallet_account_activation_available(
             false,
             true,
             "Uninitialized",
             false,
+            false,
+        ));
+        assert!(!wallet_account_activation_available(
+            false,
+            true,
+            "Uninitialized",
+            false,
+            true,
         ));
     }
 
@@ -10824,6 +10511,11 @@ mod tests {
         let labels = PRIMARY_DESTINATIONS.map(PrimaryDestination::label);
 
         assert_eq!(labels, ["Home", "Wallet", "Documents", "Activity"]);
+        assert_eq!(
+            PRIMARY_DESTINATIONS.map(PrimaryDestination::accessibility_id),
+            ["nav-home", "nav-wallet", "nav-documents", "nav-activity"]
+        );
+        assert!(BASE_STYLES.contains("min-height: 3.6rem;"));
     }
 
     #[test]
@@ -10852,13 +10544,8 @@ mod tests {
         assert!(developer_routes.into_iter().all(|route| {
             route.primary().is_none()
                 && is_developer_route(route)
-                && page_context_primary_label(route, PrimaryDestination::Home).is_none()
                 && !route_forces_screen_privacy(route)
         }));
-        assert_eq!(
-            page_context_primary_label(Route::Wallet, PrimaryDestination::Wallet),
-            Some("Wallet")
-        );
 
         let mut navigation = RouteStack::default();
         navigation.push(Route::Developer);
@@ -10882,40 +10569,6 @@ mod tests {
         );
         assert!(navigation.pop());
         assert_eq!(navigation.current(), Route::Developer);
-    }
-
-    #[cfg(feature = "ui-profile-dev")]
-    #[test]
-    fn developer_section_navigation_and_benchmark_keep_phone_width_contracts() {
-        assert_eq!(
-            developer_tools::DEVELOPER_SECTIONS,
-            [
-                (Route::DeveloperManifest, "Capabilities"),
-                (Route::DeveloperProofBenchmark, "Benchmark"),
-                (Route::DeveloperDiagnostics, "Event log"),
-            ]
-        );
-
-        let section_nav = BASE_STYLES
-            .split(".developer-section-nav {")
-            .nth(1)
-            .and_then(|styles| styles.split('}').next())
-            .expect("developer section navigation rule");
-        assert!(section_nav.contains("overflow-x: auto;"));
-        assert!(section_nav.contains("repeat(3"));
-
-        let phone_rules = BASE_STYLES
-            .split("@media (max-width: 30rem) {")
-            .nth(1)
-            .expect("phone-width rules");
-        let benchmark_row = phone_rules
-            .split(".proof-benchmark-row.capability-row {")
-            .nth(1)
-            .and_then(|styles| styles.split('}').next())
-            .expect("phone-width benchmark row rule");
-        assert!(benchmark_row.contains("grid-template-columns: auto minmax(0, 1fr);"));
-        assert!(phone_rules.contains(".proof-benchmark-timings"));
-        assert!(phone_rules.contains("grid-template-columns: 1fr;"));
     }
 
     #[cfg(feature = "ui-profile-demo")]
@@ -11122,9 +10775,15 @@ mod tests {
         assert!(!credential_issuance_cleanup_allows_release(&Err(
             CredentialIssuanceError::InvalidState
         )));
+        assert!(!credential_issuance_cleanup_allows_release(&Err(
+            CredentialIssuanceError::ActivityCapacityExhausted
+        )));
         for error in [
             CredentialIssuanceError::NotFound,
             CredentialIssuanceError::Unavailable,
+            CredentialIssuanceError::Protocol(
+                oxid_protocol_application::IssuanceProtocolError::InvalidOffer,
+            ),
         ] {
             assert!(credential_issuance_cleanup_allows_release(&Err(error)));
         }
@@ -11185,7 +10844,7 @@ mod tests {
             Ok(Err(CredentialIssuanceError::InvalidState)),
             Err(UiBlockingTaskError::WorkerFailed),
         ] {
-            assert_retained(cleanup, None, true, Some(Route::Documents));
+            assert_retained(cleanup, None, true, Some(Route::CredentialRequest));
         }
     }
 
@@ -11194,6 +10853,9 @@ mod tests {
         for cleanup_error in [
             CredentialIssuanceError::NotFound,
             CredentialIssuanceError::Unavailable,
+            CredentialIssuanceError::Protocol(
+                oxid_protocol_application::IssuanceProtocolError::InvalidOffer,
+            ),
         ] {
             for imported in [true, false] {
                 let mut pending = imported.then(|| PendingIdentityRequest {
@@ -11280,10 +10942,95 @@ mod tests {
     }
 
     #[test]
-    fn manual_preparation_reserves_before_await_and_pins_existing_documents_content() {
+    fn leave_review_discards_failed_and_unknown_issuances_once_and_reports_errors() {
+        fn review(id: &str, state: &str) -> CredentialIssuanceView {
+            CredentialIssuanceView {
+                id: id.to_owned(),
+                issuer: "https://issuer.example".to_owned(),
+                configuration_ids: vec!["DigitalPassport".to_owned()],
+                display_names: vec!["Digital Passport".to_owned()],
+                state: state.to_owned(),
+                credential_id: None,
+                failure_code: None,
+            }
+        }
+
+        struct TerminalList;
+        impl ListCredentialIssuancesUseCase for TerminalList {
+            fn execute(
+                &self,
+                _: CredentialIssuanceProfileQuery,
+            ) -> Result<Vec<CredentialIssuanceView>, CredentialIssuanceError> {
+                Ok(vec![
+                    review("issuance-failed", "failed"),
+                    review("issuance-unknown", "outcome_unknown"),
+                    review("issuance-refused", "refused"),
+                    review("issuance-succeeded", "succeeded"),
+                ])
+            }
+        }
+
+        struct RecordingRefusal {
+            calls: std::sync::Mutex<Vec<String>>,
+            fail: bool,
+        }
+        impl RefuseCredentialIssuanceUseCase for RecordingRefusal {
+            fn execute(
+                &self,
+                command: RefuseCredentialIssuanceCommand,
+            ) -> Result<CredentialIssuanceView, CredentialIssuanceError> {
+                self.calls
+                    .lock()
+                    .expect("test refusal calls")
+                    .push(command.issuance_id.clone());
+                if self.fail {
+                    return Err(CredentialIssuanceError::InvalidState);
+                }
+                let state = if command.issuance_id == "issuance-failed" {
+                    "failed"
+                } else {
+                    "outcome_unknown"
+                };
+                Ok(review(&command.issuance_id, state))
+            }
+        }
+
+        let refusal = RecordingRefusal {
+            calls: std::sync::Mutex::new(Vec::new()),
+            fail: false,
+        };
+        assert_eq!(
+            discard_open_credential_issuance_reviews(&TerminalList, &refusal, "profile-1"),
+            Ok(())
+        );
+        assert_eq!(
+            *refusal.calls.lock().expect("test refusal calls"),
+            ["issuance-failed", "issuance-unknown"],
+            "terminal historical states use the idempotent refusal path exactly once"
+        );
+
+        let failing_refusal = RecordingRefusal {
+            calls: std::sync::Mutex::new(Vec::new()),
+            fail: true,
+        };
+        assert_eq!(
+            discard_open_credential_issuance_reviews(&TerminalList, &failing_refusal, "profile-1"),
+            Err(credential_issuance_message(
+                CredentialIssuanceError::InvalidState
+            ))
+        );
+        assert_eq!(
+            *failing_refusal.calls.lock().expect("test refusal calls"),
+            ["issuance-failed"],
+            "cleanup stops and surfaces refusal failures"
+        );
+    }
+
+    #[test]
+    fn manual_preparation_reserves_before_await_and_pins_credential_review_content() {
         let pending = None;
         let mut manual_review_lock = false;
-        let active_route = Route::Documents;
+        let active_route = Route::CredentialRequest;
         let content_before_reservation =
             retained_identity_review_route(&pending, manual_review_lock).unwrap_or(active_route);
 
@@ -11292,10 +11039,10 @@ mod tests {
 
         assert!(reserved, "manual preparation must reserve synchronously");
         assert!(pending.is_none(), "manual review must not create a marker");
-        assert_eq!(content_before_reservation, Route::Documents);
+        assert_eq!(content_before_reservation, Route::CredentialRequest);
         assert_eq!(
             retained_identity_review_route(&pending, manual_review_lock),
-            Some(Route::Documents),
+            Some(Route::CredentialRequest),
         );
         assert_eq!(
             retained_identity_review_route(&pending, manual_review_lock).unwrap_or(active_route),
@@ -11407,6 +11154,8 @@ mod tests {
         let succeeded = review("succeeded");
         let refused = review("refused");
         let failed = review("failed");
+        let expired = review("expired");
+        let unknown = review("outcome_unknown");
 
         assert!(credential_issuance_review_blocks_replacement(Some(
             &awaiting
@@ -11423,7 +11172,26 @@ mod tests {
         assert!(credential_issuance_review_is_terminal(Some(&succeeded)));
         assert!(credential_issuance_review_is_terminal(Some(&refused)));
         assert!(credential_issuance_review_is_terminal(Some(&failed)));
+        assert!(credential_issuance_review_is_terminal(Some(&expired)));
+        assert!(credential_issuance_review_is_terminal(Some(&unknown)));
         assert!(!credential_issuance_review_is_terminal(None));
+    }
+
+    #[test]
+    fn credential_issuance_terminal_states_have_distinct_safe_actions() {
+        assert_eq!(
+            credential_issuance_terminal_heading("refused"),
+            "Credential offer refused"
+        );
+        assert!(credential_issuance_terminal_note("expired").contains("fresh offer"));
+        assert!(
+            credential_issuance_terminal_note("outcome_unknown")
+                .contains("Do not accept the offer again")
+        );
+        assert_ne!(
+            credential_issuance_terminal_heading("failed"),
+            credential_issuance_terminal_heading("succeeded")
+        );
     }
 
     #[test]
@@ -11438,7 +11206,7 @@ mod tests {
         // release and keep ingress closed.
         assert_eq!(
             retained_identity_review_route(&None, manual_review_lock),
-            Some(Route::Documents)
+            Some(Route::CredentialRequest)
         );
         assert!(!identity_request_admits_new_link(false, manual_review_lock));
 
@@ -11653,18 +11421,29 @@ mod tests {
             HomeQuickAction::Receive.target(),
             HomeQuickActionTarget::ReceiveSheet
         );
-        assert_eq!(
-            HomeQuickAction::Send.target(),
-            HomeQuickActionTarget::Primary(PrimaryDestination::Wallet)
-        );
+        assert_eq!(HomeQuickAction::Send.target(), HomeQuickActionTarget::Send);
         assert_eq!(
             HomeQuickAction::Present.target(),
-            HomeQuickActionTarget::Primary(PrimaryDestination::Documents)
+            HomeQuickActionTarget::Present
         );
         assert_eq!(HomeQuickAction::Scan.target(), HomeQuickActionTarget::Scan);
         assert!(home_quick_action_disabled(HomeQuickAction::Scan, true));
         assert!(!home_quick_action_disabled(HomeQuickAction::Scan, false));
         assert!(!home_quick_action_disabled(HomeQuickAction::Receive, true));
+    }
+
+    #[test]
+    fn home_task_entries_keep_the_home_root_for_back_and_tabs() {
+        let mut navigation = RouteStack::default();
+        navigation.push(Route::Send);
+        assert_eq!(navigation.routes, vec![Route::Home, Route::Send]);
+        assert_eq!(navigation.active_primary(), PrimaryDestination::Home);
+        assert!(navigation.pop());
+        assert_eq!(navigation.current(), Route::Home);
+
+        navigation.push(Route::Present);
+        navigation.select_primary(PrimaryDestination::Documents);
+        assert_eq!(navigation.routes, vec![Route::Documents]);
     }
 
     #[test]
@@ -11762,6 +11541,38 @@ mod tests {
     }
 
     #[test]
+    fn activity_timestamp_is_explicit_about_missing_authoritative_data() {
+        assert_eq!(
+            activity_observed_at_line(Some(1_700_000_000_000)),
+            "Observed 2023-11-14 22:13 UTC"
+        );
+        assert_eq!(
+            activity_observed_at_line(None),
+            "Observed timestamp unavailable"
+        );
+    }
+
+    #[test]
+    fn wallet_activity_provenance_distinguishes_live_saved_and_fixture_data() {
+        assert_eq!(
+            wallet_activity_freshness(WalletAccountSource::Live),
+            "Live account"
+        );
+        assert_eq!(
+            wallet_activity_freshness(WalletAccountSource::Cached),
+            "Saved snapshot"
+        );
+        assert_eq!(
+            wallet_activity_freshness(WalletAccountSource::Simulated),
+            "Simulated fixture"
+        );
+        assert_eq!(
+            wallet_activity_freshness(WalletAccountSource::Unavailable),
+            "Source unavailable"
+        );
+    }
+
+    #[test]
     fn home_security_labels_report_capability_not_completion() {
         assert_eq!(ui::wallet_security_state("Unlocked"), "Wallet unlocked");
         assert_eq!(
@@ -11770,6 +11581,9 @@ mod tests {
         );
         assert_eq!(ui::backup_capability(true), "Backup available");
         assert_ne!(ui::backup_capability(true), "Backed up");
+        assert_eq!(backup_receipt_label(true, true), "Export recorded");
+        assert_eq!(backup_receipt_label(false, true), "Available");
+        assert!(BACKUP_EXPORT_EVIDENCE.contains("has not tested recovery"));
         assert_eq!(
             ui::wallet_protection("unexpected"),
             "Protection class unavailable"
@@ -11839,6 +11653,48 @@ mod tests {
     }
 
     #[test]
+    fn send_amount_uses_only_fresh_native_shielded_balance() {
+        let mut status = WalletShieldedSyncView {
+            network_id: "undeployed".to_owned(),
+            state: "synced".to_owned(),
+            current_cursor: Some(7),
+            target_cursor: Some(7),
+            events_processed: 8,
+            owned_note_count: Some(1),
+            commitment_count: Some(1),
+            balances: vec![oxid_wallet_application::WalletShieldedTokenBalanceView {
+                token_type_hex: NATIVE_SHIELDED_NIGHT_TOKEN_TYPE.to_owned(),
+                atomic_units: "12500000".to_owned(),
+            }],
+            updated_at_millis: Some(42),
+            failure: None,
+        };
+
+        assert_eq!(
+            native_shielded_transfer_balance(&status),
+            Some(("12.5 NIGHT".to_owned(), "12.5".to_owned()))
+        );
+        status.state = "syncing".to_owned();
+        assert_eq!(native_shielded_transfer_balance(&status), None);
+    }
+
+    #[test]
+    fn send_review_prefers_the_known_dust_fee() {
+        let mut preview = transfer_preview("unshielded");
+        assert_eq!(
+            transfer_preview_fee_label(&preview),
+            "Calculated during proving"
+        );
+        preview.fee = Some(oxid_wallet_application::WalletTransferAssetView {
+            asset_id: "dust".to_owned(),
+            symbol: "DUST".to_owned(),
+            decimals: 6,
+            atomic_units: "250000".to_owned(),
+        });
+        assert_eq!(transfer_preview_fee_label(&preview), "0.25 DUST");
+    }
+
+    #[test]
     fn send_failure_copy_exposes_only_the_allowed_recovery() {
         assert_eq!(
             transfer_failure_heading(TransferRecovery::Edit),
@@ -11860,6 +11716,46 @@ mod tests {
             transfer_failure_note(TransferRecovery::ReconcileUnknown, "Oxid")
                 .contains("check before anything is sent again")
         );
+    }
+
+    #[test]
+    fn route_transitions_reset_top_and_focus_the_destination() {
+        let mut navigation = RouteStack::default();
+
+        navigation.select_primary(PrimaryDestination::Documents);
+        assert_eq!(
+            navigation.transition(),
+            RouteTransition::ResetPageContentToTopAndFocusDestination
+        );
+        navigation.push(Route::Activity);
+        assert_eq!(
+            navigation.transition(),
+            RouteTransition::ResetPageContentToTopAndFocusDestination
+        );
+        navigation.push(GlobalMenuAction::Settings.route().expect("Settings route"));
+        assert_eq!(
+            navigation.transition(),
+            RouteTransition::ResetPageContentToTopAndFocusDestination
+        );
+        assert!(navigation.pop());
+        assert_eq!(navigation.current(), Route::Activity);
+        assert_eq!(
+            navigation.transition(),
+            RouteTransition::BackRestoresOriginAtTop
+        );
+        assert!(navigation.transition().resets_page_content_to_top());
+    }
+
+    #[test]
+    fn primary_navigation_state_follows_only_the_rendered_primary_route() {
+        assert!(primary_destination_is_active(
+            Route::Activity,
+            PrimaryDestination::Activity
+        ));
+        assert!(!primary_destination_is_active(
+            Route::Settings,
+            PrimaryDestination::Activity
+        ));
     }
 
     #[test]
@@ -11908,6 +11804,41 @@ mod tests {
     }
 
     #[test]
+    fn scanned_identity_review_preserves_the_origin_for_back() {
+        let mut navigation = RouteStack::default();
+        navigation.select_primary(PrimaryDestination::Wallet);
+        navigation.route_scanned_identity_request(IdentityRequestKind::CredentialPresentation);
+        assert_eq!(
+            navigation.routes,
+            vec![Route::Wallet, Route::CredentialRequest]
+        );
+        assert!(navigation.pop());
+        assert_eq!(navigation.current(), Route::Wallet);
+    }
+
+    #[test]
+    fn inbound_reviews_have_task_specific_titles() {
+        assert_eq!(
+            review_route_title(Route::Send, None),
+            "Review NIGHT payment"
+        );
+        assert_eq!(
+            review_route_title(
+                Route::CredentialRequest,
+                Some(IdentityRequestKind::CredentialIssuance),
+            ),
+            "Review credential offer"
+        );
+        assert_eq!(
+            review_route_title(
+                Route::CredentialRequest,
+                Some(IdentityRequestKind::CredentialPresentation),
+            ),
+            "Review presentation request"
+        );
+    }
+
+    #[test]
     fn profile_remains_an_explicit_non_primary_route() {
         assert_eq!(Route::Profile.title(), "Wallet profiles");
         assert_eq!(Route::Profile.primary(), None);
@@ -11915,6 +11846,56 @@ mod tests {
         assert_eq!(Route::BackupRecovery.primary(), None);
         assert_eq!(Route::Receive.title(), "Receive");
         assert_eq!(Route::Receive.primary(), None);
+    }
+
+    #[test]
+    fn settings_task_routes_are_distinct_secondary_destinations() {
+        let sections = [
+            SettingsSection::Security,
+            SettingsSection::Backup,
+            SettingsSection::Recovery,
+            SettingsSection::Preferences,
+            SettingsSection::About,
+        ];
+        assert_eq!(
+            sections.map(SettingsSection::route),
+            [
+                Route::Security,
+                Route::Backup,
+                Route::Recovery,
+                Route::Preferences,
+                Route::About,
+            ]
+        );
+        assert!(
+            sections
+                .into_iter()
+                .all(|section| section.route().primary().is_none())
+        );
+        assert_eq!(Route::Backup.title(), "Backup");
+        assert_eq!(Route::Recovery.title(), "Recovery");
+    }
+
+    #[test]
+    fn settings_surfaces_have_closed_privacy_safe_screen_ids() {
+        assert_eq!(settings_screen_id(SettingsSection::Hub), "settings-hub");
+        assert_eq!(
+            settings_screen_id(SettingsSection::Security),
+            "settings-security"
+        );
+        assert_eq!(
+            settings_screen_id(SettingsSection::Backup),
+            "settings-backup"
+        );
+        assert_eq!(
+            settings_screen_id(SettingsSection::Recovery),
+            "settings-recovery"
+        );
+        assert_eq!(
+            settings_screen_id(SettingsSection::Preferences),
+            "settings-preferences"
+        );
+        assert_eq!(settings_screen_id(SettingsSection::About), "settings-about");
     }
 
     #[test]
@@ -11955,10 +11936,10 @@ mod tests {
         let account = protected_account_placeholder(&networks).expect("selected network");
 
         assert_eq!(account.network_id, "undeployed");
-        assert_eq!(account.source, "unavailable");
+        assert_eq!(account.source, WalletAccountSource::Unavailable);
         assert!(account.account_id.is_none());
         assert!(account.addresses.is_empty());
-        assert_eq!(account.sync.state, "unavailable");
+        assert_eq!(account.sync.state, WalletSyncState::Unavailable);
         assert!(!has_protected_account(&account));
         assert!(protected_receive_addresses(&account).is_none());
     }
@@ -11976,11 +11957,11 @@ mod tests {
             }],
         };
         let mut account = protected_account_placeholder(&networks).expect("selected network");
-        account.source = "simulated".to_owned();
+        account.source = WalletAccountSource::Simulated;
         account.addresses = vec![
             WalletAddressView {
                 kind: "unshielded".to_owned(),
-                value: "mn_addr_fixture".to_owned(),
+                value: "mn_addr_undeployed1fixture".to_owned(),
             },
             WalletAddressView {
                 kind: "shielded".to_owned(),
@@ -12015,14 +11996,38 @@ mod tests {
         );
         assert_eq!(grouped_address_preview("mn_addr_short"), "mn_a ddr_ shor t");
     }
-
     #[test]
-    fn initial_account_read_never_enters_locked_custody() {
-        assert!(!account_read_is_noninteractive("Uninitialized"));
-        assert!(!account_read_is_noninteractive("Locked"));
-        assert!(account_read_is_noninteractive("Unlocked"));
+    fn account_read_distinguishes_empty_locked_and_orphaned_custody() {
+        let cases = [
+            (
+                "Uninitialized",
+                WalletAccountPortError::NotFound,
+                Some(false),
+            ),
+            (
+                "Locked",
+                WalletAccountPortError::ProtectionLocked,
+                Some(false),
+            ),
+            ("Unlocked", WalletAccountPortError::NotFound, Some(false)),
+            (
+                "Uninitialized",
+                WalletAccountPortError::ProtectionNotInitialized,
+                Some(true),
+            ),
+            (
+                "Unlocked",
+                WalletAccountPortError::ProtectionNotInitialized,
+                None,
+            ),
+        ];
+        for (state, error, expected) in cases {
+            assert_eq!(
+                account_placeholder_recovery_required(state, &WalletAccountError::Port(error)),
+                expected
+            );
+        }
     }
-
     #[test]
     fn complete_recovery_feedback_reports_only_bounded_counts() {
         let summary = CompleteWalletRecoverySummary {
@@ -12037,6 +12042,30 @@ mod tests {
             "Recovered 3 protected key(s), 2 DID record(s), and 1 credential(s)."
         );
         assert!(!complete_recovery_message(&summary).contains("profile_test"));
+    }
+
+    #[test]
+    fn complete_recovery_future_version_guidance_is_actionable_and_payload_free() {
+        let message = portable_backup_recovery_error_message(
+            &oxid_wallet_application::WalletPortableBackupUseCaseError::Operation(
+                oxid_wallet_application::WalletPortableBackupPortError::UnsupportedVersion,
+            ),
+        );
+        assert_eq!(
+            message,
+            "This backup appears to use a newer format. Update Oxid and try again. If it still fails, check the file."
+        );
+    }
+
+    #[test]
+    fn complete_recovery_other_errors_keep_their_existing_message() {
+        let error = oxid_wallet_application::WalletPortableBackupUseCaseError::Operation(
+            oxid_wallet_application::WalletPortableBackupPortError::InvalidPackage,
+        );
+        assert_eq!(
+            portable_backup_recovery_error_message(&error),
+            error.to_string()
+        );
     }
 
     #[test]
@@ -12269,6 +12298,34 @@ mod tests {
     }
 
     #[test]
+    fn presentation_terminal_copy_names_safe_next_actions() {
+        let mut presentation = presentation_with_candidates(Vec::new());
+
+        presentation.state = "succeeded".to_owned();
+        presentation.presentation_generated = true;
+        presentation.verifier_validated = true;
+        assert_eq!(
+            presentation_terminal_copy(&presentation),
+            Some(
+                "Presentation complete. The verifier confirmed the proof. You can safely return to Documents or preview a new request."
+            )
+        );
+
+        presentation.state = "failed".to_owned();
+        presentation.presentation_generated = false;
+        presentation.verifier_validated = false;
+        assert_eq!(
+            presentation_terminal_copy(&presentation),
+            Some(
+                "Presentation failed. No presentation or vp_token was generated. Review the message above, then preview a new request."
+            )
+        );
+
+        presentation.state = "awaiting_consent".to_owned();
+        assert_eq!(presentation_terminal_copy(&presentation), None);
+    }
+
+    #[test]
     fn atomic_units_are_rendered_without_floating_point_loss() {
         assert_eq!(ui::format_atomic_units("5000000", 6), "5");
         assert_eq!(ui::format_atomic_units("12000000000000000", 15), "12");
@@ -12338,7 +12395,7 @@ mod tests {
     }
 
     fn selected_realm_status(
-        account_state: &str,
+        account_state: WalletSyncState,
         dust: WalletDustSyncView,
         shielded: WalletShieldedSyncView,
     ) -> SelectedWalletRealmSyncView {
@@ -12349,11 +12406,11 @@ mod tests {
                 network_name: "Standalone".to_owned(),
                 network_environment: "development".to_owned(),
                 account_id: Some("account_1".to_owned()),
-                source: "live".to_owned(),
+                source: WalletAccountSource::Live,
                 addresses: Vec::new(),
                 balances: Vec::new(),
                 sync: WalletSyncStatusView {
-                    state: account_state.to_owned(),
+                    state: account_state,
                     current_cursor: Some(2),
                     target_cursor: Some(2),
                     chain_tip_height: Some(5_255),
@@ -12437,14 +12494,14 @@ mod tests {
     fn account_sync_card_combines_progress_without_event_count_copy() {
         let dust = dust_status("syncing", Some(0), Some(2));
         let shielded = shielded_status("syncing", Some(2), Some(2));
-        let realm = selected_realm_status("synced", dust.clone(), shielded.clone());
+        let realm = selected_realm_status(WalletSyncState::Synced, dust.clone(), shielded.clone());
 
         assert_eq!(selected_realm_sync_state(&realm), "syncing");
         assert_eq!(selected_realm_sync_progress(&realm), Some(66));
         assert!(!dust_sync_note(&dust).contains("event"));
         assert!(!shielded_sync_note(&shielded).contains("event"));
         let synced = selected_realm_status(
-            "synced",
+            WalletSyncState::Synced,
             dust_status("synced", Some(2), Some(2)),
             shielded_status("synced", Some(2), Some(2)),
         );
@@ -12479,7 +12536,7 @@ mod tests {
     #[test]
     fn selected_realm_provenance_is_public_and_endpoint_free() {
         let realm = selected_realm_status(
-            "synced",
+            WalletSyncState::Synced,
             dust_status("synced", Some(2), Some(2)),
             shielded_status("synced", Some(2), Some(2)),
         );
@@ -12521,6 +12578,40 @@ mod tests {
         );
         assert!(night_display_to_atomic_units("-1").is_err());
         assert!(night_display_to_atomic_units("1.2.3").is_err());
+    }
+
+    #[test]
+    fn receive_exports_require_a_valid_address_for_the_selected_kind_and_network() {
+        const UNSHIELDED: &str =
+            "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
+        const SHIELDED: &str = concat!(
+            "mn_shield-addr_devnet1p99fzfvf2z2q05zaaqzml8laccfd8uhzm9t2jewxggyr65tj4dp4g",
+            "cfv7e04ka0x7qeajljmln7za5d4edntjxncx4q0uh6gkkj706ggme77n"
+        );
+
+        assert!(receive_address_is_exportable(
+            "unshielded",
+            "undeployed",
+            UNSHIELDED
+        ));
+        assert!(receive_address_is_exportable(
+            "shielded", "devnet", SHIELDED
+        ));
+        assert!(!receive_address_is_exportable(
+            "unshielded",
+            "undeployed",
+            "not a valid address"
+        ));
+        assert!(!receive_address_is_exportable(
+            "unshielded",
+            "preprod",
+            UNSHIELDED
+        ));
+        assert!(!receive_address_is_exportable(
+            "shielded",
+            "undeployed",
+            UNSHIELDED
+        ));
     }
 
     #[test]
@@ -12575,6 +12666,9 @@ mod tests {
 
     #[test]
     fn secret_mode_defaults_masked_and_ignores_stale_timeouts() {
+        assert_eq!(SECRET_MODE_REVEAL_MINUTES, 10);
+        assert_eq!(SECRET_MODE_REVEAL_DURATION_LABEL, "10 minutes");
+        assert_eq!(SECRET_MODE_REVEAL_TIMEOUT, Duration::from_secs(10 * 60));
         let mut state = SecretModeState::default();
         assert!(state.masked);
 
@@ -12589,182 +12683,6 @@ mod tests {
         state.timeout(second_generation);
         assert!(state.masked);
     }
-
-    fn dust_registration_preview(state: &str) -> WalletDustRegistrationPreviewView {
-        WalletDustRegistrationPreviewView {
-            draft_id: "dustreg_do_not_render".to_owned(),
-            authorization_challenge: "dustauth_do_not_render".to_owned(),
-            network_id: "undeployed".to_owned(),
-            account_id: "account_do_not_render".to_owned(),
-            registered_night: WalletDustRegistrationAssetView {
-                asset_id: "midnight:night".to_owned(),
-                symbol: "NIGHT".to_owned(),
-                decimals: 6,
-                atomic_units: "12500000".to_owned(),
-            },
-            input_count: 2,
-            maximum_fee_allowance: WalletDustRegistrationAssetView {
-                asset_id: "midnight:dust".to_owned(),
-                symbol: "DUST".to_owned(),
-                decimals: 15,
-                atomic_units: "2500000000000000".to_owned(),
-            },
-            fee_state: "requires_balancing".to_owned(),
-            expires_at_millis: 1_700_000_000_000,
-            state: state.to_owned(),
-            authorization_ready: state == "prepared",
-            submission_ready: state == "authorized",
-        }
-    }
-
-    fn dust_registration_status(state: &str) -> WalletDustRegistrationSubmissionStatusView {
-        WalletDustRegistrationSubmissionStatusView {
-            draft_id: "dustreg_do_not_render".to_owned(),
-            state: state.to_owned(),
-            transaction_id: Some("transaction_do_not_render".to_owned()),
-            block_id: Some("block_do_not_render".to_owned()),
-            fee: Some(WalletDustRegistrationAssetView {
-                asset_id: "midnight:dust".to_owned(),
-                symbol: "DUST".to_owned(),
-                decimals: 15,
-                atomic_units: "100000000000000".to_owned(),
-            }),
-            mode: Some("live".to_owned()),
-            registration_observation: if state == "included" {
-                "included".to_owned()
-            } else {
-                "not_observed".to_owned()
-            },
-            dust_readiness: if state == "included" {
-                "requires_synchronization".to_owned()
-            } else {
-                "not_established".to_owned()
-            },
-            cancellation_allowed: matches!(state, "running" | "cancellation_requested"),
-            reconciliation_allowed: matches!(state, "broadcasting" | "outcome_unknown"),
-        }
-    }
-
-    #[test]
-    fn dust_registration_has_explicit_accessible_actions() {
-        assert_eq!(
-            DUST_REGISTRATION_CARD_ACCESSIBLE_LABEL,
-            "Protected DUST registration"
-        );
-        assert_eq!(
-            DUST_REGISTRATION_AUTHORIZE_ACCESSIBLE_LABEL,
-            "Authorize DUST registration"
-        );
-        assert_eq!(
-            DUST_REGISTRATION_SUBMIT_ACCESSIBLE_LABEL,
-            "Register on Midnight"
-        );
-        assert_eq!(
-            DUST_REGISTRATION_RECONCILE_ACCESSIBLE_LABEL,
-            "Reconcile DUST registration with Midnight"
-        );
-    }
-
-    #[test]
-    fn dust_registration_never_starts_or_confirms_implicitly() {
-        assert!(matches!(
-            initial_dust_registration_panel_state(),
-            DustRegistrationPanelState::Idle
-        ));
-        let preview = dust_registration_preview("prepared");
-        let declined = authorize_dust_registration_confirmation(&preview, false);
-        let submit_declined = submit_dust_registration_confirmation(&preview, false);
-        assert!(!declined.confirmed);
-        assert!(!submit_declined.confirmed);
-        assert_eq!(declined.title, "Authorize DUST registration");
-        assert_eq!(submit_declined.title, "Register on Midnight");
-    }
-
-    #[test]
-    fn dust_registration_gates_locked_unsynchronized_and_unavailable_accounts() {
-        assert_eq!(
-            dust_registration_availability(false, true, true, false),
-            DustRegistrationAvailability::ProtectionLocked
-        );
-        assert_eq!(
-            dust_registration_action_label(DustRegistrationAvailability::ProtectionLocked),
-            "Unlock wallet to register"
-        );
-        assert_eq!(
-            dust_registration_availability(true, false, true, false),
-            DustRegistrationAvailability::AccountNotDerived
-        );
-        assert_eq!(
-            dust_registration_availability(true, true, false, false),
-            DustRegistrationAvailability::AccountNotSynchronized
-        );
-        assert_eq!(
-            dust_registration_action_label(DustRegistrationAvailability::AccountNotSynchronized),
-            "Sync NIGHT before registration"
-        );
-        assert_eq!(
-            dust_registration_availability(true, true, true, true),
-            DustRegistrationAvailability::Unavailable
-        );
-        assert!(
-            dust_registration_availability_note(DustRegistrationAvailability::Unavailable)
-                .expect("unavailable note")
-                .contains("unavailable")
-        );
-    }
-
-    #[test]
-    fn dust_registration_review_and_status_are_public_aggregate_only() {
-        let preview = dust_registration_preview("prepared");
-        let review = format!("{:?}", dust_registration_review(&preview));
-        let confirmation = authorize_dust_registration_confirmation(&preview, true);
-        let status = DustRegistrationPublicStatus::from(&dust_registration_status("broadcasting"));
-        let public_status = format!("{status:?}");
-
-        assert!(review.contains("12.5 NIGHT"));
-        assert!(review.contains("2.5 DUST"));
-        assert!(!review.contains(&preview.draft_id));
-        assert!(!review.contains(&preview.authorization_challenge));
-        assert!(!review.contains(&preview.account_id));
-        assert!(!confirmation.summary.contains(&preview.draft_id));
-        assert!(
-            !confirmation
-                .summary
-                .contains(&preview.authorization_challenge)
-        );
-        assert!(!public_status.contains("transaction_do_not_render"));
-        assert!(!public_status.contains("block_do_not_render"));
-        assert!(!public_status.contains("100000000000000"));
-    }
-
-    #[test]
-    fn dust_registration_state_machine_is_distinct_from_transfer_and_truthful_after_inclusion() {
-        assert_ne!(
-            std::any::type_name::<DustRegistrationPanelState>(),
-            std::any::type_name::<TransferPanelState>()
-        );
-        assert!(matches!(
-            dust_registration_retry_state(Box::new(dust_registration_preview("authorized"))),
-            DustRegistrationPanelState::Authorized(_)
-        ));
-        assert!(matches!(
-            dust_registration_state_from_status(
-                Box::new(dust_registration_preview("submitted")),
-                &dust_registration_status("included"),
-                None,
-            ),
-            DustRegistrationPanelState::Registered(_)
-        ));
-        assert_eq!(
-            dust_registration_observation_label("included"),
-            "DUST key registered"
-        );
-        assert_eq!(
-            dust_registration_readiness_label("requires_synchronization"),
-            "Waiting for spendable DUST — requires DUST synchronization"
-        );
-    }
-
     #[test]
     fn did_creation_requires_explicit_rearming_and_confirmation() {
         let mut creation = DidCreationState::Ready;
@@ -12823,6 +12741,55 @@ mod tests {
             .expect("credential issuance consent attributes");
         assert!(issuance_consent.contains("oninput:"));
         assert!(!issuance_consent.contains("onchange:"));
+    }
+
+    #[test]
+    fn identity_surfaces_expose_privacy_safe_automation_and_primitive_contracts() {
+        let source = include_str!("lib.rs");
+        let rendered_source = source
+            .split("\n#[cfg(test)]\nmod tests {")
+            .next()
+            .expect("production source precedes tests");
+        let primitive_source = include_str!("identity_primitives.rs");
+        let rendered_primitive_source = primitive_source
+            .split("\n#[cfg(test)]\nmod tests {")
+            .next()
+            .expect("production primitive source precedes tests");
+        let credential_inventory_source = include_str!("credential_inventory.rs");
+        let contract_source = format!(
+            "{rendered_source}\n{rendered_primitive_source}\n{credential_inventory_source}"
+        );
+
+        for required in [
+            "identity-document-inventory",
+            "identity-document-item-{item_index}",
+            "identity-document-detail",
+            "credential-inventory-card",
+            "Back to documents",
+            "identity-issuance-review",
+            "identity-presentation-review",
+            "identity-presentation-document-{index}",
+            "data-review-state",
+            "\"CredentialCard\"",
+            "\"IssuerIdentityBlock\"",
+            "\"PredicateRow\"",
+            "\"StatusPill\"",
+            "\"Stepper\"",
+            "\"ConsentChecklist\"",
+            "\"Sheet\"",
+            "\"EmptyState\"",
+        ] {
+            assert!(
+                contract_source.contains(required),
+                "missing identity presentation contract: {required}",
+            );
+        }
+
+        let accessible_choice =
+            "aria_label: \"Use {candidate.display_name}, matching document {ordinal}\"";
+        assert!(rendered_source.contains(accessible_choice));
+        assert!(!rendered_source.contains("aria_label: \"Use {candidate.display_name} issued by"));
+        assert!(!rendered_source.contains("issued by {candidate.issuer}, credential"));
     }
 
     #[test]
@@ -12894,6 +12861,24 @@ mod tests {
     }
 
     #[test]
+    fn imported_offer_cleanup_preserves_newer_sanitized_feedback() {
+        let mut imported = Some(IMPORTED_CREDENTIAL_OFFER_NOTICE.to_owned());
+        clear_imported_credential_offer_notice(&mut imported);
+        assert!(imported.is_none());
+
+        let mut terminal = Some(
+            CredentialIssuanceTerminalError::ProtocolUnavailable
+                .message()
+                .to_owned(),
+        );
+        clear_imported_credential_offer_notice(&mut terminal);
+        assert_eq!(
+            terminal.as_deref(),
+            Some(CredentialIssuanceTerminalError::ProtocolUnavailable.message())
+        );
+    }
+
+    #[test]
     fn credential_decision_admission_is_single_flight_and_has_distinct_busy_copy() {
         let mut action = CredentialIssuanceAction::Idle;
         assert!(begin_credential_issuance_action_value(
@@ -12914,28 +12899,5 @@ mod tests {
             CredentialIssuanceAction::Refusing,
         ));
         assert_eq!(credential_issuance_action_label(action), "Refusing offer…");
-    }
-
-    #[test]
-    fn dust_registration_unknown_outcomes_require_reconciliation() {
-        let status = dust_registration_status("outcome_unknown");
-        match dust_registration_state_from_status(
-            Box::new(dust_registration_preview("submitting")),
-            &status,
-            Some("outcome unknown".to_owned()),
-        ) {
-            DustRegistrationPanelState::Pending {
-                status,
-                reconciling,
-                operation_error,
-                ..
-            } => {
-                assert!(status.reconciliation_allowed);
-                assert!(!status.cancellation_allowed);
-                assert!(!reconciling);
-                assert_eq!(operation_error.as_deref(), Some("outcome unknown"));
-            }
-            _ => panic!("unknown outcome must remain pending"),
-        }
     }
 }

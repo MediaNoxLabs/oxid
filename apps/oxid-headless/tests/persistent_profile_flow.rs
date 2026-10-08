@@ -4,17 +4,23 @@
 
 use std::{
     fs,
-    io::{BufRead as _, BufReader, Write as _},
+    io::{self, BufRead as _, BufReader, Write as _},
     net::TcpListener,
     path::PathBuf,
-    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
-    sync::atomic::{AtomicU64, Ordering},
+    process::{Child, ChildStdin, Command, Stdio},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc::{self, Receiver},
+    },
     thread,
+    time::{Duration, Instant},
 };
 
 use futures::{SinkExt as _, StreamExt as _};
+#[cfg(feature = "development-did-approval-fixture")]
 use oxid_adapter_openid4vci::standalone_credential_offer;
 use serde_json::{Value, json};
+use tokio::sync::oneshot;
 use tokio_tungstenite::{
     accept_hdr_async,
     tungstenite::{
@@ -25,11 +31,18 @@ use tokio_tungstenite::{
 };
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+// Crypto fixtures exceeded 30 seconds under parallel test load.
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
+// Slow status responses share this wall-clock budget; 200 fast replies also cap polling.
+const SHIELDED_SYNC_TIMEOUT: Duration = Duration::from_secs(120);
+// A successful quit should exit promptly; do not spend the response budget again.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
 
 struct ProcessHarness {
     child: Child,
-    input: ChildStdin,
-    output: BufReader<ChildStdout>,
+    input: Option<ChildStdin>,
+    responses: Receiver<Result<String, (io::ErrorKind, Option<i32>)>>,
+    reaped: bool,
 }
 
 impl ProcessHarness {
@@ -38,7 +51,28 @@ impl ProcessHarness {
     }
 
     fn spawn_with_environment(store_path: &PathBuf, environment: &[(&str, &str)]) -> Self {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+        Self::spawn_executable_with_environment(
+            env!("CARGO_BIN_EXE_oxid-headless"),
+            store_path,
+            environment,
+        )
+    }
+
+    #[cfg(feature = "development-did-approval-fixture")]
+    fn spawn_with_development_did_approval(store_path: &PathBuf) -> Self {
+        Self::spawn_executable_with_environment(
+            env!("CARGO_BIN_EXE_oxid-headless-development-did-approval-fixture"),
+            store_path,
+            &[],
+        )
+    }
+
+    fn spawn_executable_with_environment(
+        executable: &str,
+        store_path: &PathBuf,
+        environment: &[(&str, &str)],
+    ) -> Self {
+        let mut command = Command::new(executable);
         command
             .env("OXID_PROFILE_STORE_PATH", store_path)
             .env(
@@ -74,28 +108,81 @@ impl ProcessHarness {
             .spawn()
             .expect("headless wallet should start");
         let input = child.stdin.take().expect("stdin should be piped");
-        let output = BufReader::new(child.stdout.take().expect("stdout should be piped"));
+        let output = child.stdout.take().expect("stdout should be piped");
+        let (response_sender, responses) = mpsc::sync_channel(1);
+        // Detach the reader so timeout cleanup never waits on inherited stdout.
+        let _ = thread::spawn(move || {
+            let mut output = BufReader::new(output);
+            loop {
+                let mut line = String::new();
+                match output.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        if response_sender.send(Ok(line)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = response_sender.send(Err((error.kind(), error.raw_os_error())));
+                        break;
+                    }
+                }
+            }
+        });
 
         Self {
             child,
-            input,
-            output,
+            input: Some(input),
+            responses,
+            reaped: false,
         }
     }
 
     fn request(&mut self, request: Value) -> Value {
-        serde_json::to_writer(&mut self.input, &request).expect("request should serialize");
-        self.input
+        self.request_with_timeout(request, RESPONSE_TIMEOUT, "response timeout")
+    }
+
+    fn request_with_timeout(
+        &mut self,
+        request: Value,
+        timeout: Duration,
+        timeout_context: &str,
+    ) -> Value {
+        let input = self
+            .input
+            .as_mut()
+            .expect("request input should remain open");
+        serde_json::to_writer(&mut *input, &request).expect("request should serialize");
+        input
             .write_all(b"\n")
-            .and_then(|()| self.input.flush())
+            .and_then(|()| input.flush())
             .expect("request should be written");
 
-        let mut line = String::new();
-        self.output
-            .read_line(&mut line)
-            .expect("response should be readable");
-        assert!(!line.is_empty(), "headless wallet ended before responding");
+        let line = match self.responses.recv_timeout(timeout) {
+            Ok(Ok(line)) => line,
+            Ok(Err((kind, os_code))) => {
+                self.stop_child();
+                panic!("response should be readable: {kind} (OS code {os_code:?})");
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                self.stop_child();
+                panic!("headless wallet did not respond before the {timeout_context}");
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                self.stop_child();
+                panic!("headless wallet ended before responding");
+            }
+        };
         serde_json::from_str(&line).expect("response should be JSON")
+    }
+
+    fn stop_child(&mut self) {
+        if self.reaped {
+            return;
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.reaped = true;
     }
 
     fn quit(mut self) {
@@ -106,30 +193,54 @@ impl ProcessHarness {
             "params": {}
         }));
         assert_eq!(response["ok"], true);
-        assert!(
-            self.child
-                .wait()
-                .expect("headless wallet should exit")
-                .success()
-        );
+        drop(self.input.take());
+        let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
+        let status = loop {
+            if let Some(status) = self.child.try_wait().expect("headless wallet should exit") {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                self.stop_child();
+                panic!("headless wallet did not exit before the shutdown timeout");
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        self.reaped = true;
+        assert!(status.success());
+    }
+}
+
+impl Drop for ProcessHarness {
+    fn drop(&mut self) {
+        self.stop_child();
     }
 }
 
 fn wait_for_shielded_sync(process: &mut ProcessHarness, prefix: &str) -> Value {
+    let deadline = Instant::now() + SHIELDED_SYNC_TIMEOUT;
     for attempt in 0..200 {
-        let response = process.request(json!({
-            "protocol": "oxid.headless.v1",
-            "id": format!("{prefix}-{attempt}"),
-            "method": "wallet.shielded.sync.status",
-            "params": {}
-        }));
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "shielded worker exceeded its deadline"
+        );
+        let response = process.request_with_timeout(
+            json!({
+                "protocol": "oxid.headless.v1",
+                "id": format!("{prefix}-{attempt}"),
+                "method": "wallet.shielded.sync.status",
+                "params": {}
+            }),
+            remaining,
+            "shielded worker deadline",
+        );
         let state = response["result"]["shieldedSync"]["state"]
             .as_str()
             .expect("shielded status should have a state");
         if !matches!(state, "syncing" | "cached") {
             return response;
         }
-        thread::sleep(std::time::Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(10));
     }
     panic!("shielded worker did not reach a terminal state");
 }
@@ -165,150 +276,174 @@ fn spawn_indexer_fixture(
         runtime.block_on(async move {
             let listener =
                 tokio::net::TcpListener::from_std(listener).expect("listener should convert");
-            let (stream, _) = listener
-                .accept()
-                .await
-                .expect("fixture should accept client");
-            let callback = |request: &Request, mut response: Response| {
+            loop {
+                let (stream, _) = listener
+                    .accept()
+                    .await
+                    .expect("fixture should accept client");
+                let callback = |request: &Request, mut response: Response| {
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get("Sec-WebSocket-Protocol")
+                            .and_then(|value| value.to_str().ok()),
+                        Some("graphql-transport-ws")
+                    );
+                    response.headers_mut().insert(
+                        "Sec-WebSocket-Protocol",
+                        HeaderValue::from_static("graphql-transport-ws"),
+                    );
+                    Ok(response)
+                };
+                let mut socket = accept_hdr_async(stream, callback)
+                    .await
+                    .expect("fixture handshake should succeed");
+                let init = socket
+                    .next()
+                    .await
+                    .expect("connection init should arrive")
+                    .expect("connection init should be readable");
+                let init: Value = serde_json::from_str(
+                    init.into_text()
+                        .expect("connection init should be text")
+                        .as_str(),
+                )
+                .expect("connection init should be JSON");
+                assert_eq!(init["type"], "connection_init");
+                socket
+                    .send(Message::Text(
+                        json!({ "type": "connection_ack" }).to_string().into(),
+                    ))
+                    .await
+                    .expect("ack should send");
+
+                let subscribe = socket
+                    .next()
+                    .await
+                    .expect("subscribe should arrive")
+                    .expect("subscribe should be readable");
+                let subscribe: Value = serde_json::from_str(
+                    subscribe
+                        .into_text()
+                        .expect("subscribe should be text")
+                        .as_str(),
+                )
+                .expect("subscribe should be JSON");
+                assert_eq!(subscribe["type"], "subscribe");
+
+                let Some(subscribed_address) = subscribe["payload"]["variables"]["address"]
+                    .as_str()
+                    .map(str::to_owned)
+                else {
+                    assert!(
+                        subscribe["payload"]["query"]
+                            .as_str()
+                            .is_some_and(|query| query.contains("zswapLedgerEvents"))
+                    );
+                    socket
+                        .send(Message::Text(
+                            json!({ "type": "complete", "id": "oxid-shielded" })
+                                .to_string()
+                                .into(),
+                        ))
+                        .await
+                        .expect("shielded completion should send");
+                    continue;
+                };
+                assert!(subscribed_address.starts_with("mn_addr_undeployed1"));
                 assert_eq!(
-                    request
-                        .headers()
-                        .get("Sec-WebSocket-Protocol")
-                        .and_then(|value| value.to_str().ok()),
-                    Some("graphql-transport-ws")
+                    subscribe["payload"]["variables"]["transactionId"],
+                    expected_transaction_id
                 );
-                response.headers_mut().insert(
-                    "Sec-WebSocket-Protocol",
-                    HeaderValue::from_static("graphql-transport-ws"),
-                );
-                Ok(response)
-            };
-            let mut socket = accept_hdr_async(stream, callback)
-                .await
-                .expect("fixture handshake should succeed");
-            let init = socket
-                .next()
-                .await
-                .expect("connection init should arrive")
-                .expect("connection init should be readable");
-            let init: Value = serde_json::from_str(
-                init.into_text()
-                    .expect("connection init should be text")
-                    .as_str(),
-            )
-            .expect("connection init should be JSON");
-            assert_eq!(init["type"], "connection_init");
-            socket
-                .send(Message::Text(
-                    json!({ "type": "connection_ack" }).to_string().into(),
-                ))
-                .await
-                .expect("ack should send");
+                assert!(subscribe["payload"]["query"].as_str().is_some_and(|query| {
+                    query.contains("highestTransactionId")
+                        && query.contains("fees")
+                        && query.contains("paidFees")
+                }));
 
-            let subscribe = socket
-                .next()
-                .await
-                .expect("subscribe should arrive")
-                .expect("subscribe should be readable");
-            let subscribe: Value = serde_json::from_str(
-                subscribe
-                    .into_text()
-                    .expect("subscribe should be text")
-                    .as_str(),
-            )
-            .expect("subscribe should be JSON");
-            assert_eq!(subscribe["type"], "subscribe");
-            let subscribed_address = subscribe["payload"]["variables"]["address"]
-                .as_str()
-                .expect("subscription address should be a string")
-                .to_owned();
-            assert!(subscribed_address.starts_with("mn_addr_undeployed1"));
-            assert_eq!(
-                subscribe["payload"]["variables"]["transactionId"],
-                expected_transaction_id
-            );
-            assert!(subscribe["payload"]["query"].as_str().is_some_and(|query| {
-                query.contains("highestTransactionId")
-                    && query.contains("fees")
-                    && query.contains("paidFees")
-            }));
+                let target = if incremental { 3 } else { 2 };
+                send_fixture_event(
+                    &mut socket,
+                    json!({
+                        "unshieldedTransactions": {
+                            "__typename": "UnshieldedTransactionsProgress",
+                            "highestTransactionId": target
+                        }
+                    }),
+                )
+                .await;
+                if incremental {
+                    send_fixture_event(
+                        &mut socket,
+                        transaction_event(
+                            3,
+                            "33",
+                            43,
+                            vec![utxo(&subscribed_address, "cc", 0, "1000000")],
+                            vec![utxo(&subscribed_address, "bb", 0, "2500000")],
+                            "SUCCESS",
+                            "900",
+                        ),
+                    )
+                    .await;
+                } else {
+                    send_fixture_event(
+                        &mut socket,
+                        transaction_event(
+                            1,
+                            "11",
+                            41,
+                            vec![utxo(&subscribed_address, "aa", 0, "3000000")],
+                            vec![],
+                            "SUCCESS",
+                            "100",
+                        ),
+                    )
+                    .await;
+                    send_fixture_event(
+                        &mut socket,
+                        transaction_event(
+                            2,
+                            "22",
+                            42,
+                            vec![utxo(&subscribed_address, "bb", 0, "2500000")],
+                            vec![utxo(&subscribed_address, "aa", 0, "3000000")],
+                            "SUCCESS",
+                            "1500",
+                        ),
+                    )
+                    .await;
+                }
 
-            let target = if incremental { 3 } else { 2 };
-            send_fixture_event(
-                &mut socket,
-                json!({
-                    "unshieldedTransactions": {
-                        "__typename": "UnshieldedTransactionsProgress",
-                        "highestTransactionId": target
-                    }
-                }),
-            )
-            .await;
-            if incremental {
-                send_fixture_event(
-                    &mut socket,
-                    transaction_event(
-                        3,
-                        "33",
-                        43,
-                        vec![utxo(&subscribed_address, "cc", 0, "1000000")],
-                        vec![utxo(&subscribed_address, "bb", 0, "2500000")],
-                        "SUCCESS",
-                        "900",
-                    ),
+                let complete = socket
+                    .next()
+                    .await
+                    .expect("complete should arrive")
+                    .expect("complete should be readable");
+                let complete: Value = serde_json::from_str(
+                    complete
+                        .into_text()
+                        .expect("complete should be text")
+                        .as_str(),
                 )
-                .await;
-            } else {
-                send_fixture_event(
-                    &mut socket,
-                    transaction_event(
-                        1,
-                        "11",
-                        41,
-                        vec![utxo(&subscribed_address, "aa", 0, "3000000")],
-                        vec![],
-                        "SUCCESS",
-                        "100",
-                    ),
-                )
-                .await;
-                send_fixture_event(
-                    &mut socket,
-                    transaction_event(
-                        2,
-                        "22",
-                        42,
-                        vec![utxo(&subscribed_address, "bb", 0, "2500000")],
-                        vec![utxo(&subscribed_address, "aa", 0, "3000000")],
-                        "SUCCESS",
-                        "1500",
-                    ),
-                )
-                .await;
+                .expect("complete should be JSON");
+                assert_eq!(complete["type"], "complete");
+                break;
             }
-
-            let complete = socket
-                .next()
-                .await
-                .expect("complete should arrive")
-                .expect("complete should be readable");
-            let complete: Value = serde_json::from_str(
-                complete
-                    .into_text()
-                    .expect("complete should be text")
-                    .as_str(),
-            )
-            .expect("complete should be JSON");
-            assert_eq!(complete["type"], "complete");
         });
     });
     (endpoint, handle)
 }
 
+struct ShieldedFixtureControl {
+    refresh_starts: Receiver<i64>,
+    release_rebuild: oneshot::Sender<()>,
+}
+
 // The upstream handshake callback fixes a large HTTP response as its error
 // type; this test must use that signature to negotiate the GraphQL subprotocol.
 #[allow(clippy::result_large_err)]
-fn spawn_shielded_indexer_fixture() -> (String, thread::JoinHandle<()>) {
+fn spawn_shielded_indexer_fixture() -> (String, ShieldedFixtureControl, thread::JoinHandle<()>) {
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .expect("shielded fixture listener should bind");
     listener
@@ -319,6 +454,8 @@ fn spawn_shielded_indexer_fixture() -> (String, thread::JoinHandle<()>) {
         .expect("shielded fixture address should be available")
         .port();
     let endpoint = format!("ws://127.0.0.1:{port}/api/v4/graphql/ws");
+    let (refresh_started, refresh_starts) = mpsc::channel();
+    let (release_rebuild, rebuild_release) = oneshot::channel();
     let handle = thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
@@ -328,6 +465,7 @@ fn spawn_shielded_indexer_fixture() -> (String, thread::JoinHandle<()>) {
         runtime.block_on(async move {
             let listener =
                 tokio::net::TcpListener::from_std(listener).expect("listener should convert");
+            let mut rebuild_release = Some(rebuild_release);
             for expected_start in [0, 3] {
                 let (stream, _) = listener
                     .accept()
@@ -373,13 +511,27 @@ fn spawn_shielded_indexer_fixture() -> (String, thread::JoinHandle<()>) {
                         .as_str(),
                 )
                 .expect("subscribe should be JSON");
-                assert_eq!(subscribe["payload"]["variables"]["id"], expected_start);
+                let observed_start = subscribe["payload"]["variables"]["id"]
+                    .as_i64()
+                    .expect("shielded subscription cursor should be an integer");
                 assert!(
                     subscribe["payload"]["query"]
                         .as_str()
                         .is_some_and(|query| query.contains("zswapLedgerEvents"))
                 );
+                refresh_started
+                    .send(observed_start)
+                    .expect("test should still observe the shielded refresh");
                 if expected_start == 0 {
+                    tokio::time::timeout(
+                        Duration::from_secs(2),
+                        rebuild_release
+                            .take()
+                            .expect("rebuild release should be consumed exactly once"),
+                    )
+                    .await
+                    .expect("test should release the initial rebuild event before idle timeout")
+                    .expect("test should release the initial rebuild event");
                     socket
                         .send(Message::Text(
                             json!({
@@ -415,7 +567,14 @@ fn spawn_shielded_indexer_fixture() -> (String, thread::JoinHandle<()>) {
             }
         });
     });
-    (endpoint, handle)
+    (
+        endpoint,
+        ShieldedFixtureControl {
+            refresh_starts,
+            release_rebuild,
+        },
+        handle,
+    )
 }
 
 async fn send_fixture_event<S>(socket: &mut tokio_tungstenite::WebSocketStream<S>, data: Value)
@@ -689,10 +848,11 @@ fn executable_restores_profile_selection_in_a_new_process() {
     second_process.quit();
 }
 
+#[cfg(feature = "development-did-approval-fixture")]
 #[test]
 fn executable_restores_encrypted_credentials_in_a_new_process() {
     let store = TestStore::new();
-    let mut first_process = ProcessHarness::spawn(&store.path);
+    let mut first_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let created = first_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-create-profile",
         "method": "wallet.profile.create", "params": { "displayName": "Credential owner" }
@@ -818,7 +978,7 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         32
     );
 
-    let mut second_process = ProcessHarness::spawn(&store.path);
+    let mut second_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let listed = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-list-restored",
         "method": "credential.list", "params": {}
@@ -891,7 +1051,7 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         restored_presentation["result"]["presentation"]["candidates"][0]["credentialId"]
             .as_str()
             .expect("restored presentation candidate");
-    let rejected_presentation = second_process.request(json!({
+    let presentation_after_restart = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-presentation-restored-accept",
         "method": "credential.presentation.accept",
         "params": {
@@ -902,10 +1062,10 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
         }
     }));
     assert_eq!(
-        rejected_presentation["error"]["code"],
-        "holder_not_authorized"
+        presentation_after_restart["error"]["code"],
+        "proof_unavailable"
     );
-    assert!(!rejected_presentation.to_string().contains("vp_token"));
+    assert!(!presentation_after_restart.to_string().contains("vp_token"));
     let deleted = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-delete-restored",
         "method": "credential.delete",
@@ -924,7 +1084,7 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
     assert_eq!(removed_disclosure["error"]["code"], "not_found");
     second_process.quit();
 
-    let mut third_process = ProcessHarness::spawn(&store.path);
+    let mut third_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let removed_after_restart = third_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "credential-list-after-delete",
         "method": "credential.list", "params": {}
@@ -938,10 +1098,11 @@ fn executable_restores_encrypted_credentials_in_a_new_process() {
     third_process.quit();
 }
 
+#[cfg(feature = "development-did-approval-fixture")]
 #[test]
 fn executable_restores_standalone_vault_accounting_and_claim_replay_in_a_new_process() {
     let store = TestStore::new();
-    let mut first_process = ProcessHarness::spawn(&store.path);
+    let mut first_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let created = first_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "vault-persist-profile",
         "method": "wallet.profile.create", "params": { "displayName": "Vault owner" }
@@ -1075,7 +1236,7 @@ fn executable_restores_standalone_vault_accounting_and_claim_replay_in_a_new_pro
         assert!(!stored.contains(forbidden));
     }
 
-    let mut second_process = ProcessHarness::spawn(&store.path);
+    let mut second_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let restored = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "vault-persist-restored",
         "method": "vault.locks.list", "params": {}
@@ -1107,7 +1268,7 @@ fn executable_restores_standalone_vault_accounting_and_claim_replay_in_a_new_pro
     assert_eq!(next_lock["result"]["lock"]["lockId"], 1);
     second_process.quit();
 
-    let mut third_process = ProcessHarness::spawn(&store.path);
+    let mut third_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let final_state = third_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "vault-persist-final",
         "method": "vault.locks.list", "params": {}
@@ -1188,10 +1349,11 @@ fn executable_restores_profile_scoped_did_inventory_in_a_new_process() {
     second_process.quit();
 }
 
+#[cfg(feature = "development-did-approval-fixture")]
 #[test]
-fn executable_restores_managed_did_as_public_but_not_owned_after_restart() {
+fn executable_restores_managed_did_ownership_after_restart() {
     let store = TestStore::new();
-    let mut first_process = ProcessHarness::spawn(&store.path);
+    let mut first_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let created = first_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "managed-create-profile",
         "method": "wallet.profile.create", "params": { "displayName": "Managed DID" }
@@ -1218,7 +1380,10 @@ fn executable_restores_managed_did_as_public_but_not_owned_after_restart() {
         "protocol": "oxid.headless.v1", "id": "managed-did-create",
         "method": "did.create", "params": {}
     }));
-    assert_eq!(created_did["ok"], true);
+    assert_eq!(
+        created_did["ok"], true,
+        "unexpected response: {created_did}"
+    );
     let did = created_did["result"]["didRecord"]["document"]["id"]
         .as_str()
         .expect("created did")
@@ -1228,15 +1393,10 @@ fn executable_restores_managed_did_as_public_but_not_owned_after_restart() {
         "method": "did.update", "params": {
             "operation": "addAlsoKnownAs",
             "did": did,
-            "value": "https://example.test/managed",
-            "confirmation": {
-                "title": "Update DID document",
-                "summary": "Authorize the visible alias change",
-                "confirmed": true
-            }
+            "value": "https://example.test/managed"
         }
     }));
-    assert_eq!(updated["ok"], true);
+    assert_eq!(updated["ok"], true, "unexpected response: {updated}");
     assert_eq!(
         updated["result"]["didRecord"]["documentMetadata"]["versionId"],
         "standalone-2"
@@ -1244,7 +1404,7 @@ fn executable_restores_managed_did_as_public_but_not_owned_after_restart() {
     assert!(!updated.to_string().contains("key_"));
     first_process.quit();
 
-    let mut second_process = ProcessHarness::spawn(&store.path);
+    let mut second_process = ProcessHarness::spawn_with_development_did_approval(&store.path);
     let restored = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "managed-did-get",
         "method": "did.get", "params": { "did": did }
@@ -1254,23 +1414,21 @@ fn executable_restores_managed_did_as_public_but_not_owned_after_restart() {
         restored["result"]["didRecord"]["document"]["alsoKnownAs"][0],
         "https://example.test/managed"
     );
-    let unmanaged = second_process.request(json!({
+    let updated_after_restart = second_process.request(json!({
         "protocol": "oxid.headless.v1", "id": "managed-did-update-after-restart",
         "method": "did.update", "params": {
             "operation": "removeAlsoKnownAs",
             "did": did,
-            "value": "https://example.test/managed",
-            "confirmation": {
-                "title": "Update DID document",
-                "summary": "Authorize the visible alias change",
-                "confirmed": true
-            }
+            "value": "https://example.test/managed"
         }
     }));
-    assert_eq!(unmanaged["error"]["code"], "failed_precondition");
     assert_eq!(
-        unmanaged["error"]["message"],
-        "DID is not managed by the current protected session"
+        updated_after_restart["ok"], true,
+        "unexpected response: {updated_after_restart}"
+    );
+    assert_eq!(
+        updated_after_restart["result"]["didRecord"]["document"]["alsoKnownAs"],
+        json!([])
     );
     second_process.quit();
 }
@@ -1349,23 +1507,25 @@ fn executable_restores_public_submission_status_in_a_new_process() {
         .as_str()
         .expect("authorization challenge should be public")
         .to_owned();
-    assert_eq!(
-        first_process.request(json!({
-            "protocol": "oxid.headless.v1",
-            "id": "submission-authorize",
-            "method": "wallet.transaction.authorize_unshielded",
-            "params": {
-                "draftId": draft_id,
-                "authorizationChallenge": challenge,
-                "confirmation": {
-                    "title": "Authorize NIGHT transfer",
-                    "summary": "Authorize the persistent submission fixture",
-                    "confirmed": true
-                }
+    let denied_authorization = first_process.request(json!({
+        "protocol": "oxid.headless.v1",
+        "id": "submission-authorize",
+        "method": "wallet.transaction.authorize_unshielded",
+        "params": {
+            "draftId": draft_id,
+            "authorizationChallenge": challenge,
+            "confirmation": {
+                "title": "Authorize NIGHT transfer",
+                "summary": "Public input is not trusted approval",
+                "confirmed": true
             }
-        }))["ok"],
-        true
+        }
+    }));
+    assert_eq!(
+        denied_authorization["error"]["code"],
+        "approval_unavailable"
     );
+    assert!(denied_authorization.get("result").is_none());
     let submitted = first_process.request(json!({
         "protocol": "oxid.headless.v1",
         "id": "submission-submit",
@@ -1379,12 +1539,58 @@ fn executable_restores_public_submission_status_in_a_new_process() {
             }
         }
     }));
-    assert_eq!(submitted["ok"], true);
-    let transaction_id = submitted["result"]["submission"]["transactionId"]
-        .as_str()
-        .expect("transaction identifier should be public")
-        .to_owned();
+    assert_eq!(submitted["ok"], false);
+    assert!(submitted.get("result").is_none());
+    let before_restart = first_process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "denied-history",
+        "method": "wallet.transaction.submission_history", "params": {}
+    }));
+    let before_restart = before_restart["result"]["submissions"]
+        .as_array()
+        .expect("public pending draft status is returned");
+    assert_eq!(before_restart.len(), 1);
+    assert_eq!(before_restart[0]["draftId"], draft_id);
+    assert_eq!(before_restart[0]["state"], "not_started");
+    assert!(before_restart[0]["transactionId"].is_null());
     first_process.quit();
+
+    // A public included-receipt fixture exercises restart reads independently
+    // of authority to originate a transaction. Trusted positive movement is
+    // covered by the explicit in-memory composition in capability_contracts.
+    let transaction_id = "ab".repeat(32);
+    let journal = json!({
+        "version": 2,
+        "records": [{
+            "profile_id": profile_id,
+            "network_id": "undeployed",
+            "draft_id": draft_id,
+            "planning_fingerprint": "12".repeat(32),
+            "expires_at_millis": 1_700_003_600_000_u64,
+            "updated_at_millis": 1_700_000_000_000_u64,
+            "fee_specks": "42",
+            "transaction_hash": transaction_id,
+            "anchor_block_hash": "34".repeat(32),
+            "block_hash": "cd".repeat(32),
+            "block_height": 42,
+            "state": "included",
+            "mode": "simulated"
+        }]
+    });
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut fixture = options
+        .open(journal_path)
+        .expect("private receipt fixture opens");
+    serde_json::to_writer(&mut fixture, &journal).expect("public receipt fixture serializes");
+    fixture
+        .sync_all()
+        .expect("receipt fixture is durable before restart");
+    drop(fixture);
 
     let mut second_process = ProcessHarness::spawn_with_environment(&store.path, &environment);
     let history = second_process.request(json!({
@@ -1660,7 +1866,7 @@ fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
     let shielded_path_text = shielded_path
         .to_str()
         .expect("fixture checkpoint path is Unicode");
-    let (endpoint, server) = spawn_shielded_indexer_fixture();
+    let (endpoint, fixture, server) = spawn_shielded_indexer_fixture();
     let mut process = ProcessHarness::spawn_with_environment(
         &store.path,
         &[
@@ -1707,6 +1913,17 @@ fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
         }))["result"]["shieldedSync"]["state"],
         "syncing"
     );
+    assert_eq!(
+        fixture
+            .refresh_starts
+            .recv_timeout(Duration::from_secs(15))
+            .expect("rebuild subscription should reach the fixture"),
+        0
+    );
+    fixture
+        .release_rebuild
+        .send(())
+        .expect("fixture should still be waiting to deliver the rebuild event");
     let rebuilt = wait_for_shielded_sync(&mut process, "shielded-live-rebuild");
     let rebuilt = &rebuilt["result"]["shieldedSync"];
     assert_eq!(rebuilt["state"], "synced");
@@ -1731,6 +1948,13 @@ fn executable_rebuilds_resumes_and_refreshes_a_live_shielded_checkpoint() {
             "params": {}
         }))["result"]["shieldedSync"]["state"],
         "syncing"
+    );
+    assert_eq!(
+        fixture
+            .refresh_starts
+            .recv_timeout(Duration::from_secs(15))
+            .expect("refresh subscription should reach the fixture before status is observed"),
+        3
     );
     let refreshed = wait_for_shielded_sync(&mut process, "shielded-live-current");
     let refreshed = &refreshed["result"]["shieldedSync"];
@@ -1856,7 +2080,7 @@ fn executable_exercises_the_standalone_protected_key_flow() {
         Some(64)
     );
 
-    for (algorithm, key_ref, signature_hex_length) in [
+    for (algorithm, key_ref, _signature_hex_length) in [
         ("ed25519", &ed25519_ref, 128),
         ("p256", &p256_ref, 128),
         ("jubjub", &jubjub_ref, 192),
@@ -1875,12 +2099,7 @@ fn executable_exercises_the_standalone_protected_key_flow() {
                 }
             }
         }));
-        assert_eq!(signed["ok"], true, "unexpected response: {signed}");
-        assert_eq!(signed["result"]["algorithm"], algorithm);
-        assert_eq!(
-            signed["result"]["signatureHex"].as_str().map(str::len),
-            Some(signature_hex_length)
-        );
+        assert_eq!(signed["error"]["code"], "approval_unavailable");
     }
 
     assert_eq!(
@@ -1906,7 +2125,7 @@ fn executable_exercises_the_standalone_protected_key_flow() {
             }
         }
     }));
-    assert_eq!(locked_sign["error"]["code"], "wallet_locked");
+    assert_eq!(locked_sign["error"]["code"], "approval_unavailable");
     assert_eq!(
         process.request(json!({
             "protocol": "oxid.headless.v1",
@@ -1930,7 +2149,7 @@ fn executable_exercises_the_standalone_protected_key_flow() {
             }
         }
     }));
-    assert_eq!(denied_delete["error"]["code"], "confirmation_required");
+    assert_eq!(denied_delete["error"]["code"], "approval_unavailable");
     for key_ref in [&ed25519_ref, &p256_ref, &jubjub_ref] {
         let deleted = process.request(json!({
             "protocol": "oxid.headless.v1",
@@ -1945,7 +2164,7 @@ fn executable_exercises_the_standalone_protected_key_flow() {
                 }
             }
         }));
-        assert_eq!(deleted["result"]["deleted"], true);
+        assert_eq!(deleted["error"]["code"], "approval_unavailable");
     }
     assert_eq!(
         process.request(json!({
@@ -1953,10 +2172,124 @@ fn executable_exercises_the_standalone_protected_key_flow() {
             "id": "list",
             "method": "wallet.key.list",
             "params": {}
-        }))["result"]["keys"],
-        json!([])
+        }))["result"]["keys"]
+            .as_array()
+            .map(Vec::len),
+        Some(3)
     );
     process.quit();
+}
+
+#[test]
+fn executable_restores_two_wallet_profiles_in_one_realm_after_restart() {
+    let store = TestStore::new();
+    let mut first_process = ProcessHarness::spawn(&store.path);
+    let mut expected = Vec::new();
+
+    for (suffix, display_name) in [("first", "First wallet"), ("second", "Second wallet")] {
+        let created = first_process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": format!("create-{suffix}"),
+            "method": "wallet.profile.create",
+            "params": { "displayName": display_name }
+        }));
+        let profile_id = created["result"]["profile"]["id"]
+            .as_str()
+            .expect("created profile should have an identifier")
+            .to_owned();
+        assert_eq!(
+            first_process.request(json!({
+                "protocol": "oxid.headless.v1",
+                "id": format!("select-{suffix}"),
+                "method": "wallet.profile.select",
+                "params": { "profileId": &profile_id }
+            }))["ok"],
+            true
+        );
+        assert_eq!(
+            first_process.request(json!({
+                "protocol": "oxid.headless.v1",
+                "id": format!("initialize-{suffix}"),
+                "method": "wallet.security.initialize",
+                "params": {}
+            }))["result"]["security"]["state"],
+            "unlocked"
+        );
+        let derived = first_process.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": format!("derive-{suffix}"),
+            "method": "wallet.account.derive",
+            "params": { "accountIndex": 0, "addressIndex": 0 }
+        }));
+        assert_eq!(derived["ok"], true, "unexpected response: {derived}");
+        expected.push((
+            profile_id,
+            derived["result"]["account"]["receiveAddress"]["value"]
+                .as_str()
+                .expect("public address should be returned")
+                .to_owned(),
+            derived["result"]["account"]["transactionKeyRef"]
+                .as_str()
+                .expect("opaque transaction key should be returned")
+                .to_owned(),
+        ));
+    }
+    assert_ne!(expected[0].1, expected[1].1);
+    first_process.quit();
+
+    let mut restarted = ProcessHarness::spawn(&store.path);
+    for (profile_id, address, key_reference) in expected {
+        assert_eq!(
+            restarted.request(json!({
+                "protocol": "oxid.headless.v1",
+                "id": format!("restart-select-{profile_id}"),
+                "method": "wallet.profile.select",
+                "params": { "profileId": &profile_id }
+            }))["ok"],
+            true
+        );
+        assert_eq!(
+            restarted.request(json!({
+                "protocol": "oxid.headless.v1",
+                "id": format!("restart-status-{profile_id}"),
+                "method": "wallet.security.status",
+                "params": {}
+            }))["result"]["security"]["state"],
+            "unlocked"
+        );
+        let derived = restarted.request(json!({
+            "protocol": "oxid.headless.v1",
+            "id": format!("restart-derive-{profile_id}"),
+            "method": "wallet.account.derive",
+            "params": { "accountIndex": 0, "addressIndex": 0 }
+        }));
+        assert_eq!(
+            derived["result"]["account"]["receiveAddress"]["value"],
+            address
+        );
+        assert_eq!(
+            derived["result"]["account"]["transactionKeyRef"],
+            key_reference
+        );
+        assert_eq!(
+            restarted.request(json!({
+                "protocol": "oxid.headless.v1",
+                "id": format!("restart-sign-{profile_id}"),
+                "method": "wallet.key.sign",
+                "params": {
+                    "keyRef": &key_reference,
+                    "payloadHex": "726573746172742d636f6e74696e75697479",
+                    "confirmation": {
+                        "title": "Verify restart continuity",
+                        "summary": "Authorize a bounded public regression-test payload",
+                        "confirmed": true
+                    }
+                }
+            }))["error"]["code"],
+            "approval_unavailable"
+        );
+    }
+    restarted.quit();
 }
 
 #[test]
@@ -2065,12 +2398,7 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
             }
         }
     }));
-    assert_eq!(signed["result"]["algorithm"], "secp256k1-schnorr");
-    assert!(
-        signed["result"]["signatureHex"]
-            .as_str()
-            .is_some_and(|signature| signature.len() == 128)
-    );
+    assert_eq!(signed["error"]["code"], "approval_unavailable");
     assert_eq!(
         process.request(json!({
             "protocol": "oxid.headless.v1",
@@ -2088,8 +2416,6 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
         "params": {}
     }));
     assert_eq!(before["result"]["account"]["source"], "simulated");
-    assert_eq!(before["result"]["account"]["sync"]["state"], "never_synced");
-    assert_eq!(before["result"]["account"]["balances"], json!([]));
     assert_eq!(
         before["result"]["account"]["addresses"][0]["value"],
         derived_address
@@ -2100,8 +2426,38 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
         "method": "wallet.balance.snapshot",
         "params": {}
     }));
-    assert_eq!(balances_before["result"]["balances"], json!([]));
-    assert_eq!(balances_before["result"]["sync"]["state"], "never_synced");
+    let automatic_sync_state = before["result"]["account"]["sync"]["state"]
+        .as_str()
+        .expect("account sync state should be present");
+    match automatic_sync_state {
+        "never_synced" => assert_eq!(before["result"]["account"]["balances"], json!([])),
+        "synced" => {
+            assert_eq!(
+                before["result"]["account"]["balances"][0]["atomicUnits"],
+                "12000000000000000"
+            );
+            assert_eq!(
+                before["result"]["account"]["balances"][1]["atomicUnits"],
+                "5000000"
+            );
+        }
+        state => panic!("unexpected automatic account sync state: {state}"),
+    }
+    match balances_before["result"]["sync"]["state"].as_str() {
+        Some("never_synced") => assert_eq!(balances_before["result"]["balances"], json!([])),
+        Some("synced") => {
+            assert_eq!(
+                balances_before["result"]["balances"][0]["atomicUnits"],
+                "12000000000000000"
+            );
+            assert_eq!(
+                balances_before["result"]["balances"][1]["atomicUnits"],
+                "5000000"
+            );
+        }
+        Some(state) => panic!("unexpected automatic balance sync state: {state}"),
+        None => panic!("balance sync state should be present"),
+    }
 
     let connected = process.request(json!({
         "protocol": "oxid.headless.v1",
@@ -2196,12 +2552,16 @@ fn executable_exercises_midnight_account_parity_without_secret_input() {
             }
         }
     }));
-    assert_eq!(authorized["ok"], true, "unexpected response: {authorized}");
-    assert_eq!(authorized["result"]["transfer"]["state"], "authorized");
-    assert_eq!(authorized["result"]["transfer"]["proofRequired"], true);
-    assert_eq!(authorized["result"]["transfer"]["submissionReady"], true);
+    assert_eq!(authorized["error"]["code"], "approval_unavailable");
+    assert!(authorized.get("result").is_none());
     assert!(!authorized.to_string().contains("signatureHex"));
     assert!(!authorized.to_string().contains("transactionHex"));
+    let retained = process.request(json!({
+        "protocol": "oxid.headless.v1", "id": "denied-transfer-draft",
+        "method": "wallet.transaction.draft", "params": { "draftId": draft_id }
+    }));
+    assert_eq!(retained["result"]["transfer"]["state"], "prepared");
+    assert_eq!(retained["result"]["transfer"]["submissionReady"], false);
 
     let preprod = process.request(json!({
         "protocol": "oxid.headless.v1",
@@ -2286,13 +2646,13 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
         true
     );
 
-    let watch_only = process.request(json!({
+    let unbound = process.request(json!({
         "protocol": "oxid.headless.v1",
-        "id": "live-watch-only",
+        "id": "live-unbound",
         "method": "wallet.account.get",
         "params": {}
     }));
-    assert_eq!(watch_only["error"]["code"], "capability_unavailable");
+    assert_eq!(unbound["error"]["code"], "not_found");
     assert_eq!(
         process.request(json!({
             "protocol": "oxid.headless.v1",
@@ -2387,7 +2747,7 @@ fn executable_derives_and_syncs_a_live_account_without_secret_input() {
 }
 
 #[test]
-fn executable_does_not_restore_a_public_account_checkpoint_without_custody() {
+fn executable_restores_a_public_account_checkpoint_with_custody() {
     let store = TestStore::new();
     let checkpoint_path = store.root.join("midnight-account-checkpoints.json");
     let checkpoint = checkpoint_path
@@ -2476,14 +2836,12 @@ fn executable_does_not_restore_a_public_account_checkpoint_without_custody() {
         "method": "wallet.account.get",
         "params": {}
     }));
-    assert_eq!(restored["error"]["code"], "failed_precondition");
-
-    let refused_sync = second.request(json!({
-        "protocol": "oxid.headless.v1",
-        "id": "checkpoint-sync-without-custody",
-        "method": "wallet.connect",
-        "params": {}
-    }));
-    assert_eq!(refused_sync["error"]["code"], "failed_precondition");
+    assert_eq!(restored["ok"], true, "unexpected response: {restored}");
+    assert_eq!(restored["result"]["account"]["source"], "cached");
+    assert_eq!(restored["result"]["account"]["sync"]["currentCursor"], 2);
+    assert_eq!(
+        restored["result"]["account"]["balances"][0]["atomicUnits"],
+        "2500000"
+    );
     second.quit();
 }

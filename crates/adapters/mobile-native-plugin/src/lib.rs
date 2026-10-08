@@ -2,7 +2,12 @@
 
 #![deny(unsafe_code)]
 
-#[cfg(any(target_os = "android", test))]
+pub mod custody;
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use std::sync::Mutex;
+
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 use serde::Deserialize;
 #[cfg(any(target_os = "ios", target_os = "android", test))]
 use serde::Serialize;
@@ -176,81 +181,16 @@ fn backup_export_request(
 /// profile, secret, or caller-controlled reason crosses this operation.
 #[cfg(target_os = "ios")]
 pub fn authorize_recovery_phrase_reveal_json() -> Result<String, NativeBridgeError> {
-    call_ios_custody("authorize_recovery_phrase_reveal", "", None, None)
+    let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
+    authorizeRecoveryPhraseRevealJson(&plugin).map_err(|_| NativeBridgeError::Failed)
 }
 
 #[cfg(target_os = "android")]
 pub fn authorize_recovery_phrase_reveal_json() -> Result<String, NativeBridgeError> {
-    call_android_custody("authorize_recovery_phrase_reveal", "", None, None)
+    call_android_activity("oxidAuthorizeRecoveryPhraseRevealJson")
 }
 
-#[cfg(target_os = "ios")]
-pub fn inspect_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
-    call_ios_custody("inspect", profile_id, None, None)
-}
-
-#[cfg(target_os = "android")]
-pub fn inspect_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
-    call_android_custody("inspect", profile_id, None, None)
-}
-
-#[cfg(target_os = "ios")]
-pub fn initialize_custody_json(
-    profile_id: &str,
-    payload: &str,
-) -> Result<String, NativeBridgeError> {
-    call_ios_custody("initialize", profile_id, Some(payload), None)
-}
-
-#[cfg(target_os = "android")]
-pub fn initialize_custody_json(
-    profile_id: &str,
-    payload: &str,
-) -> Result<String, NativeBridgeError> {
-    call_android_custody("initialize", profile_id, Some(payload), None)
-}
-
-#[cfg(target_os = "ios")]
-pub fn unlock_custody_json(profile_id: &str, reason: &str) -> Result<String, NativeBridgeError> {
-    call_ios_custody("unlock", profile_id, None, Some(reason))
-}
-
-#[cfg(target_os = "android")]
-pub fn unlock_custody_json(profile_id: &str, reason: &str) -> Result<String, NativeBridgeError> {
-    call_android_custody("unlock", profile_id, None, Some(reason))
-}
-
-#[cfg(target_os = "ios")]
-pub fn load_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
-    call_ios_custody("load", profile_id, None, None)
-}
-
-#[cfg(target_os = "android")]
-pub fn load_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
-    call_android_custody("load", profile_id, None, None)
-}
-
-#[cfg(target_os = "ios")]
-pub fn save_custody_json(profile_id: &str, payload: &str) -> Result<String, NativeBridgeError> {
-    call_ios_custody("save", profile_id, Some(payload), None)
-}
-
-#[cfg(target_os = "android")]
-pub fn save_custody_json(profile_id: &str, payload: &str) -> Result<String, NativeBridgeError> {
-    call_android_custody("save", profile_id, Some(payload), None)
-}
-
-#[cfg(target_os = "ios")]
-pub fn lock_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
-    call_ios_custody("lock", profile_id, None, None)
-}
-
-#[cfg(target_os = "android")]
-pub fn lock_custody_json(profile_id: &str) -> Result<String, NativeBridgeError> {
-    call_android_custody("lock", profile_id, None, None)
-}
-
-#[cfg(any(target_os = "ios", target_os = "android", test))]
+#[cfg(test)]
 #[derive(Serialize)]
 struct NativeCustodyRequest<'a> {
     operation: &'a str,
@@ -262,7 +202,7 @@ struct NativeCustodyRequest<'a> {
     reason: Option<&'a str>,
 }
 
-#[cfg(any(target_os = "ios", target_os = "android", test))]
+#[cfg(test)]
 fn custody_request(
     operation: &str,
     profile_id: &str,
@@ -279,27 +219,428 @@ fn custody_request(
     .map_err(|_| NativeBridgeError::Failed)
 }
 
-#[cfg(target_os = "ios")]
-fn call_ios_custody(
-    operation: &str,
-    profile_id: &str,
-    payload: Option<&str>,
-    reason: Option<&str>,
-) -> Result<String, NativeBridgeError> {
-    let request = custody_request(operation, profile_id, payload, reason)?;
-    let plugin = OxidMobilePlugin::new().map_err(|_| NativeBridgeError::Unavailable)?;
-    custodyJson(&plugin, request.to_string()).map_err(|_| NativeBridgeError::Failed)
+#[cfg(target_os = "android")]
+static ANDROID_CUSTODY_CALL: Mutex<()> = Mutex::new(());
+
+#[cfg(target_os = "android")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AndroidCustodyLength {
+    length: String,
+    generation: String,
 }
 
 #[cfg(target_os = "android")]
-fn call_android_custody(
-    operation: &str,
+#[derive(Serialize)]
+struct AndroidCustodyTakeRequest<'a> {
+    operation: &'a str,
+    profile_id: &'a str,
+    generation: String,
+}
+
+#[cfg(target_os = "android")]
+pub fn inspect_custody(profile_id: &str) -> Result<custody::CustodyState, custody::Error> {
+    let _call = ANDROID_CUSTODY_CALL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let control = call_android_activity_with_string("oxidCustodyInspectControl", profile_id)
+        .map_err(map_android_custody_bridge_error)?;
+    match custody::decode_reply(custody::Operation::Inspect, control.as_bytes(), None)? {
+        custody::Reply::Uninitialized => Ok(custody::CustodyState::Uninitialized),
+        custody::Reply::Locked(protection) => Ok(custody::CustodyState::Locked(protection)),
+        custody::Reply::Unlocked(protection) => Ok(custody::CustodyState::Unlocked(protection)),
+        _ => Err(custody::Error::Invalid),
+    }
+}
+
+#[cfg(target_os = "android")]
+pub fn initialize_custody(
     profile_id: &str,
-    payload: Option<&str>,
-    reason: Option<&str>,
-) -> Result<String, NativeBridgeError> {
-    let request = custody_request(operation, profile_id, payload, reason)?;
-    call_android_activity_with_string("oxidCustodyJson", &request)
+    bytes: &custody::CustodyBytes,
+) -> Result<custody::Protection, custody::Error> {
+    android_custody_input(
+        custody::Operation::Initialize,
+        "oxidCustodyInitializeControl",
+        profile_id,
+        bytes,
+    )
+}
+
+#[cfg(target_os = "android")]
+pub fn unlock_custody(
+    profile_id: &str,
+    reason: &str,
+) -> Result<custody::ProtectedCustody, custody::Error> {
+    receive_android_custody(custody::Operation::Unlock, profile_id, || {
+        call_android_activity_with_two_strings(
+            "oxidCustodyPrepareUnlockControl",
+            profile_id,
+            reason,
+        )
+    })
+}
+
+#[cfg(target_os = "android")]
+pub fn load_custody(profile_id: &str) -> Result<custody::ProtectedCustody, custody::Error> {
+    receive_android_custody(custody::Operation::Load, profile_id, || {
+        call_android_activity_with_string("oxidCustodyPrepareLoadControl", profile_id)
+    })
+}
+
+#[cfg(target_os = "android")]
+pub fn save_custody(
+    profile_id: &str,
+    bytes: &custody::CustodyBytes,
+) -> Result<custody::Protection, custody::Error> {
+    android_custody_input(
+        custody::Operation::Save,
+        "oxidCustodySaveControl",
+        profile_id,
+        bytes,
+    )
+}
+
+#[cfg(target_os = "android")]
+pub fn lock_custody(profile_id: &str) -> Result<custody::Protection, custody::Error> {
+    let _call = ANDROID_CUSTODY_CALL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let control = call_android_activity_with_string("oxidCustodyLockControl", profile_id)
+        .map_err(map_android_custody_bridge_error)?;
+    match custody::decode_reply(custody::Operation::Lock, control.as_bytes(), None)? {
+        custody::Reply::Locked(protection) => Ok(protection),
+        _ => Err(custody::Error::Invalid),
+    }
+}
+
+#[cfg(target_os = "android")]
+fn android_custody_input(
+    operation: custody::Operation,
+    method: &str,
+    profile_id: &str,
+    bytes: &custody::CustodyBytes,
+) -> Result<custody::Protection, custody::Error> {
+    let _call = ANDROID_CUSTODY_CALL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut control = Err(custody::Error::Failed);
+    let copy = custody::CustodyBytes::receive(bytes.as_bytes().len(), |source| {
+        source.copy_from_slice(bytes.as_bytes());
+        control = call_android_activity_with_direct_buffer(method, profile_id, source)
+            .map_err(map_android_custody_bridge_error);
+        Ok(source.len())
+    })?;
+    drop(copy);
+    let control = control?;
+    match custody::decode_reply(operation, control.as_bytes(), None)? {
+        custody::Reply::Stored(protection) => Ok(protection),
+        _ => Err(custody::Error::Invalid),
+    }
+}
+
+#[cfg(target_os = "android")]
+fn receive_android_custody(
+    operation: custody::Operation,
+    profile_id: &str,
+    prepare: impl FnOnce() -> Result<String, NativeBridgeError>,
+) -> Result<custody::ProtectedCustody, custody::Error> {
+    let _call = ANDROID_CUSTODY_CALL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let operation_name = match operation {
+        custody::Operation::Unlock => "unlock",
+        custody::Operation::Load => "load",
+        _ => return Err(custody::Error::Invalid),
+    };
+    let control = match prepare() {
+        Ok(control) => control,
+        Err(error) => {
+            let _ = call_android_activity("oxidCustodyDiscardPending");
+            return Err(map_android_custody_bridge_error(error));
+        }
+    };
+    if let Err(error) = custody::validate_material_control(operation, control.as_bytes()) {
+        let _ = call_android_activity("oxidCustodyDiscardPending");
+        return Err(error);
+    }
+    let received = (|| {
+        let value = call_android_activity("oxidCustodyPendingLengthJson")
+            .map_err(map_android_custody_bridge_error)?;
+        let metadata = serde_json::from_str::<AndroidCustodyLength>(&value)
+            .map_err(|_| custody::Error::Invalid)?;
+        let length = metadata
+            .length
+            .parse::<usize>()
+            .map_err(|_| custody::Error::Invalid)?;
+        let request = serde_json::to_string(&AndroidCustodyTakeRequest {
+            operation: operation_name,
+            profile_id,
+            generation: metadata.generation,
+        })
+        .map_err(|_| custody::Error::Failed)?;
+        custody::CustodyBytes::receive(length, |destination| {
+            let accepted = call_android_activity_with_string_and_direct_buffer(
+                "oxidCustodyTakePending",
+                &request,
+                destination,
+            )
+            .map_err(map_android_custody_bridge_error)?;
+            if accepted == "taken" {
+                Ok(destination.len())
+            } else {
+                Err(custody::Error::Invalid)
+            }
+        })
+    })();
+    let bytes = match received {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let _ = call_android_activity("oxidCustodyDiscardPending");
+            return Err(error);
+        }
+    };
+    match custody::decode_reply(operation, control.as_bytes(), Some(bytes))? {
+        custody::Reply::Material { protection, bytes } => {
+            Ok(custody::ProtectedCustody { protection, bytes })
+        }
+        _ => Err(custody::Error::Invalid),
+    }
+}
+
+#[cfg(target_os = "android")]
+const fn map_android_custody_bridge_error(error: NativeBridgeError) -> custody::Error {
+    match error {
+        NativeBridgeError::Unavailable => custody::Error::Unavailable,
+        NativeBridgeError::Failed => custody::Error::Failed,
+    }
+}
+
+#[cfg(target_os = "ios")]
+static IOS_CUSTODY_CALL: Mutex<()> = Mutex::new(());
+
+#[cfg(target_os = "ios")]
+#[derive(Serialize)]
+struct IosCustodyBufferRequest<'a> {
+    profile_id: &'a str,
+    address: String,
+    length: String,
+}
+
+#[cfg(target_os = "ios")]
+#[derive(Serialize)]
+struct IosCustodyUnlockRequest<'a> {
+    profile_id: &'a str,
+    reason: &'a str,
+}
+
+#[cfg(target_os = "ios")]
+#[derive(Serialize)]
+struct IosCustodyTakeRequest<'a> {
+    operation: &'a str,
+    profile_id: &'a str,
+    generation: String,
+    address: String,
+    length: String,
+}
+
+#[cfg(target_os = "ios")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IosCustodyLength {
+    length: String,
+    generation: String,
+}
+
+#[cfg(target_os = "ios")]
+fn ios_buffer_request(
+    profile_id: &str,
+    address: u64,
+    length: usize,
+) -> Result<String, custody::Error> {
+    serde_json::to_string(&IosCustodyBufferRequest {
+        profile_id,
+        address: address.to_string(),
+        length: length.to_string(),
+    })
+    .map_err(|_| custody::Error::Failed)
+}
+
+/// Secret-safe iOS custody transport. Only closed control JSON crosses as a
+/// string; custody is copied synchronously through a Rust-owned mutable buffer.
+#[cfg(target_os = "ios")]
+pub fn inspect_custody(profile_id: &str) -> Result<custody::CustodyState, custody::Error> {
+    let _call = IOS_CUSTODY_CALL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
+    let control = custodyInspectControl(&plugin, profile_id.to_owned())
+        .map_err(|_| custody::Error::Failed)?;
+    match custody::decode_reply(custody::Operation::Inspect, control.as_bytes(), None)? {
+        custody::Reply::Uninitialized => Ok(custody::CustodyState::Uninitialized),
+        custody::Reply::Locked(protection) => Ok(custody::CustodyState::Locked(protection)),
+        custody::Reply::Unlocked(protection) => Ok(custody::CustodyState::Unlocked(protection)),
+        _ => Err(custody::Error::Invalid),
+    }
+}
+
+#[cfg(target_os = "ios")]
+pub fn initialize_custody(
+    profile_id: &str,
+    bytes: &custody::CustodyBytes,
+) -> Result<custody::Protection, custody::Error> {
+    let _call = IOS_CUSTODY_CALL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
+    let request = ios_buffer_request(
+        profile_id,
+        bytes.as_bytes().as_ptr() as usize as u64,
+        bytes.as_bytes().len(),
+    )?;
+    let control = custodyInitializeControl(&plugin, request).map_err(|_| custody::Error::Failed)?;
+    match custody::decode_reply(custody::Operation::Initialize, control.as_bytes(), None)? {
+        custody::Reply::Stored(protection) => Ok(protection),
+        _ => Err(custody::Error::Invalid),
+    }
+}
+
+#[cfg(target_os = "ios")]
+pub fn unlock_custody(
+    profile_id: &str,
+    reason: &str,
+) -> Result<custody::ProtectedCustody, custody::Error> {
+    receive_ios_custody(custody::Operation::Unlock, profile_id, |plugin| {
+        let request = serde_json::to_string(&IosCustodyUnlockRequest { profile_id, reason })
+            .map_err(|_| "invalid request")?;
+        custodyPrepareUnlockControl(plugin, request)
+    })
+}
+
+#[cfg(target_os = "ios")]
+pub fn load_custody(profile_id: &str) -> Result<custody::ProtectedCustody, custody::Error> {
+    receive_ios_custody(custody::Operation::Load, profile_id, |plugin| {
+        custodyPrepareLoadControl(plugin, profile_id.to_owned())
+    })
+}
+
+#[cfg(target_os = "ios")]
+fn receive_ios_custody(
+    operation: custody::Operation,
+    profile_id: &str,
+    prepare: impl FnOnce(&OxidMobilePlugin) -> Result<String, &'static str>,
+) -> Result<custody::ProtectedCustody, custody::Error> {
+    let _call = IOS_CUSTODY_CALL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
+    let control = match prepare(&plugin) {
+        Ok(control) => control,
+        Err(_) => {
+            let _ = custodyDiscardPending(&plugin);
+            return Err(custody::Error::Failed);
+        }
+    };
+    let length = match custodyPendingLengthJson(&plugin)
+        .map_err(|_| custody::Error::Failed)
+        .and_then(|length| {
+            serde_json::from_str::<IosCustodyLength>(&length).map_err(|_| custody::Error::Invalid)
+        })
+        .and_then(|length| {
+            let generation = length
+                .generation
+                .parse::<u64>()
+                .map_err(|_| custody::Error::Invalid)?;
+            let length = length
+                .length
+                .parse::<usize>()
+                .map_err(|_| custody::Error::Invalid)?;
+            Ok((length, generation))
+        }) {
+        Ok(length) => length,
+        Err(error) => {
+            let _ = custodyDiscardPending(&plugin);
+            return Err(error);
+        }
+    };
+    let (length, generation) = length;
+    let bytes = if length == 0 {
+        None
+    } else {
+        let received = custody::CustodyBytes::receive(length, |destination| {
+            let operation = match operation {
+                custody::Operation::Unlock => "unlock",
+                custody::Operation::Load => "load",
+                _ => return Err(custody::Error::Invalid),
+            };
+            let request = serde_json::to_string(&IosCustodyTakeRequest {
+                operation,
+                profile_id,
+                generation: generation.to_string(),
+                address: (destination.as_mut_ptr() as usize as u64).to_string(),
+                length: destination.len().to_string(),
+            })
+            .map_err(|_| custody::Error::Failed)?;
+            let accepted =
+                custodyTakePending(&plugin, request).map_err(|_| custody::Error::Failed)?;
+            if accepted == "taken" {
+                Ok(destination.len())
+            } else {
+                Err(custody::Error::Invalid)
+            }
+        });
+        match received {
+            Ok(bytes) => Some(bytes),
+            Err(error) => {
+                let _ = custodyDiscardPending(&plugin);
+                return Err(error);
+            }
+        }
+    };
+    let reply = custody::decode_reply(operation, control.as_bytes(), bytes);
+    if reply.is_err() {
+        let _ = custodyDiscardPending(&plugin);
+    }
+    match reply? {
+        custody::Reply::Material { protection, bytes } => {
+            Ok(custody::ProtectedCustody { protection, bytes })
+        }
+        _ => Err(custody::Error::Invalid),
+    }
+}
+
+#[cfg(target_os = "ios")]
+pub fn save_custody(
+    profile_id: &str,
+    bytes: &custody::CustodyBytes,
+) -> Result<custody::Protection, custody::Error> {
+    let _call = IOS_CUSTODY_CALL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
+    let request = ios_buffer_request(
+        profile_id,
+        bytes.as_bytes().as_ptr() as usize as u64,
+        bytes.as_bytes().len(),
+    )?;
+    let control = custodySaveControl(&plugin, request).map_err(|_| custody::Error::Failed)?;
+    match custody::decode_reply(custody::Operation::Save, control.as_bytes(), None)? {
+        custody::Reply::Stored(protection) => Ok(protection),
+        _ => Err(custody::Error::Invalid),
+    }
+}
+
+#[cfg(target_os = "ios")]
+pub fn lock_custody(profile_id: &str) -> Result<custody::Protection, custody::Error> {
+    let _call = IOS_CUSTODY_CALL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let plugin = OxidMobilePlugin::new().map_err(|_| custody::Error::Unavailable)?;
+    let control =
+        custodyLockControl(&plugin, profile_id.to_owned()).map_err(|_| custody::Error::Failed)?;
+    match custody::decode_reply(custody::Operation::Lock, control.as_bytes(), None)? {
+        custody::Reply::Locked(protection) => Ok(protection),
+        _ => Err(custody::Error::Invalid),
+    }
 }
 
 /// Initializes every Android certificate-verifier runtime resolved by Oxid.
@@ -404,6 +745,77 @@ fn call_android_activity_with_string(
 }
 
 #[cfg(target_os = "android")]
+fn call_android_activity_with_two_strings(
+    method: &str,
+    first: &str,
+    second: &str,
+) -> Result<String, NativeBridgeError> {
+    manganis::android::with_activity(|environment, activity| {
+        let result = (|| {
+            let first = android_jni_result(environment, environment.new_string(first))?;
+            let second = android_jni_result(environment, environment.new_string(second))?;
+            let arguments = [
+                manganis::jni::objects::JValue::Object(first.as_ref()),
+                manganis::jni::objects::JValue::Object(second.as_ref()),
+            ];
+            let result = environment.call_method(
+                activity,
+                method,
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+                &arguments,
+            );
+            let result = android_jni_result(environment, result)?;
+            android_string(environment, result)
+        })();
+        Some(result)
+    })
+    .ok_or(NativeBridgeError::Unavailable)?
+}
+
+#[cfg(target_os = "android")]
+fn call_android_activity_with_direct_buffer(
+    method: &str,
+    profile_id: &str,
+    bytes: &mut [u8],
+) -> Result<String, NativeBridgeError> {
+    call_android_activity_with_string_and_direct_buffer(method, profile_id, bytes)
+}
+
+#[cfg(target_os = "android")]
+#[allow(unsafe_code)]
+fn call_android_activity_with_string_and_direct_buffer(
+    method: &str,
+    value: &str,
+    bytes: &mut [u8],
+) -> Result<String, NativeBridgeError> {
+    manganis::android::with_activity(|environment, activity| {
+        let result = (|| {
+            let value = android_jni_result(environment, environment.new_string(value))?;
+            // SAFETY: the synchronous JNI call cannot retain the direct buffer;
+            // Kotlin copies from or into exactly this bounded mutable slice and
+            // returns before the borrow ends.
+            let buffer =
+                unsafe { environment.new_direct_byte_buffer(bytes.as_mut_ptr(), bytes.len()) };
+            let buffer = android_jni_result(environment, buffer)?;
+            let arguments = [
+                manganis::jni::objects::JValue::Object(value.as_ref()),
+                manganis::jni::objects::JValue::Object(buffer.as_ref()),
+            ];
+            let result = environment.call_method(
+                activity,
+                method,
+                "(Ljava/lang/String;Ljava/nio/ByteBuffer;)Ljava/lang/String;",
+                &arguments,
+            );
+            let result = android_jni_result(environment, result)?;
+            android_string(environment, result)
+        })();
+        Some(result)
+    })
+    .ok_or(NativeBridgeError::Unavailable)?
+}
+
+#[cfg(target_os = "android")]
 fn call_android_activity_with_bool(method: &str, value: bool) -> Result<String, NativeBridgeError> {
     manganis::android::with_activity(|environment, activity| {
         let result = environment.call_method(
@@ -467,9 +879,12 @@ pub fn verify_android_jni_exception_recovery() -> Result<(), NativeBridgeError> 
 
 #[cfg(target_os = "ios")]
 use ios_bridge::{
-    OxidMobilePlugin, copyPublicReceiveAddress, custodyJson, setScreenPrivacy,
-    sharePublicReceiveAddress, startBackupExportJson, startBackupImportJson, startScanJson,
-    takeBackupDocumentResultJson, takeScanResultJson, timeoutScanJson,
+    OxidMobilePlugin, authorizeRecoveryPhraseRevealJson, copyPublicReceiveAddress,
+    custodyDiscardPending, custodyInitializeControl, custodyInspectControl, custodyLockControl,
+    custodyPendingLengthJson, custodyPrepareLoadControl, custodyPrepareUnlockControl,
+    custodySaveControl, custodyTakePending, setScreenPrivacy, sharePublicReceiveAddress,
+    startBackupExportJson, startBackupImportJson, startScanJson, takeBackupDocumentResultJson,
+    takeScanResultJson, timeoutScanJson,
 };
 
 #[cfg(target_os = "ios")]
@@ -487,7 +902,16 @@ mod ios_bridge {
         pub fn startBackupExportJson(this: &OxidMobilePlugin, request: String) -> String;
         pub fn startBackupImportJson(this: &OxidMobilePlugin) -> String;
         pub fn takeBackupDocumentResultJson(this: &OxidMobilePlugin) -> String;
-        pub fn custodyJson(this: &OxidMobilePlugin, request: String) -> String;
+        pub fn authorizeRecoveryPhraseRevealJson(this: &OxidMobilePlugin) -> String;
+        pub fn custodyInspectControl(this: &OxidMobilePlugin, profile_id: String) -> String;
+        pub fn custodyInitializeControl(this: &OxidMobilePlugin, request: String) -> String;
+        pub fn custodyPrepareUnlockControl(this: &OxidMobilePlugin, request: String) -> String;
+        pub fn custodyPrepareLoadControl(this: &OxidMobilePlugin, profile_id: String) -> String;
+        pub fn custodyPendingLengthJson(this: &OxidMobilePlugin) -> String;
+        pub fn custodyTakePending(this: &OxidMobilePlugin, request: String) -> String;
+        pub fn custodyDiscardPending(this: &OxidMobilePlugin) -> String;
+        pub fn custodySaveControl(this: &OxidMobilePlugin, request: String) -> String;
+        pub fn custodyLockControl(this: &OxidMobilePlugin, profile_id: String) -> String;
     }
 }
 
@@ -507,17 +931,76 @@ mod tests {
     #[test]
     fn native_phrase_authorization_accepts_only_the_payload_free_operation() {
         let ios = include_str!("../ios/Sources/OxidMobilePlugin.swift");
-        assert!(ios.contains("operation == \"authorize_recovery_phrase_reveal\""));
-        assert!(ios.contains("Set(body.keys) == [\"operation\"]"));
+        assert!(ios.contains("authorizeRecoveryPhraseRevealJson()"));
+        assert!(!ios.contains("@objc public func custodyJson"));
         assert!(ios.contains("Confirm to reveal your new wallet recovery phrase"));
 
         let android =
             include_str!("../android/src/main/kotlin/io/medianox/oxid/mobile/OxidMobilePlugin.kt");
-        assert!(android.contains("operation == \"authorize_recovery_phrase_reveal\""));
-        assert!(android.contains("setOf(\"operation\")"));
+        assert!(android.contains("authorizeRecoveryPhraseRevealJson()"));
+        assert!(!android.contains("fun custodyJson"));
         assert!(
             android.contains("Confirm the device credential to reveal your new recovery phrase")
         );
+    }
+
+    #[test]
+    fn ios_custody_uses_closed_control_and_mutable_bytes_without_legacy_secret_strings() {
+        let ios = include_str!("../ios/Sources/OxidMobilePlugin.swift");
+        let storage = include_str!("../../storage-mobile/src/lib.rs");
+        assert!(ios.contains("custodyInitializeControl"));
+        assert!(ios.contains("custodyTakePending"));
+        assert!(ios.contains("UnsafeMutableRawPointer"));
+        assert!(ios.contains("material.bytes.resetBytes"));
+        assert!(ios.contains("material.profileId == profileId"));
+        assert!(ios.contains("material.generation == expectedGeneration"));
+        assert!(!ios.contains("plaintext.base64EncodedString()"));
+        assert!(!ios.contains("Data(base64Encoded: payload)"));
+        assert!(storage.contains("return oxid_adapter_mobile_native::initialize_custody("));
+        assert!(storage.contains("return oxid_adapter_mobile_native::unlock_custody("));
+    }
+
+    #[test]
+    fn android_custody_uses_direct_mutable_bytes_without_legacy_secret_strings() {
+        let android =
+            include_str!("../android/src/main/kotlin/io/medianox/oxid/mobile/OxidMobilePlugin.kt");
+        let activity = include_str!("../../../../apps/oxid/android/MainActivity.kt");
+        let storage = include_str!("../../storage-mobile/src/lib.rs");
+        assert!(android.contains("source: ByteBuffer"));
+        assert!(android.contains("destination: ByteBuffer"));
+        assert!(android.contains("material.bytes.fill(0)"));
+        assert!(android.contains("material.profileId != profileId"));
+        assert!(android.contains("material.generation != expectedGeneration"));
+        assert!(android.contains("controlFromLegacy"));
+        assert!(!android.contains("private fun control(operation: String, legacy: String)"));
+        assert!(android.contains("put(\"length\", \"0\")"));
+        assert_eq!(
+            android
+                .matches(
+                    "try {\n            if (!validProfileId(profileId) || !validPlaintext(plaintext))"
+                )
+                .count(),
+            2
+        );
+        assert!(include_str!("lib.rs").contains(
+            "Err(error) => {\n            let _ = call_android_activity(\"oxidCustodyDiscardPending\")"
+        ));
+        assert!(
+            include_str!("lib.rs")
+                .contains("Err(_) => {\n            let _ = custodyDiscardPending(&plugin)")
+        );
+        assert!(!android.contains("Base64.encodeToString(plaintext"));
+        assert!(!activity.contains("oxidCustodyJson"));
+        assert!(!storage.contains("initialize_custody_json"));
+        assert!(!storage.contains("unlock_custody_json"));
+    }
+
+    #[test]
+    fn ios_privacy_overlay_is_removed_after_the_scene_becomes_active() {
+        let ios = include_str!("../ios/Sources/OxidMobilePlugin.swift");
+        assert!(ios.contains("UIScene.didActivateNotification"));
+        assert!(ios.contains("UIApplication.shared.applicationState == .active"));
+        assert!(ios.contains("removeOverlays()"));
     }
 
     #[test]

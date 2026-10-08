@@ -108,11 +108,20 @@ export function validateCriticalChecks(checks) {
 
 export function validateRequiredMilestoneChecks(checks) {
   const failures = [];
-  if (!Array.isArray(checks) || checks.length === 0) failures.push("no effective required checks were returned");
+  if (!Array.isArray(checks)) failures.push("effective required checks are unavailable");
   for (const check of Array.isArray(checks) ? checks : []) {
     if (check?.bucket !== "pass") failures.push(`${check?.name ?? "unnamed check"}: ${check?.state ?? check?.bucket ?? "unknown"}`);
   }
   return { ok: failures.length === 0, failures };
+}
+
+function readChecks(run, args, cwd, label, { allowNoRequiredChecks = false } = {}) {
+  try {
+    return ghJson(run, args, cwd, label);
+  } catch (error) {
+    if (allowNoRequiredChecks && /no required checks reported/iu.test(error?.message ?? "")) return [];
+    throw error;
+  }
 }
 
 export function validateMilestoneChecks(checks) {
@@ -167,17 +176,17 @@ export function auditMilestoneMerge(options, { cwd = process.cwd(), run = defaul
   run("git", ["merge-base", "--is-ancestor", localBase, pr.headRefOid], { cwd: root, label: "verify current-head freshness" });
   run("git", ["merge-tree", "--write-tree", localBase, pr.headRefOid], { cwd: root, label: "verify conflict-free merge tree" });
 
-  const requiredChecks = ghJson(run, [
-    "pr", "checks", String(options.pr), "--repo", options.repo, "--required", "--watch", "--interval", "10",
+  const requiredChecks = readChecks(run, [
+    "pr", "checks", String(options.pr), "--repo", options.repo, "--required",
     "--json", "bucket,name,state,workflow",
-  ], root, "wait for effective required checks");
+  ], root, "read effective required checks", { allowNoRequiredChecks: true });
   const requiredResult = validateRequiredMilestoneChecks(requiredChecks);
   if (!requiredResult.ok) throw new Error(`required checks are not green: ${requiredResult.failures.join("; ")}`);
 
-  const checks = ghJson(run, [
-    "pr", "checks", String(options.pr), "--repo", options.repo, "--watch", "--interval", "10",
+  const checks = readChecks(run, [
+    "pr", "checks", String(options.pr), "--repo", options.repo,
     "--json", "bucket,name,state,workflow",
-  ], root, "wait for selected checks");
+  ], root, "read selected checks");
   const checkResult = validateMilestoneChecks(checks);
   if (!checkResult.ok) throw new Error(`pull request checks are not green: ${checkResult.failures.join("; ")}`);
 

@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: Apache-2.0
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const modulePath = "crates/wallet/application/src/approval.rs";
+const fixturePath = "crates/wallet/application/src/approval/tests.rs";
+const movementFixturePath = "crates/composition/src/development_movement_approval_fixture.rs";
+const unavailableImplementation = `impl TrustedWalletApprovalPort for UnavailableApproval {
+    fn approve(&self, _: &WalletApprovalIntent) -> Result<(), TrustedWalletApprovalError> {
+        Err(TrustedWalletApprovalError::Unavailable)
+    }
+}`;
+
+function violations(files) {
+  const failures = [];
+  for (const [path, source] of files) {
+    if (path === fixturePath || path === movementFixturePath
+      || path === "crates/composition/tests/direct_key_approval.rs"
+      || path === "apps/oxid-headless/tests/capability_contracts/support.rs") continue;
+    if (path !== modulePath) {
+      if (/\b(?:TrustedWalletApprovalPort|with_trusted_port)\b/u.test(source)) failures.push(path);
+      continue;
+    }
+    // Freeze the sole production producer until a trusted adapter is reviewed.
+    const implementations = [...source.matchAll(/impl\s+TrustedWalletApprovalPort\s+for\s+(\w+)/gu)];
+    if (implementations.length !== 1 || implementations[0][1] !== "UnavailableApproval"
+      || !source.includes(unavailableImplementation)
+      || !/#\[cfg\(test\)\]\s*pub\(crate\) mod tests;/u.test(source)) failures.push(path);
+  }
+  return failures;
+}
+
+test("approval composition has no incoming injection or production approving port", () => {
+  const paths = execFileSync("git", ["ls-files", "-z", "--", "*.rs"], { encoding: "utf8" }).split("\0").filter(Boolean);
+  assert(paths.includes(modulePath));
+  assert.deepEqual(violations(paths.map(path => [path, readFileSync(path, "utf8")])), []);
+});
+
+test("development movement authority stays a narrow compile-time fixture", () => {
+  const source = readFileSync(movementFixturePath, "utf8");
+  assert.match(source, /struct DevelopmentTransferOnlyApproval;/u);
+  assert.match(source, /WalletApprovalIntent::AuthorizeTransfer \{ \.\. \}/u);
+  assert.match(source, /WalletApprovalIntent::SubmitTransfer \{ \.\. \}/u);
+  assert.match(source, /_ => Err\(TrustedWalletApprovalError::Unavailable\)/u);
+  assert.doesNotMatch(source, /std::env|var_os|var\(|_\s*=>\s*Ok\(\(\)\)/u);
+
+  const composition = readFileSync("crates/composition/src/profile_environment.rs", "utf8");
+  assert.match(composition, /feature = "development-movement-approval"[\s\S]*mod development_movement_approval_fixture;/u);
+});
+
+test("guard rejects incoming injection, alias imports, and production auto approval", () => {
+  for (const source of [
+    "WalletApprovalService::with_trusted_port(clock, port)",
+    "use oxid_wallet_application::TrustedWalletApprovalPort as Port;",
+    "impl TrustedWalletApprovalPort for AutoApprove {}",
+  ]) assert.deepEqual(violations([["crates/adapters/untrusted/src/lib.rs", source]]), ["crates/adapters/untrusted/src/lib.rs"]);
+  const source = readFileSync(modulePath, "utf8");
+  assert.deepEqual(violations([[modulePath, source.replace("Err(TrustedWalletApprovalError::Unavailable)", "Ok(())")]]), [modulePath]);
+  assert.deepEqual(violations([[modulePath, source.replace(
+    unavailableImplementation,
+    unavailableImplementation.replace(
+      "Err(TrustedWalletApprovalError::Unavailable)",
+      "if auto_approve() { return Ok(()); }\n        Err(TrustedWalletApprovalError::Unavailable)",
+    ),
+  )]]), [modulePath]);
+  assert.deepEqual(violations([[modulePath, source + "\nimpl TrustedWalletApprovalPort for AutoApprove {}"]]), [modulePath]);
+  assert.deepEqual(violations([[modulePath, source.replace("#[cfg(test)]\npub(crate) mod tests;", "pub(crate) mod tests;")]]), [modulePath]);
+});

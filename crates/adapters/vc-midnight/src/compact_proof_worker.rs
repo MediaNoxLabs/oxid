@@ -323,7 +323,22 @@ mod tests {
         task::{Context, Poll},
     };
 
+    use oxid_foundation::UnixTimestampMillis;
+    use oxid_identity_application::{
+        AcceptedCredentialPresentationContext, CredentialPresentationAuthorityPort,
+        CredentialPresentationFlowService,
+    };
+    use oxid_identity_domain::IdentityProfileId;
+    use oxid_platform_ports::{ClockPort, PlatformError};
     use oxid_presentation_application::PresentationProofArtifact;
+
+    struct Clock;
+
+    impl ClockPort for Clock {
+        fn now(&self) -> Result<UnixTimestampMillis, PlatformError> {
+            Ok(UnixTimestampMillis::new(1_700_000_000_000))
+        }
+    }
 
     struct ControlledProof {
         state: Arc<(Mutex<(bool, bool)>, Condvar)>,
@@ -352,6 +367,20 @@ mod tests {
         }
     }
 
+    fn presentation_authority(
+        profile: &str,
+        presentation: &str,
+    ) -> oxid_foundation::AcceptedCredentialPresentationFlow {
+        CredentialPresentationFlowService::new(Arc::new(Clock))
+            .mint(AcceptedCredentialPresentationContext::new(
+                IdentityProfileId::parse(profile).expect("identity profile"),
+                oxid_presentation_application::OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID,
+                presentation,
+                "credential_one",
+            ))
+            .expect("test presentation authority")
+    }
+
     fn request(profile: &str, presentation: &str) -> PresentationProofRequest {
         PresentationProofRequest {
             profile_id: oxid_presentation_domain::PresentationProfileId::parse(profile)
@@ -365,6 +394,7 @@ mod tests {
             challenge_hash: [1; 32],
             verifier_domain_hash: [2; 32],
             requested_claims: Vec::new(),
+            authority: presentation_authority(profile, presentation),
         }
     }
 
@@ -499,7 +529,10 @@ mod tests {
         release(&state);
         wait_until_slot_is_released(&worker);
         let retry = request("profile_one", "presentation_three");
-        let retry_for_finish = retry.clone();
+        let retry_for_finish = CancelPresentationProofRequest {
+            profile_id: retry.profile_id.clone(),
+            presentation_id: retry.presentation_id.clone(),
+        };
         futures::executor::block_on(worker.create(retry)).expect("retry proof");
         worker
             .finish(CancelPresentationProofRequest {
@@ -527,7 +560,10 @@ mod tests {
         wait_until_slot_is_released(&worker);
 
         let retry = request("profile_one", "presentation_three");
-        let retry_for_finish = retry.clone();
+        let retry_for_finish = CancelPresentationProofRequest {
+            profile_id: retry.profile_id.clone(),
+            presentation_id: retry.presentation_id.clone(),
+        };
         futures::executor::block_on(worker.create(retry)).expect("retry proof");
         worker
             .finish(CancelPresentationProofRequest {
@@ -541,7 +577,11 @@ mod tests {
     fn admission_remains_held_through_independent_verification() {
         let worker = ForegroundCompactPresentationProofWorker::new(Arc::new(ImmediateProof));
         let first = request("profile_one", "presentation_one");
-        futures::executor::block_on(worker.create(first.clone())).expect("proof");
+        let first_finish = CancelPresentationProofRequest {
+            profile_id: first.profile_id.clone(),
+            presentation_id: first.presentation_id.clone(),
+        };
+        futures::executor::block_on(worker.create(first)).expect("proof");
         assert_eq!(
             futures::executor::block_on(worker.create(request("profile_one", "presentation_two"))),
             Err(PresentationProofError::Busy)
@@ -551,18 +591,22 @@ mod tests {
             .expect("background after proof");
         assert_eq!(
             worker.finish(CancelPresentationProofRequest {
-                profile_id: first.profile_id,
-                presentation_id: first.presentation_id,
+                profile_id: first_finish.profile_id,
+                presentation_id: first_finish.presentation_id,
             }),
             Err(PresentationProofError::Backgrounded)
         );
         worker.set_foreground(true).expect("foreground");
         let retry = request("profile_one", "presentation_three");
-        futures::executor::block_on(worker.create(retry.clone())).expect("retry proof");
+        let retry_finish = CancelPresentationProofRequest {
+            profile_id: retry.profile_id.clone(),
+            presentation_id: retry.presentation_id.clone(),
+        };
+        futures::executor::block_on(worker.create(retry)).expect("retry proof");
         worker
             .finish(CancelPresentationProofRequest {
-                profile_id: retry.profile_id,
-                presentation_id: retry.presentation_id,
+                profile_id: retry_finish.profile_id,
+                presentation_id: retry_finish.presentation_id,
             })
             .expect("finish verification");
     }

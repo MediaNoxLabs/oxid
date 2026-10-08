@@ -2,7 +2,133 @@
 
 #![forbid(unsafe_code)]
 
-use std::{error::Error, fmt};
+use std::{
+    any::Any,
+    error::Error,
+    fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+
+pub const CREDENTIAL_ISSUANCE_FLOW_KIND: u8 = 1;
+pub const SELF_ISSUED_AUTHENTICATION_FLOW_KIND: u8 = 2;
+pub const CREDENTIAL_PRESENTATION_FLOW_KIND: u8 = 3;
+
+pub type AcceptedCredentialIssuanceFlow = AcceptedFlowToken<{ CREDENTIAL_ISSUANCE_FLOW_KIND }>;
+pub type AcceptedSelfIssuedAuthenticationFlow =
+    AcceptedFlowToken<{ SELF_ISSUED_AUTHENTICATION_FLOW_KIND }>;
+pub type AcceptedCredentialPresentationFlow =
+    AcceptedFlowToken<{ CREDENTIAL_PRESENTATION_FLOW_KIND }>;
+
+/// Opaque issuer identity for one compile-time-separated accepted flow kind.
+///
+/// Construction is public so lower-layer test and composition adapters can
+/// own an issuer without depending on an application crate. A separately
+/// constructed issuer can mint only foreign tokens: pointer identity prevents
+/// it from forging tokens accepted by another issuer.
+pub struct AcceptedFlowIssuer<const KIND: u8>(Arc<()>);
+
+impl<const KIND: u8> AcceptedFlowIssuer<KIND> {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Arc::new(()))
+    }
+
+    #[must_use]
+    pub fn mint<B>(
+        &self,
+        binding: B,
+        issued_at: UnixTimestampMillis,
+        expires_at: UnixTimestampMillis,
+        generation: u64,
+    ) -> AcceptedFlowToken<KIND>
+    where
+        B: Any + Send + Sync,
+    {
+        AcceptedFlowToken {
+            binding: Box::new(binding),
+            issuer: Arc::clone(&self.0),
+            issued_at,
+            expires_at,
+            generation,
+            consumed: AtomicBool::new(false),
+        }
+    }
+
+    #[must_use]
+    pub fn owns(&self, token: &AcceptedFlowToken<KIND>) -> bool {
+        Arc::ptr_eq(&self.0, &token.issuer)
+    }
+
+    pub fn try_consume(
+        &self,
+        token: &AcceptedFlowToken<KIND>,
+    ) -> Result<(), AcceptedFlowTokenUseError> {
+        if !self.owns(token) {
+            return Err(AcceptedFlowTokenUseError::ForeignIssuer);
+        }
+        token
+            .consumed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map(|_| ())
+            .map_err(|_| AcceptedFlowTokenUseError::AlreadyConsumed)
+    }
+}
+
+impl<const KIND: u8> Default for AcceptedFlowIssuer<KIND> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Non-cloneable and non-serializable transport for one accepted flow.
+pub struct AcceptedFlowToken<const KIND: u8> {
+    binding: Box<dyn Any + Send + Sync>,
+    issuer: Arc<()>,
+    issued_at: UnixTimestampMillis,
+    expires_at: UnixTimestampMillis,
+    generation: u64,
+    consumed: AtomicBool,
+}
+
+impl<const KIND: u8> AcceptedFlowToken<KIND> {
+    #[must_use]
+    pub fn binding_matches<B>(&self, expected: &B) -> bool
+    where
+        B: Any + PartialEq,
+    {
+        self.binding.downcast_ref::<B>() == Some(expected)
+    }
+
+    #[must_use]
+    pub const fn issued_at(&self) -> UnixTimestampMillis {
+        self.issued_at
+    }
+
+    #[must_use]
+    pub const fn expires_at(&self) -> UnixTimestampMillis {
+        self.expires_at
+    }
+
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+}
+
+impl<const KIND: u8> fmt::Debug for AcceptedFlowToken<KIND> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("AcceptedFlowToken([REDACTED])")
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AcceptedFlowTokenUseError {
+    ForeignIssuer,
+    AlreadyConsumed,
+}
 
 /// Declares a domain-specific newtype backed by [`OpaqueId`].
 ///

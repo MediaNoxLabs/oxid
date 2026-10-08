@@ -5,6 +5,11 @@
     { pkgs, self', ... }:
     let
       midnightDidPackages = inputs.midnight-did-toolchain.packages.${pkgs.stdenv.hostPlatform.system};
+      midnightDidCompactArtifacts = pkgs.callPackage ./midnight-did-compact-artifacts.nix { };
+      midnightDidCallComposer = pkgs.callPackage ./midnight-did-call-composer.nix {
+        inherit midnightDidCompactArtifacts;
+        midnightDidNpmArtifacts = midnightDidPackages.npm-artifacts;
+      };
       presentationCompactArtifacts = pkgs.callPackage ./presentation-compact-artifacts.nix {
         compactMidnight = midnightDidPackages.compact-midnight;
         compactToolchain = midnightDidPackages.compact-toolchain;
@@ -24,13 +29,14 @@
       };
       oxidApp = pkgs.rustPlatform.buildRustPackage {
         pname = "oxid";
-        version = "0.1.0";
+        version = "0.2.0";
         src = pkgs.lib.cleanSource ../..;
 
         cargoLock = {
           lockFile = ../../Cargo.lock;
           outputHashes = {
-            "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
+            "midnight-base-crypto-1.0.1" = "sha256-TBu1ysOc6kKNA9g+cnlaBqd/SO9ii/Je2uUsQWXYBiw=";
+            "midnight-proofs-0.7.3" = "sha256-f/wg3d3fjOcAphwK4QB9zlpLCM2VXOO40/I91ZmUxlQ=";
           };
         };
         cargoBuildFlags = [
@@ -40,6 +46,7 @@
         cargoTestFlags = [ "--workspace" ];
         OXID_PASSPORT_VAULT_ARTIFACTS_DIR = passportVaultCompactArtifacts;
         OXID_PASSPORT_VAULT_COMPOSER = "${passportVaultCallComposer}/bin/oxid-passport-vault-call-composer";
+        OXID_MIDNIGHT_DID_CALL_COMPOSER = "${midnightDidCallComposer}/bin/oxid-midnight-did-call-composer";
 
         nativeBuildInputs = [ pkgs.pkg-config ] ++ linuxNativeBuildInputs;
         buildInputs = [ pkgs.openssl ] ++ linuxBuildInputs;
@@ -59,13 +66,14 @@
       };
       brandCheck = pkgs.rustPlatform.buildRustPackage {
         pname = "oxid-brand-check";
-        version = "0.1.0";
+        version = "0.2.0";
         src = pkgs.lib.cleanSource ../..;
 
         cargoLock = {
           lockFile = ../../Cargo.lock;
           outputHashes = {
-            "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
+            "midnight-base-crypto-1.0.1" = "sha256-TBu1ysOc6kKNA9g+cnlaBqd/SO9ii/Je2uUsQWXYBiw=";
+            "midnight-proofs-0.7.3" = "sha256-f/wg3d3fjOcAphwK4QB9zlpLCM2VXOO40/I91ZmUxlQ=";
           };
         };
         cargoBuildFlags = [
@@ -120,13 +128,14 @@
 
         headless = pkgs.rustPlatform.buildRustPackage {
           pname = "oxid-headless";
-          version = "0.1.0";
+          version = "0.2.0";
           src = pkgs.lib.cleanSource ../..;
 
           cargoLock = {
             lockFile = ../../Cargo.lock;
             outputHashes = {
-              "midnight-base-crypto-1.0.0" = "sha256-Sfl7vc9NpfdIZvXXYBQdg3VY5c35zMYwzHZcujxu8zY=";
+              "midnight-base-crypto-1.0.1" = "sha256-TBu1ysOc6kKNA9g+cnlaBqd/SO9ii/Je2uUsQWXYBiw=";
+              "midnight-proofs-0.7.3" = "sha256-f/wg3d3fjOcAphwK4QB9zlpLCM2VXOO40/I91ZmUxlQ=";
             };
           };
           cargoBuildFlags = [
@@ -152,11 +161,18 @@
 
         presentation-compact-artifacts = presentationCompactArtifacts;
 
+        midnight-did-compact-artifacts = midnightDidCompactArtifacts;
+
+        midnight-did-call-composer = midnightDidCallComposer;
+
         passport-vault-compact-artifacts = passportVaultCompactArtifacts;
 
         passport-vault-call-composer = passportVaultCallComposer;
 
         dioxus-cli = pkgs.dioxus-cli;
+
+        # Pinned through flake.lock; local Maestro pilots never fetch a global CLI.
+        maestro = pkgs.maestro;
       }
       // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
         xcodegen = pkgs.xcodegen;
@@ -173,6 +189,8 @@
           doCheck = true;
         });
         presentation-compact-artifacts = presentationCompactArtifacts;
+        midnight-did-compact-artifacts = midnightDidCompactArtifacts;
+        midnight-did-call-composer = midnightDidCallComposer;
         passport-vault-compact-artifacts = passportVaultCompactArtifacts;
         passport-vault-call-composer = passportVaultCallComposer;
         brand-packs =

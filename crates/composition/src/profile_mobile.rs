@@ -17,6 +17,12 @@ use oxid_capabilities_application::{DeploymentProfileService, StandaloneDeployme
 
 #[cfg(all(
     not(target_arch = "wasm32"),
+    not(any(target_os = "ios", target_os = "android"))
+))]
+use super::did_deployment::with_native_did_deployment;
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
     any(
         all(not(target_os = "ios"), not(target_os = "android")),
         all(
@@ -105,6 +111,17 @@ use super::passport_vault::{
 use super::profile_headless::compose_headless_standalone;
 #[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
 use super::profile_headless::compose_public_genesis_standalone;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        all(not(target_os = "ios"), not(target_os = "android")),
+        all(
+            feature = "mobile-portal",
+            any(target_os = "ios", target_os = "android")
+        )
+    )
+))]
+use super::profile_headless::development_security_and_profiles;
 use super::services::ApplicationServices;
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -121,14 +138,12 @@ use super::standalone_genesis::{public_profile_protection, public_standalone_net
     )
 ))]
 use super::wiring::{
-    compose_with_adapters_and_credential_profile,
+    compose_with_adapters_and_credential_profile_and_did_approvals,
     with_wallet_onboarding as with_portal_wallet_onboarding,
 };
 #[cfg(any(target_os = "ios", target_os = "android"))]
-use super::wiring::{
-    compose_with_adapters_and_presentation, with_wallet_onboarding as with_native_wallet_onboarding,
-};
-#[cfg(not(target_arch = "wasm32"))]
+use super::wiring::{compose_with_adapters_and_presentation, with_native_wallet_onboarding};
+#[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_platform_system::OsRandom;
 use oxid_adapter_platform_system::SystemClock;
 
@@ -613,19 +628,45 @@ pub(super) fn compose_development_portal_from_config(
     credential_presentation: CredentialPresentationComposition,
 ) -> ApplicationServices {
     let clock = Arc::new(SystemClock);
-    let security = Arc::new(DevelopmentWalletSecurity::new(
-        Arc::clone(&clock),
-        Arc::new(OsRandom),
-    ));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     compose_development_portal_with_security(
         config,
         portal,
         credential_presentation,
-        clock,
-        security,
-        profiles,
+        DevelopmentPortalStorage {
+            clock,
+            security,
+            profiles,
+        },
         |security| security,
+        None,
+    )
+}
+
+#[cfg(all(
+    feature = "development-did-approval",
+    not(target_arch = "wasm32"),
+    not(any(target_os = "ios", target_os = "android"))
+))]
+pub(super) fn compose_development_portal_from_config_with_did_approvals(
+    config: MidnightStandaloneConfig,
+    portal: PortalIdentityConfiguration,
+    credential_presentation: CredentialPresentationComposition,
+    did_approvals: Arc<oxid_identity_application::DidApprovalService>,
+) -> ApplicationServices {
+    let clock = Arc::new(SystemClock);
+    let (security, profiles) = development_security_and_profiles(&clock);
+    compose_development_portal_with_security(
+        config,
+        portal,
+        credential_presentation,
+        DevelopmentPortalStorage {
+            clock,
+            security,
+            profiles,
+        },
+        |security| security,
+        Some(did_approvals),
     )
 }
 
@@ -641,22 +682,29 @@ fn compose_mobile_public_genesis_portal_from_config(
     credential_presentation: CredentialPresentationComposition,
 ) -> Result<ApplicationServices, HeadlessCompositionError> {
     let clock = Arc::new(SystemClock);
-    let security = Arc::new(DevelopmentWalletSecurity::new(
-        Arc::clone(&clock),
-        Arc::new(OsRandom),
-    ));
-    let profiles = Arc::new(JsonWalletProfileRepository::at_default_location());
+    let (security, profiles) = development_security_and_profiles(&clock);
     let network_id = config.indexer().network_id().as_str().to_owned();
     let public_network = public_standalone_network(&network_id)
         .ok_or(HeadlessCompositionError::PublicStandaloneGenesisRequiresUndeployed)?;
     let protection_profiles = Arc::clone(&profiles);
+    // The local Portal artifact is an explicitly authenticated simulator/QEMU
+    // fixture. Its accepted OID4VCI path therefore uses the same bounded
+    // development DID approval service as the named headless fixture. Normal,
+    // production, and physical Tailnet compositions do not enable this feature
+    // and continue to fail accepted signing effects closed.
+    #[cfg(feature = "development-did-approval")]
+    let did_approvals = Some(super::profile_headless::development_did_approval_service());
+    #[cfg(not(feature = "development-did-approval"))]
+    let did_approvals = None;
     Ok(compose_development_portal_with_security(
         config,
         portal,
         credential_presentation,
-        clock,
-        security,
-        profiles,
+        DevelopmentPortalStorage {
+            clock,
+            security,
+            profiles,
+        },
         move |security| {
             Arc::new(public_profile_protection(
                 public_network,
@@ -664,6 +712,7 @@ fn compose_mobile_public_genesis_portal_from_config(
                 security,
             )) as Arc<dyn WalletProtectionPort>
         },
+        did_approvals,
     ))
 }
 
@@ -681,33 +730,65 @@ fn compose_development_portal_with_security<N, F>(
     config: MidnightStandaloneConfig,
     portal: PortalIdentityConfiguration,
     credential_presentation: CredentialPresentationComposition,
-    clock: Arc<SystemClock>,
-    security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
-    profiles: Arc<JsonWalletProfileRepository>,
+    storage: DevelopmentPortalStorage<N>,
     protection_for_security: F,
+    did_approvals: Option<Arc<oxid_identity_application::DidApprovalService>>,
 ) -> ApplicationServices
 where
     N: oxid_platform_ports::RandomPort + 'static,
     F: FnOnce(Arc<DevelopmentWalletSecurity<SystemClock, N>>) -> Arc<dyn WalletProtectionPort>,
 {
+    let DevelopmentPortalStorage {
+        clock,
+        security,
+        profiles,
+    } = storage;
     let network_id = config.indexer().network_id().as_str().to_owned();
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let did_config = config.clone();
     let midnight = Arc::new(
         protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
             .with_profile_association_repository(profiles.clone()),
     );
-    let services = compose_with_adapters_and_credential_profile(
+    let services = compose_with_adapters_and_credential_profile_and_did_approvals(
         Arc::clone(&profiles),
         Arc::clone(&security),
         Arc::clone(&midnight),
         credential_presentation,
         HeadlessCredentialProfile::Portal(Box::new(portal)),
         protection_for_security,
+        did_approvals,
     );
-    with_passport_vault_state_source(
-        with_portal_wallet_onboarding(services, profiles, security, midnight, network_id),
+    let services = with_passport_vault_state_source(
+        with_portal_wallet_onboarding(
+            services,
+            profiles,
+            Arc::clone(&security),
+            Arc::clone(&midnight),
+            network_id,
+        ),
         passport_vault_state_source,
+    );
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    let services = with_native_did_deployment(services, &did_config, security, midnight);
+    services
+}
+
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    any(
+        all(not(target_os = "ios"), not(target_os = "android")),
+        all(
+            feature = "mobile-portal",
+            any(target_os = "ios", target_os = "android")
+        )
     )
+))]
+struct DevelopmentPortalStorage<N> {
+    clock: Arc<SystemClock>,
+    security: Arc<DevelopmentWalletSecurity<SystemClock, N>>,
+    profiles: Arc<JsonWalletProfileRepository>,
 }
 
 #[cfg(all(

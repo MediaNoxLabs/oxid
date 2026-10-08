@@ -12,6 +12,7 @@ publish = false
 default = []
 readiness = [
   "dep:futures",
+  "dep:oxid-adapter-platform-system",
   "dep:oxid-capabilities-application",
   "dep:reqwest",
   "dep:rustls",
@@ -30,6 +31,7 @@ url.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 futures = { workspace = true, optional = true }
 oxid-capabilities-application = { workspace = true, optional = true }
+oxid-adapter-platform-system = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }

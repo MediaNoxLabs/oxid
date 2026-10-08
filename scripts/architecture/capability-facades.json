@@ -7,9 +7,9 @@
       "facadeFiles": [
         "apps/oxid-headless/src/lib.rs"
       ],
-      "facadeMaximumPhysicalLines": 350,
+      "facadeMaximumPhysicalLines": 349,
       "facadeMaximumPhysicalLinesByPath": {
-        "apps/oxid-headless/src/lib.rs": 350
+        "apps/oxid-headless/src/lib.rs": 349
       },
       "capabilityOwners": [
         {
@@ -45,7 +45,8 @@
         {
           "name": "midnight-wallet",
           "modulePathPrefixes": [
-            "apps/oxid-headless/src/midnight_wallet"
+            "apps/oxid-headless/src/midnight_wallet",
+            "apps/oxid-headless/src/realm_lifecycle"
           ]
         },
         {
@@ -85,6 +86,18 @@
           ]
         },
         {
+          "name": "standalone-funding",
+          "modulePathPrefixes": [
+            "apps/oxid-headless/src/faucet",
+            "apps/oxid-headless/src/faucet_application",
+            "apps/oxid-headless/src/faucet_errors",
+            "apps/oxid-headless/src/faucet_http",
+            "apps/oxid-headless/src/faucet_http_main",
+            "apps/oxid-headless/src/faucet_main",
+            "apps/oxid-headless/src/faucet_tests"
+          ]
+        },
+        {
           "name": "executable-shell",
           "modulePathPrefixes": [
             "apps/oxid-headless/src/main"
@@ -100,9 +113,9 @@
       "facadeFiles": [
         "crates/ui-dioxus/src/lib.rs"
       ],
-      "facadeMaximumPhysicalLines": 12950,
+      "facadeMaximumPhysicalLines": 12263,
       "facadeMaximumPhysicalLinesByPath": {
-        "crates/ui-dioxus/src/lib.rs": 12950
+        "crates/ui-dioxus/src/lib.rs": 12263
       },
       "capabilityOwners": [
         {
@@ -124,8 +137,22 @@
           ]
         },
         {
+          "name": "credential-inventory",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/credential_inventory"
+          ]
+        },
+        {
+          "name": "identity-interactions",
+          "modulePathPrefixes": [
+            "crates/ui-dioxus/src/identity_scan",
+            "crates/ui-dioxus/src/identity_primitives"
+          ]
+        },
+        {
           "name": "desktop-test-driver",
           "modulePathPrefixes": [
+            "crates/ui-dioxus/src/desktop_developer_pager_driver",
             "crates/ui-dioxus/src/desktop_test_driver"
           ]
         },
@@ -168,6 +195,7 @@
       {
         "name": "passport-vault",
         "modulePathPrefixes": [
+          "crates/ui-dioxus/src/activity_page",
           "crates/ui-dioxus/src/passport_vault"
         ]
       },
@@ -189,8 +217,20 @@
           "crates/ui-dioxus/src/wallet_onboarding"
         ]
       },
-        {
-          "name": "profile-guard",
+      {
+        "name": "wallet-receive",
+        "modulePathPrefixes": [
+          "crates/ui-dioxus/src/receive"
+        ]
+      },
+      {
+        "name": "wallet-send",
+        "modulePathPrefixes": [
+          "crates/ui-dioxus/src/send_recipient"
+        ]
+      },
+      {
+        "name": "profile-guard",
           "modulePathPrefixes": [
             "crates/ui-dioxus/src/profile_guard"
           ]
@@ -210,7 +250,9 @@
         {
           "name": "selected-realm-sync",
           "modulePathPrefixes": [
-            "crates/ui-dioxus/src/selected_realm_sync"
+            "crates/ui-dioxus/src/selected_realm_sync",
+            "crates/ui-dioxus/src/wallet_realm_lifecycle",
+            "crates/ui-dioxus/src/wallet_realm_sync_services"
           ]
         },
         {
@@ -221,7 +263,17 @@
         }
       ],
       "exclusions": [],
-      "temporaryExceptions": []
+      "temporaryExceptions": [
+        {
+          "paths": [
+            "crates/ui-dioxus/src/lib.rs"
+          ],
+          "extraLineCeiling": 640,
+          "issue": "#757",
+          "reason": "Preserves the verified post-decomposition ratchet while the remaining excess is removed.",
+          "expiresOn": "2027-01-31"
+        }
+      ]
     },
     {
       "name": "oxid-composition",
@@ -235,17 +287,30 @@
       },
       "capabilityOwners": [
         {
+          "name": "dust-settlement",
+          "modulePathPrefixes": [
+            "crates/composition/src/dust_settlement",
+            "crates/composition/src/dust_settlement_tests"
+          ]
+        },
+        {
           "name": "environment-policy",
           "modulePathPrefixes": [
             "crates/composition/src/environment"
           ]
         },
-        {
-          "name": "identity-composition",
-          "modulePathPrefixes": [
-            "crates/composition/src/identity"
-          ]
-        },
+      {
+        "name": "identity-composition",
+        "modulePathPrefixes": [
+          "crates/composition/src/identity"
+        ]
+      },
+      {
+        "name": "did-deployment",
+        "modulePathPrefixes": [
+          "crates/composition/src/did_deployment"
+        ]
+      },
         {
           "name": "passport-vault-bridge",
           "modulePathPrefixes": [
@@ -265,10 +330,11 @@
           ]
         },
         {
-          "name": "environment-selected-profile",
-          "modulePathPrefixes": [
-            "crates/composition/src/profile_environment"
-          ]
+      "name": "environment-selected-profile",
+      "modulePathPrefixes": [
+        "crates/composition/src/profile_environment",
+        "crates/composition/src/development_movement_approval_fixture"
+      ]
         },
         {
           "name": "in-memory-profile",

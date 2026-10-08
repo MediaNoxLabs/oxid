@@ -1,0 +1,9 @@
+appId: io.medianox.oxid
+name: profile and realm switching
+---
+- runFlow: ../subflows/launch-clean.yaml
+- runFlow: ../subflows/demo-profile.yaml
+- tapOn: "Switch wallet profile"
+- assertVisible: "Active wallet profile"
+- tapOn: "Close profile chooser"
+- assertVisible: "Current realm"

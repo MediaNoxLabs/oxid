@@ -2,23 +2,18 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(feature = "mobile-portal")]
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
-compile_error!("mobile-portal is available only on iOS and Android");
-
-#[cfg(all(feature = "mobile-portal-tailnet", not(target_os = "android")))]
-compile_error!("mobile-portal-tailnet is available only on Android");
-
+#[cfg(not(target_arch = "wasm32"))]
+mod did_deployment;
+mod dust_settlement;
+mod environment;
+mod identity;
+mod passport_vault;
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(any(
     not(any(target_os = "ios", target_os = "android")),
     feature = "mobile-portal"
 ))]
 mod portal;
-
-mod environment;
-mod identity;
-mod passport_vault;
 mod profile_environment;
 mod profile_headless;
 mod profile_in_memory;
@@ -33,6 +28,10 @@ mod services;
 #[cfg(any(test, feature = "standalone-development"))]
 mod standalone_genesis;
 mod wiring;
+pub use dust_settlement::{
+    AutomaticDustRealmReconciler, WalletDustAuthorizationReview, WalletDustSettlementCapability,
+    WalletDustSettlementError,
+};
 pub use environment::*;
 pub use identity::*;
 pub use passport_vault::simulated_passport_vault_contract_address_hex;
@@ -46,7 +45,8 @@ pub use profile_production::*;
 #[cfg(all(feature = "proof-benchmark", not(target_arch = "wasm32")))]
 pub use proof_benchmark::*;
 pub use services::{ApplicationServices, WalletOnboardingCapability, WalletRootRecoveryCapability};
-
+#[cfg(all(not(target_arch = "wasm32"), feature = "standalone-development"))]
+pub use standalone_genesis::public_standalone_profile_name;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod standalone_funding_tests;
 #[cfg(test)]

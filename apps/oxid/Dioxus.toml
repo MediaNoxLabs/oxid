@@ -6,6 +6,15 @@ android_main_activity = "android/MainActivity.kt"
 [bundle]
 identifier = "io.medianox.oxid"
 publisher = "MediaNoxLabs"
+icon = [
+  "icons/desktop-16.png",
+  "icons/desktop-32.png",
+  "icons/desktop-64.png",
+  "icons/desktop-128.png",
+  "icons/desktop-256.png",
+  "icons/icon.icns",
+  "icons/icon.ico",
+]
 
 [deep_links]
 schemes = ["openid-credential-offer", "openid4vp"]

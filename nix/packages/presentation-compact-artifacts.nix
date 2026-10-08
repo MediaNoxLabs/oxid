@@ -16,7 +16,7 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "oxid-digital-passport-presentation-artifacts";
-  version = "0.1.0";
+  version = "0.2.0";
 
   src = midnightVcSource;
   nativeBuildInputs = [

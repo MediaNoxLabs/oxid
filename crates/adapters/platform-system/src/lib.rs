@@ -2,9 +2,23 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(not(target_arch = "wasm32"))]
+mod transport;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use transport::{
+    TransportTrustError, TransportTrustPolicy, http_client_builder_for, websocket_connector_for,
+};
+
 use std::{
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
+};
+
+#[cfg(target_os = "macos")]
+use std::{
+    io::Write,
+    process::{Command, Stdio},
 };
 
 #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -16,11 +30,39 @@ use oxid_adapter_mobile_native::{
 use oxid_foundation::UnixTimestampMillis;
 use oxid_platform_ports::{
     ClockPort, PlatformError, ProcessResourceSample, ProcessResourceSampleError,
-    ProcessResourceSamplerPort, PublicReceiveAddress, PublicTextExportError, PublicTextExportPort,
-    RandomPort, ScreenPrivacyError, ScreenPrivacyPort,
+    ProcessResourceSamplerPort, PublicDid, PublicReceiveAddress, PublicTextExportError,
+    PublicTextExportPort, RandomPort, ScreenPrivacyError, ScreenPrivacyPort,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, get_current_pid};
+
+/// Portable SHA-256 implementation; no input or digest is retained.
+pub struct SystemSha256;
+
+impl oxid_platform_ports::Sha256Port for SystemSha256 {
+    fn sha256(&self, bytes: &[u8]) -> [u8; 32] {
+        use sha2::{Digest as _, Sha256};
+        Sha256::digest(bytes).into()
+    }
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::SystemSha256;
+    use oxid_platform_ports::Sha256Port;
+
+    #[test]
+    fn sha256_known_vector() {
+        assert_eq!(
+            SystemSha256.sha256(b"abc"),
+            [
+                0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
+                0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
+                0xf2, 0x00, 0x15, 0xad,
+            ]
+        );
+    }
+}
 
 /// Clock backed by the host system.
 #[derive(Clone, Copy, Debug, Default)]
@@ -53,6 +95,10 @@ impl RandomPort for OsRandom {
 pub struct NativePublicTextExporter;
 
 impl PublicTextExportPort for NativePublicTextExporter {
+    fn copy_did(&self, did: PublicDid) -> Result<(), PublicTextExportError> {
+        copy_public_text(did.as_str())
+    }
+
     fn copy_receive_address(
         &self,
         address: PublicReceiveAddress,
@@ -162,15 +208,55 @@ const fn map_screen_privacy_bridge_error(error: NativeBridgeError) -> ScreenPriv
 
 #[cfg(any(target_os = "ios", target_os = "android"))]
 fn copy_public_receive_address(address: PublicReceiveAddress) -> Result<(), PublicTextExportError> {
-    let status = native_copy_public_receive_address(address.as_str())
-        .map_err(map_public_export_bridge_error)?;
+    copy_public_text(address.as_str())
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn copy_public_text(value: &str) -> Result<(), PublicTextExportError> {
+    let status =
+        native_copy_public_receive_address(value).map_err(map_public_export_bridge_error)?;
     map_public_export_status(&status, "copied")
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[cfg(target_os = "macos")]
+fn copy_public_receive_address(address: PublicReceiveAddress) -> Result<(), PublicTextExportError> {
+    copy_public_text(address.as_str())
+}
+
+#[cfg(target_os = "macos")]
+fn copy_public_text(value: &str) -> Result<(), PublicTextExportError> {
+    let mut child = Command::new("/usr/bin/pbcopy")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| PublicTextExportError::Unavailable)?;
+    child
+        .stdin
+        .take()
+        .ok_or(PublicTextExportError::Failed)?
+        .write_all(value.as_bytes())
+        .map_err(|_| PublicTextExportError::Failed)?;
+    if child
+        .wait()
+        .map_err(|_| PublicTextExportError::Failed)?
+        .success()
+    {
+        Ok(())
+    } else {
+        Err(PublicTextExportError::Failed)
+    }
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "android", target_os = "macos")))]
 fn copy_public_receive_address(
     _address: PublicReceiveAddress,
 ) -> Result<(), PublicTextExportError> {
+    Err(PublicTextExportError::Unavailable)
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "android", target_os = "macos")))]
+fn copy_public_text(_value: &str) -> Result<(), PublicTextExportError> {
     Err(PublicTextExportError::Unavailable)
 }
 
@@ -223,11 +309,9 @@ mod tests {
         assert_ne!(bytes, [0_u8; 16]);
     }
 
+    #[cfg(not(any(target_os = "ios", target_os = "android", target_os = "macos")))]
     #[test]
     fn public_export_fails_closed_without_a_native_bridge() {
-        if cfg!(any(target_os = "ios", target_os = "android")) {
-            return;
-        }
         let address = PublicReceiveAddress::new("mn_addr_public".to_owned()).expect("address");
         assert_eq!(
             NativePublicTextExporter.copy_receive_address(address.clone()),
@@ -244,6 +328,16 @@ mod tests {
         assert_eq!(
             NativeScreenPrivacy.set_protected(false),
             Err(ScreenPrivacyError::Unavailable)
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn desktop_share_fails_closed_without_a_reviewed_host_adapter() {
+        let address = PublicReceiveAddress::new("mn_addr_public".to_owned()).expect("address");
+        assert_eq!(
+            NativePublicTextExporter.share_receive_address(address),
+            Err(PublicTextExportError::Unavailable)
         );
     }
 

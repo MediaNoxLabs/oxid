@@ -27,43 +27,8 @@ cat >"$fake_bin/xcodebuild" <<'EOF'
 #!/usr/bin/env bash
 printf 'Xcode fixture\n'
 EOF
-cat >"$fake_bin/xcrun" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$OXID_FAKE_SIMCTL_LOG"
-[ "${1:-}" = simctl ] || exit 90
-shift
-case "${1:-}" in
-  list)
-    case "${2:-}" in
-      runtimes)
-        printf '%s\n' '{"runtimes":[{"identifier":"com.apple.CoreSimulator.SimRuntime.iOS-26-4","isAvailable":true,"version":"26.4"}]}'
-        ;;
-      devicetypes)
-        printf '%s\n' '{"devicetypes":[{"identifier":"com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro","name":"iPhone 17 Pro"}]}'
-        ;;
-      devices)
-        if [ "${OXID_FAKE_RECEIPT_CHANGED:-0}" = 1 ]; then name="foreign"; else name="oxid-owned"; fi
-        printf '{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-26-4":['
-        printf '{"udid":"99999999-8888-7777-6666-555555555555","name":"existing","state":"Booted","isAvailable":true,"deviceTypeIdentifier":"com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"}'
-        if [ ! -f "$OXID_FAKE_SIM_DELETED" ]; then
-          printf ',{"udid":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE","name":"%s","state":"Booted","isAvailable":true,"deviceTypeIdentifier":"com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"}' "$name"
-        fi
-        printf ']}}\n'
-        ;;
-      *) exit 91 ;;
-    esac
-    ;;
-  create)
-    printf '%s\n' 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE'
-    ;;
-  boot|bootstatus|install|terminate|launch|openurl|io|shutdown|delete)
-    [ "${2:-}" = 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE' ] || exit 92
-    [ "${1:-}" != delete ] || : >"$OXID_FAKE_SIM_DELETED"
-    ;;
-  *) exit 93 ;;
-esac
-EOF
-chmod 700 "$fake_bin/xcodebuild" "$fake_bin/xcrun"
+install -m 700 "$ROOT/scripts/e2e/fixtures/ios-simulator-ownership-xcrun" "$fake_bin/xcrun"
+chmod 700 "$fake_bin/xcodebuild"
 
 export OXID_XCRUN="$fake_bin/xcrun"
 export OXID_XCODEBUILD="$fake_bin/xcodebuild"
@@ -72,6 +37,11 @@ export OXID_FAKE_SIM_DELETED="$temporary/simulator.deleted"
 export OXID_IOS_OPERATION_TIMEOUT_SECONDS=2
 readonly runtime="com.apple.CoreSimulator.SimRuntime.iOS-26-4"
 readonly device_type="com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
+
+[ "$(oxid_ios_discover_developer_directory "$developer")" = "$developer" ] || fail developer-discovery
+[ "$(oxid_ios_discover_selectors "$developer")" = "$runtime"$'\t'"$device_type" ] || fail selector-discovery
+[ "$(oxid_ios_resolve_selectors "$developer" "" "")" = "$runtime"$'\t'"$device_type" ] || fail selector-resolution
+if oxid_ios_resolve_selectors "$developer" "$runtime" "" >/dev/null; then fail partial-selector; fi
 
 : >"$log"
 if oxid_ios_preflight "" "$runtime" "$device_type"; then fail missing-xcode; fi
@@ -129,4 +99,4 @@ started=$SECONDS
 if oxid_ios_preflight "$developer" "$runtime" "$device_type"; then fail timeout-result; fi
 [ $((SECONDS - started)) -lt 5 ] || fail timeout-bounded
 
-printf 'ios-simulator-ownership-contract: PASS selection=explicit existing=ignored receipt=identity-bound cleanup=bounded keep-failed=rejected\n'
+printf 'ios-simulator-ownership-contract: PASS selection=discovered-or-explicit existing=ignored receipt=identity-bound cleanup=bounded keep-failed=rejected\n'

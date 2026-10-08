@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Documents — Oxid</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+<script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                colors: {
+                    'oxid-bg': '#07090E',
+                    'oxid-surface': '#0F172A',
+                    'oxid-border': '#1E293B',
+                    'oxid-primary': '#06B6D4',
+                    'oxid-highlight': '#38BDF8',
+                    'oxid-identity': '#8B5CF6',
+                    'oxid-text': '#F8FAFC',
+                    'oxid-muted': '#94A3B8',
+                },
+                fontFamily: {
+                    sans: ['Plus Jakarta Sans', 'sans-serif'],
+                    heading: ['Space Grotesk', 'sans-serif'],
+                }
+            }
+        }
+    }
+</script>
+<style>
+    ::-webkit-scrollbar { display: none; }
+    * { -ms-overflow-style: none; scrollbar-width: none; }
+    body { font-family: 'Plus Jakarta Sans', sans-serif; -webkit-font-smoothing: antialiased; }
+    .font-heading { font-family: 'Space Grotesk', sans-serif; }
+</style>
+</head>
+<body class="bg-oxid-bg text-oxid-text font-sans min-h-screen flex justify-center">
+<div class="w-full max-w-[430px] min-h-screen relative flex flex-col">
+
+    <!-- Header -->
+    <header class="px-6 pt-10 pb-4 flex items-center justify-between">
+        <h1 class="text-2xl font-heading font-bold text-white tracking-tight">Documents</h1>
+        <button class="w-11 h-11 rounded-xl bg-oxid-surface border border-oxid-border flex items-center justify-center text-oxid-muted hover:text-white transition-all">
+            <i class="fa-solid fa-plus text-lg"></i>
+        </button>
+    </header>
+
+    <!-- Main Content: Empty State -->
+    <main class="flex-1 px-6 flex flex-col items-center justify-center pb-32">
+        <div class="w-24 h-24 rounded-3xl bg-oxid-surface border border-oxid-border flex items-center justify-center mb-8 relative group">
+            <div class="absolute inset-0 bg-oxid-primary/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-3xl"></div>
+            <i class="fa-solid fa-address-card text-5xl text-slate-700 relative z-10"></i>
+            <div class="absolute -top-1 -right-1 w-8 h-8 rounded-full bg-cyan-600 border-2 border-oxid-bg flex items-center justify-center shadow-lg">
+                <i class="fa-solid fa-badge-check text-oxid-bg text-sm"></i>
+            </div>
+        </div>
+
+        <div class="text-center max-w-[280px] mb-12">
+            <h2 class="text-xl font-heading font-bold mb-3 text-white">No documents yet</h2>
+            <p class="text-oxid-muted text-sm leading-relaxed">
+                Your credential inventory is empty. Add an offer to start exploring identity features.
+            </p>
+        </div>
+
+        <div class="w-full space-y-4">
+            <button class="w-full h-20 rounded-[24px] bg-cyan-600 hover:bg-cyan-500 text-oxid-bg font-bold flex items-center px-6 gap-5 transition-all shadow-lg shadow-cyan-950/20 active:scale-[0.98]">
+                <div class="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
+                    <i class="fa-solid fa-qrcode text-xl"></i>
+                </div>
+                <div class="text-left">
+                    <p class="text-[15px] font-bold uppercase tracking-wide">Scan QR Code</p>
+                    <p class="text-[11px] font-bold opacity-60 uppercase tracking-tighter">Add from partner</p>
+                </div>
+                <i class="fa-solid fa-chevron-right ml-auto text-oxid-bg opacity-30"></i>
+            </button>
+
+            <button class="w-full h-20 rounded-[24px] bg-oxid-surface border border-oxid-border font-bold flex items-center px-6 gap-5 hover:border-cyan-500/20 transition-all active:scale-[0.98] group">
+                <div class="w-12 h-12 rounded-xl bg-slate-900 flex items-center justify-center text-oxid-muted group-hover:text-white transition-colors">
+                    <i class="fa-solid fa-file-circle-plus text-xl"></i>
+                </div>
+                <div class="text-left">
+                    <p class="text-[15px] font-bold text-white uppercase tracking-wide">Add offer</p>
+                    <p class="text-[11px] text-oxid-muted font-bold uppercase tracking-tighter">Link or file</p>
+                </div>
+                <i class="fa-solid fa-chevron-right ml-auto text-oxid-muted/40 group-hover:text-white group-hover:translate-x-1 transition-all"></i>
+            </button>
+        </div>
+    </main>
+
+    <!-- Navigation Bar -->
+    <nav id="nav" aria-label="Primary navigation" style="position:fixed;bottom:0;left:0;right:0;z-index:50;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px;background:#07090E;border-top:1px solid #1E293B;padding:7px 6px calc(7px + env(safe-area-inset-bottom));box-shadow:0 -8px 28px rgba(0,0,0,.25)">
+<button type="button" aria-label="Home" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer"><span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></span><span>Home</span></button>
+<button type="button" aria-label="Wallet" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer"><span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg></span><span>Wallet</span></button>
+<button type="button" aria-label="Scan" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer"><span style="width:42px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:14px;background:linear-gradient(135deg,#38BDF8,#06B6D4);color:#07131d"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg></span><span>Scan</span></button>
+<button type="button" aria-label="Documents" aria-current="page" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#06B6D4;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer"><span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></svg></span><span>Documents</span><span aria-hidden="true" style="width:16px;height:2px;border-radius:2px;background:#06B6D4"></span></button>
+<button type="button" aria-label="Activity" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer"><span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.5.5 0 0 1-.96 0L9.24 2.18a.5.5 0 0 0-.96 0l-2.35 8.36A2 2 0 0 1 4 12H2"/></svg></span><span>Activity</span></button>
+</nav>
+
+</div>
+</body>
+</html>

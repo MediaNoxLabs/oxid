@@ -3,10 +3,82 @@
 All notable changes to Oxid will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
-once public releases begin.
+and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+
+- Plaintext loopback HTTP clients no longer depend on platform CA discovery in
+  hermetic builds, and their explicit empty trust store prevents accidental
+  reuse for HTTPS.
+- Authenticated public HTTP and WebSocket routes now use the reviewed portable
+  WebPKI root bundle, so their client construction is independent of host CA
+  discovery in hermetic builds.
+- Exact-head Claude reviews now select and attest a bounded reasoning effort.
+  High-risk attestations require at least `medium` effort.
+  Their default deadline is five minutes, reduced from fifteen to keep the
+  review checkpoint inside the factory SLA; the wrapper and verifier reject
+  longer deadlines, callers may select a shorter one, and a timeout is not a
+  pass.
+  The review budget remains positive and is capped at USD 10; sub-dollar
+  canaries remain valid.
+  New attestations use schema v3; rerun reviews whose legacy v2 evidence no
+  longer verifies instead of relabeling records that did not capture effort.
+  In-flight branches must rerun the exact-head review; legacy records are not
+  translated into the stronger shape.
+  Verification reports this migration through the distinct
+  `ClaudeReviewEvidenceVersionError` type rather than as a non-clean verdict;
+  the CLI emits its `CLAUDE_REVIEW_EVIDENCE_VERSION` code with exit status 3.
+
+## [0.2.0] - 2026-10-05
+
+### Highlights
+
+- Mobile-first Midnight wallet journeys for profile creation and restoration,
+  public and shielded NIGHT, DUST, receive/send, activity, and lifecycle-driven
+  synchronization with durable recovery checkpoints.
+- Explicit holder-controlled DID, OID4VCI, OpenID4VP, and SIOPv2 consent flows
+  with encrypted local persistence and human-readable terminal outcomes.
+- A reusable Lunar Aegis Dioxus design system, modular Maestro holder journeys,
+  hermetic headless contracts, and receipt-owned standalone/iOS demo harnesses.
+- A bounded Pi.dev software-factory loop with issue-backed delivery, affected
+  CI targets, exact-head review/merge controls, and public run metrics.
+
+### Security
+
+- Custody operations remain behind opaque ports and native user-presence
+  boundaries; seeds, private keys, credential claims, proofs, tokens, and
+  personal routes are excluded from ordinary logs and public evidence.
+- Transaction submission, protected DUST registration, credential consent,
+  replay rejection, and encrypted persistence fail closed on ambiguous or
+  stale authority.
+- CI enforces signed DCO commits, repository-test inventory, computed coverage,
+  dependency/source provenance, security scans, and capability-facade ratchets.
+
+### Known limitations
+
+- `0.2.0` is an operational-parity milestone, not production-network or
+  interoperability certification. Physical Android/Tailnet release evidence
+  remains owner-invoked and is not a routine PR gate.
+- Passport Vault is retained as development/future work and does not count as
+  `0.2.0` acceptance. Protected Vault presentation remains unavailable until
+  its trusted acceptance boundary is implemented and verified.
+- PreProd protected-DUST proof evidence requires operator-funded wallets and an
+  explicit public-prover privacy acknowledgement; no seed or acknowledgement
+  is inferred by the application or factory.
+- Dark mode is the shipped theme. Physical iOS, verified universal links, and
+  full VoiceOver/TalkBack traversal remain separate evidence boundaries.
+
+### Upgrade and backup compatibility
+
+- Back up every wallet profile before upgrading and verify recovery in `0.2.0`
+  before replacing an older installation or backup.
+- Portable custody backups now use authenticated format v6. Formats v1 and v4
+  remain read-only recoverable, but older builds cannot open v6 exports.
+- Application upgrades preserve supported profile, custody, credential,
+  preference, and diagnostic state. Test/demo reset commands remain explicit
+  destructive operations and are not part of normal upgrade or cleanup.
 
 ### Added
 
@@ -75,21 +147,10 @@ once public releases begin.
 
 ### Changed
 
+- Portable custody backups now emit authenticated format v6 with Argon2id
+  64 MiB, t=3, p=1. Custody v1/v4 remains read-only recoverable, but older
+  builds cannot open v6 exports; verify recovery with a compatible build before
+  replacing a legacy backup.
 - Routine feature delivery now uses a 70% quality/coverage budget, one
   automatic review round, and only the affected fast CI lanes; complete
   assurance remains available on demand and runs after delivery to `develop`.
-- Exact-head Claude reviews now select and attest a bounded reasoning effort.
-  High-risk attestations require at least `medium` effort.
-  Their default deadline is five minutes, reduced from fifteen to keep the
-  review checkpoint inside the factory SLA; the wrapper and verifier reject
-  longer deadlines, callers may select a shorter one, and a timeout is not a
-  pass.
-  The review budget remains positive and is capped at USD 10; sub-dollar
-  canaries remain valid.
-  New attestations use schema v3; rerun reviews whose legacy v2 evidence no
-  longer verifies instead of relabeling records that did not capture effort.
-  In-flight branches must rerun the exact-head review; legacy records are not
-  translated into the stronger shape.
-  Verification reports this migration through the distinct
-  `ClaudeReviewEvidenceVersionError` type rather than as a non-clean verdict;
-  the CLI emits its `CLAUDE_REVIEW_EVIDENCE_VERSION` code with exit status 3.

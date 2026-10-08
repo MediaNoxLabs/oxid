@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::BTreeSet, error::Error, fmt, future::Future, pin::Pin, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    error::Error,
+    fmt,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_wallet_domain::{
@@ -206,6 +213,26 @@ pub trait WalletAccountReadPort: Send + Sync {
     ) -> Result<WalletAccountSnapshot, WalletAccountPortError>;
 
     fn sync<'a>(&'a self, profile_id: &'a WalletProfileId) -> WalletAccountPortFuture<'a>;
+
+    /// Reads one explicitly captured realm. Implementations that cannot pin
+    /// the realm fail closed instead of silently following a later selection.
+    fn account_in_realm(
+        &self,
+        _profile_id: &WalletProfileId,
+        _network_id: &ChainNetworkId,
+    ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
+        Err(WalletAccountPortError::UnsupportedNetwork)
+    }
+
+    /// Synchronizes one explicitly captured realm. This keeps an asynchronous
+    /// operation from drifting when another command changes the selection.
+    fn sync_in_realm<'a>(
+        &'a self,
+        _profile_id: &'a WalletProfileId,
+        _network_id: &'a ChainNetworkId,
+    ) -> WalletAccountPortFuture<'a> {
+        Box::pin(async { Err(WalletAccountPortError::UnsupportedNetwork) })
+    }
 }
 
 /// Focused outgoing port for deriving an account through protected key custody.
@@ -263,6 +290,210 @@ pub struct WalletAddressView {
     pub value: String,
 }
 
+/// Largest accepted raw recipient or closed receive-request envelope.
+pub const MIDNIGHT_RECEIVE_REQUEST_MAX_BYTES: usize = 512;
+
+/// Payload-free failures for importing a public NIGHT receive request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MidnightReceiveRequestError {
+    TooLong,
+    ContainsControlCharacter,
+    InvalidEnvelope,
+    UnsupportedNetwork,
+    UnsupportedAsset,
+    InvalidAddress,
+    AddressNetworkMismatch,
+}
+
+impl fmt::Display for MidnightReceiveRequestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::TooLong => "receive request is too long",
+            Self::ContainsControlCharacter => "receive request contains control characters",
+            Self::InvalidEnvelope => "receive request format is invalid",
+            Self::UnsupportedNetwork => "receive request network is not active",
+            Self::UnsupportedAsset => "receive request asset is not supported",
+            Self::InvalidAddress => "receive request address is invalid",
+            Self::AddressNetworkMismatch => "receive request address belongs to another network",
+        })
+    }
+}
+
+impl Error for MidnightReceiveRequestError {}
+
+/// Imports a raw public recipient or the closed, ordered `midnight-receive:v1`
+/// envelope. The undeployed boundary has no authenticated genesis identity yet;
+/// its network label is therefore development-only routing context.
+pub fn import_midnight_night_receive_request(
+    active_network_id: &str,
+    value: &str,
+) -> Result<ChainAddress, MidnightReceiveRequestError> {
+    if value.len() > MIDNIGHT_RECEIVE_REQUEST_MAX_BYTES {
+        return Err(MidnightReceiveRequestError::TooLong);
+    }
+    if value.chars().any(char::is_control) {
+        return Err(MidnightReceiveRequestError::ContainsControlCharacter);
+    }
+
+    if !value.starts_with("midnight-receive:") {
+        return validate_midnight_unshielded_recipient(active_network_id, value);
+    }
+
+    let mut parts = value.split('|');
+    if parts.next() != Some("midnight-receive:v1") {
+        return Err(MidnightReceiveRequestError::InvalidEnvelope);
+    }
+    let network = parts
+        .next()
+        .and_then(|part| part.strip_prefix("network="))
+        .ok_or(MidnightReceiveRequestError::InvalidEnvelope)?;
+    if network != "undeployed" || active_network_id != network {
+        return Err(MidnightReceiveRequestError::UnsupportedNetwork);
+    }
+    let asset = parts
+        .next()
+        .and_then(|part| part.strip_prefix("asset="))
+        .ok_or(MidnightReceiveRequestError::InvalidEnvelope)?;
+    if asset != "NIGHT" {
+        return Err(MidnightReceiveRequestError::UnsupportedAsset);
+    }
+    let address = parts
+        .next()
+        .ok_or(MidnightReceiveRequestError::InvalidEnvelope)?;
+    let Some(address) = address.strip_prefix("address=") else {
+        return Err(MidnightReceiveRequestError::InvalidEnvelope);
+    };
+    if parts.next().is_some() {
+        return Err(MidnightReceiveRequestError::InvalidEnvelope);
+    }
+    validate_midnight_unshielded_recipient(active_network_id, address)
+}
+
+fn validate_midnight_unshielded_recipient(
+    active_network_id: &str,
+    value: &str,
+) -> Result<ChainAddress, MidnightReceiveRequestError> {
+    let has_lowercase = value.bytes().any(|byte| byte.is_ascii_lowercase());
+    let has_uppercase = value.bytes().any(|byte| byte.is_ascii_uppercase());
+    if has_lowercase && has_uppercase {
+        return Err(MidnightReceiveRequestError::InvalidAddress);
+    }
+    let normalized = if has_uppercase {
+        value.to_ascii_lowercase()
+    } else {
+        value.to_owned()
+    };
+    let address = ChainAddress::parse(ChainAddressKind::Unshielded, normalized)
+        .map_err(|_| MidnightReceiveRequestError::InvalidAddress)?;
+    let expected_hrp = if active_network_id == "mainnet" {
+        "mn_addr".to_owned()
+    } else {
+        format!("mn_addr_{active_network_id}")
+    };
+    let Some((actual_hrp, _)) = address.value().rsplit_once('1') else {
+        return Err(MidnightReceiveRequestError::InvalidAddress);
+    };
+    if actual_hrp != expected_hrp {
+        return Err(MidnightReceiveRequestError::AddressNetworkMismatch);
+    }
+    if !valid_midnight_bech32m(address.value(), &expected_hrp, 32) {
+        return Err(MidnightReceiveRequestError::InvalidAddress);
+    }
+    Ok(address)
+}
+
+// This closed decoder keeps external encoding crates out of the application
+// boundary while checking the exact BIP-350 checksum and 32-byte Midnight
+// public-address payload. Encoding remains owned by the Midnight adapter.
+fn valid_midnight_bech32m(value: &str, expected_hrp: &str, expected_bytes: usize) -> bool {
+    const BECH32M_RESIDUE: u32 = 0x2bc8_30a3;
+    const CHARSET: &[u8; 32] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+    if value.len() > 90 || !value.is_ascii() || value.bytes().any(|byte| byte.is_ascii_uppercase())
+    {
+        return false;
+    }
+    let Some((hrp, data)) = value.rsplit_once('1') else {
+        return false;
+    };
+    if hrp != expected_hrp || data.len() < 6 {
+        return false;
+    }
+
+    let mut checksum = 1_u32;
+    for byte in hrp.bytes() {
+        checksum = bech32_polymod_step(checksum, byte >> 5);
+    }
+    checksum = bech32_polymod_step(checksum, 0);
+    for byte in hrp.bytes() {
+        checksum = bech32_polymod_step(checksum, byte & 0x1f);
+    }
+
+    let mut values = Vec::with_capacity(data.len());
+    for byte in data.bytes() {
+        let Some(value) = CHARSET.iter().position(|candidate| *candidate == byte) else {
+            return false;
+        };
+        let value = value as u8;
+        values.push(value);
+        checksum = bech32_polymod_step(checksum, value);
+    }
+    if checksum != BECH32M_RESIDUE {
+        return false;
+    }
+
+    let payload = &values[..values.len() - 6];
+    let mut accumulator = 0_u32;
+    let mut bits = 0_u8;
+    let mut decoded_bytes = 0_usize;
+    for value in payload {
+        accumulator = (accumulator << 5) | u32::from(*value);
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            decoded_bytes += 1;
+        }
+    }
+    let padding_is_canonical =
+        bits < 5 && (bits == 0 || (accumulator << u32::from(8 - bits)) & 0xff == 0);
+    decoded_bytes == expected_bytes && padding_is_canonical
+}
+
+fn bech32_polymod_step(previous: u32, value: u8) -> u32 {
+    const GENERATORS: [u32; 5] = [
+        0x3b6a_57b2,
+        0x2650_8e6d,
+        0x1ea1_19fa,
+        0x3d42_33dd,
+        0x2a14_62b3,
+    ];
+    let top = previous >> 25;
+    let mut next = ((previous & 0x01ff_ffff) << 5) ^ u32::from(value);
+    for (index, generator) in GENERATORS.into_iter().enumerate() {
+        if (top >> index) & 1 == 1 {
+            next ^= generator;
+        }
+    }
+    next
+}
+
+/// Encodes a portable receive request for public NIGHT on the undeployed
+/// Midnight network.
+#[must_use]
+pub fn encode_midnight_night_receive_request(
+    network_id: &str,
+    address: &WalletAddressView,
+) -> Option<String> {
+    if network_id != "undeployed" || address.kind != "unshielded" {
+        return None;
+    }
+    import_midnight_night_receive_request(network_id, &address.value).ok()?;
+    Some(format!(
+        "midnight-receive:v1|network=undeployed|asset=NIGHT|address={}",
+        address.value
+    ))
+}
+
 /// Safe public account-derivation result returned to incoming adapters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DerivedWalletAccountView {
@@ -308,7 +539,7 @@ pub struct WalletAssetChangeView {
 /// Safe synchronization state for presentation and automation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WalletSyncStatusView {
-    pub state: String,
+    pub state: WalletSyncState,
     pub current_cursor: Option<u64>,
     pub target_cursor: Option<u64>,
     pub chain_tip_height: Option<u64>,
@@ -335,7 +566,7 @@ pub struct WalletAccountView {
     pub network_name: String,
     pub network_environment: String,
     pub account_id: Option<String>,
-    pub source: String,
+    pub source: WalletAccountSource,
     pub addresses: Vec<WalletAddressView>,
     pub balances: Vec<WalletAssetBalanceView>,
     pub sync: WalletSyncStatusView,
@@ -381,11 +612,11 @@ impl WalletAccountView {
             network_name: snapshot.network().display_name().as_str().to_owned(),
             network_environment: environment_name(snapshot.network().environment()).to_owned(),
             account_id: snapshot.account_id().map(|id| id.as_str().to_owned()),
-            source: account_source_name(snapshot.source()).to_owned(),
+            source: snapshot.source(),
             addresses,
             balances,
             sync: WalletSyncStatusView {
-                state: sync_state_name(snapshot.sync().state()).to_owned(),
+                state: snapshot.sync().state(),
                 current_cursor: snapshot.sync().current_cursor(),
                 target_cursor: snapshot.sync().target_cursor(),
                 chain_tip_height: snapshot.sync().chain_tip_height(),
@@ -439,6 +670,34 @@ pub trait SelectWalletNetworkUseCase: Send + Sync {
         &self,
         command: SelectWalletNetworkCommand,
     ) -> Result<WalletNetworkListView, WalletAccountError>;
+
+    fn select(&self, command: SelectWalletNetworkCommand) -> Result<(), WalletAccountError> {
+        self.execute(command).map(drop)
+    }
+}
+
+/// Application-owned observer for successful profile realm selections.
+///
+/// The selection service records the transition at the mutation boundary so
+/// concurrent readers cannot infer an incomplete A→B→A history from queries.
+pub trait WalletNetworkSelectionObserver: Send + Sync {
+    fn selected(
+        &self,
+        profile: &WalletProfileId,
+        network: &ChainNetworkId,
+    ) -> Result<(), WalletAccountPortError>;
+}
+
+struct NoopWalletNetworkSelectionObserver;
+
+impl WalletNetworkSelectionObserver for NoopWalletNetworkSelectionObserver {
+    fn selected(
+        &self,
+        _: &WalletProfileId,
+        _: &ChainNetworkId,
+    ) -> Result<(), WalletAccountPortError> {
+        Ok(())
+    }
 }
 
 /// Incoming use case for deriving an account without handling private bytes.
@@ -462,12 +721,43 @@ pub trait SyncWalletAccountUseCase: Send + Sync {
 /// Application service for catalog and selection operations.
 pub struct WalletNetworkService<N> {
     networks: Arc<N>,
+    selection_observer: Arc<dyn WalletNetworkSelectionObserver>,
+    selection_gate: Arc<Mutex<()>>,
 }
 
 impl<N> WalletNetworkService<N> {
     #[must_use]
-    pub const fn new(networks: Arc<N>) -> Self {
-        Self { networks }
+    pub fn new(networks: Arc<N>) -> Self {
+        Self {
+            networks,
+            selection_observer: Arc::new(NoopWalletNetworkSelectionObserver),
+            selection_gate: Arc::new(Mutex::new(())),
+        }
+    }
+
+    #[must_use]
+    pub fn with_selection_observer(
+        networks: Arc<N>,
+        selection_observer: Arc<dyn WalletNetworkSelectionObserver>,
+    ) -> Self {
+        Self {
+            networks,
+            selection_observer,
+            selection_gate: Arc::new(Mutex::new(())),
+        }
+    }
+
+    #[must_use]
+    pub fn with_selection_observer_and_gate(
+        networks: Arc<N>,
+        selection_observer: Arc<dyn WalletNetworkSelectionObserver>,
+        selection_gate: Arc<Mutex<()>>,
+    ) -> Self {
+        Self {
+            networks,
+            selection_observer,
+            selection_gate,
+        }
     }
 
     fn view(
@@ -537,10 +827,34 @@ where
             .map_err(WalletAccountError::InvalidProfileIdentifier)?;
         let network_id = ChainNetworkId::parse(command.network_id)
             .map_err(WalletAccountError::InvalidNetworkIdentifier)?;
+        let _selection = self
+            .selection_gate
+            .lock()
+            .map_err(|_| WalletAccountError::Port(WalletAccountPortError::Unavailable))?;
         self.networks
             .select_network(&profile_id, &network_id)
             .map_err(WalletAccountError::Port)?;
+        self.selection_observer
+            .selected(&profile_id, &network_id)
+            .map_err(WalletAccountError::Port)?;
         self.view(&profile_id)
+    }
+
+    fn select(&self, command: SelectWalletNetworkCommand) -> Result<(), WalletAccountError> {
+        let profile = WalletProfileId::parse(command.profile_id)
+            .map_err(WalletAccountError::InvalidProfileIdentifier)?;
+        let network = ChainNetworkId::parse(command.network_id)
+            .map_err(WalletAccountError::InvalidNetworkIdentifier)?;
+        let _selection = self
+            .selection_gate
+            .lock()
+            .map_err(|_| WalletAccountError::Port(WalletAccountPortError::Unavailable))?;
+        self.networks
+            .select_network(&profile, &network)
+            .map_err(WalletAccountError::Port)?;
+        self.selection_observer
+            .selected(&profile, &network)
+            .map_err(WalletAccountError::Port)
     }
 }
 
@@ -730,25 +1044,6 @@ const fn transaction_status_name(status: WalletTransactionStatus) -> &'static st
         WalletTransactionStatus::Confirmed => "confirmed",
         WalletTransactionStatus::PartiallyApplied => "partially_applied",
         WalletTransactionStatus::Failed => "failed",
-    }
-}
-
-const fn sync_state_name(state: WalletSyncState) -> &'static str {
-    match state {
-        WalletSyncState::NeverSynced => "never_synced",
-        WalletSyncState::Syncing => "syncing",
-        WalletSyncState::Synced => "synced",
-        WalletSyncState::Stalled => "stalled",
-        WalletSyncState::Unavailable => "unavailable",
-    }
-}
-
-const fn account_source_name(source: WalletAccountSource) -> &'static str {
-    match source {
-        WalletAccountSource::Live => "live",
-        WalletAccountSource::Cached => "cached",
-        WalletAccountSource::Simulated => "simulated",
-        WalletAccountSource::Unavailable => "unavailable",
     }
 }
 
@@ -991,11 +1286,141 @@ mod tests {
         )
         .expect("account query succeeds");
 
-        assert_eq!(view.source, "simulated");
+        assert_eq!(view.source, WalletAccountSource::Simulated);
         assert_eq!(view.balances[0].atomic_units, u128::MAX.to_string());
         assert_eq!(view.addresses[0].kind, "unshielded");
         assert_eq!(view.transactions[0].transaction_id, "tx_new");
-        assert_eq!(view.sync.state, "synced");
+        assert_eq!(view.sync.state, WalletSyncState::Synced);
+    }
+
+    #[test]
+    fn undeployed_public_night_request_is_versioned_and_injection_safe() {
+        let value = "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
+        let address = WalletAddressView {
+            kind: "unshielded".to_owned(),
+            value: value.to_owned(),
+        };
+
+        assert_eq!(
+            encode_midnight_night_receive_request("undeployed", &address).as_deref(),
+            Some(format!(
+                "midnight-receive:v1|network=undeployed|asset=NIGHT|address={value}"
+            ))
+            .as_deref()
+        );
+        assert!(encode_midnight_night_receive_request("preprod", &address).is_none());
+        assert!(
+            encode_midnight_night_receive_request(
+                "undeployed",
+                &WalletAddressView {
+                    kind: "shielded".to_owned(),
+                    value: "mn_shield_undeployed1validated".to_owned(),
+                },
+            )
+            .is_none()
+        );
+        assert!(
+            encode_midnight_night_receive_request(
+                "undeployed",
+                &WalletAddressView {
+                    kind: "unshielded".to_owned(),
+                    value: "mn_addr_undeployed1not_a_checked_address".to_owned(),
+                },
+            )
+            .is_none()
+        );
+        assert!(
+            encode_midnight_night_receive_request(
+                "undeployed",
+                &WalletAddressView {
+                    kind: "unshielded".to_owned(),
+                    value: "mn_addr_undeployed1valid|asset=DUST".to_owned(),
+                },
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn imports_only_the_closed_undeployed_public_night_envelope() {
+        let address =
+            "mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh";
+        assert_eq!(
+            import_midnight_night_receive_request(
+                "undeployed",
+                &format!("midnight-receive:v1|network=undeployed|asset=NIGHT|address={address}"),
+            )
+            .expect("closed envelope is accepted")
+            .value(),
+            address
+        );
+        assert!(import_midnight_night_receive_request("undeployed", address).is_ok());
+        assert_eq!(
+            import_midnight_night_receive_request("undeployed", &address.to_ascii_uppercase())
+                .expect("uniformly uppercase Bech32m is accepted")
+                .value(),
+            address
+        );
+        let mixed_case = address.replacen('m', "M", 1);
+        assert_eq!(
+            import_midnight_night_receive_request("undeployed", &mixed_case),
+            Err(MidnightReceiveRequestError::InvalidAddress)
+        );
+
+        assert_eq!(
+            import_midnight_night_receive_request(
+                "undeployed",
+                &format!("midnight-receive:v1|network=undeployed|asset=DUST|address={address}"),
+            ),
+            Err(MidnightReceiveRequestError::UnsupportedAsset)
+        );
+        assert_eq!(
+            import_midnight_night_receive_request(
+                "undeployed",
+                &format!("midnight-receive:v1|network=preprod|asset=NIGHT|address={address}"),
+            ),
+            Err(MidnightReceiveRequestError::UnsupportedNetwork)
+        );
+        assert_eq!(
+            import_midnight_night_receive_request("preprod", address),
+            Err(MidnightReceiveRequestError::AddressNetworkMismatch)
+        );
+        let mut checksum_tampered = address.to_owned();
+        checksum_tampered.pop();
+        checksum_tampered.push('q');
+        assert_eq!(
+            import_midnight_night_receive_request("undeployed", &checksum_tampered),
+            Err(MidnightReceiveRequestError::InvalidAddress)
+        );
+
+        for payload in [
+            format!("midnight-receive:v1|asset=NIGHT|network=undeployed|address={address}"),
+            format!("midnight-receive:v1|network=undeployed|asset=NIGHT|address={address}|x=y"),
+            format!(
+                "midnight-receive:v1|network=undeployed|asset=NIGHT|address=mn_shield-addr_undeployed1{address}"
+            ),
+        ] {
+            assert!(import_midnight_night_receive_request("undeployed", &payload).is_err());
+        }
+    }
+
+    #[test]
+    fn receive_import_rejects_oversized_control_and_wrong_network_without_echoing_payload() {
+        assert_eq!(
+            import_midnight_night_receive_request("undeployed", &"x".repeat(513)),
+            Err(MidnightReceiveRequestError::TooLong)
+        );
+        assert_eq!(
+            import_midnight_night_receive_request("undeployed", "midnight-receive:v1\n"),
+            Err(MidnightReceiveRequestError::ContainsControlCharacter)
+        );
+        assert_eq!(
+            import_midnight_night_receive_request(
+                "preprod",
+                "midnight-receive:v1|network=undeployed|asset=NIGHT|address=mn_addr_undeployed1asujt0dayj4pelgq97wv75hjhscqv9epmzzpapkf8sy8c87jhh9smkp9zh",
+            ),
+            Err(MidnightReceiveRequestError::UnsupportedNetwork)
+        );
     }
 
     #[test]

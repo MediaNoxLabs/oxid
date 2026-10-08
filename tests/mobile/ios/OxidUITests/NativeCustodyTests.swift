@@ -12,56 +12,52 @@ final class NativeCustodyTests: XCTestCase {
         let application = XCUIApplication(bundleIdentifier: "io.medianox.oxid")
         application.launch()
         let createWallet = application.buttons["Create private wallet"]
-        if createWallet.waitForExistence(timeout: 5) {
-            XCTAssertTrue(
-                application.buttons["Restore from backup"].exists,
-                "a fresh installation must expose complete-wallet recovery before profile creation"
-            )
-            createWallet.tap()
-            application.buttons["Create and continue"].tap()
-            XCTAssertTrue(application.buttons["Skip for now"].waitForExistence(timeout: 10))
-            application.buttons["Skip for now"].tap()
-        }
-
-        let profileMenu = application.buttons["Open profile menu"]
-        XCTAssertTrue(profileMenu.waitForExistence(timeout: 15))
-        profileMenu.tap()
-        let settings = application.buttons["Open settings"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 15))
-        settings.tap()
-        let uninitialized = application.staticTexts["Uninitialized · Operating system"]
-        let unavailable = application.staticTexts["Unavailable · Not connected"]
-        let capabilityPresent = uninitialized.waitForExistence(timeout: 10)
-        XCTAssertTrue(capabilityPresent || unavailable.exists)
         XCTAssertTrue(
-            application.staticTexts["One encrypted wallet document"].exists,
-            "settings must expose the complete-wallet export surface"
+            createWallet.waitForExistence(timeout: 15),
+            "the reset native composition must begin at private-wallet onboarding"
         )
+        XCTAssertTrue(
+            application.buttons["Restore from backup"].exists,
+            "a fresh installation must expose complete-wallet recovery before profile creation"
+        )
+        createWallet.tap()
+        let createAndContinue = application.buttons["Create and continue"]
+        XCTAssertTrue(createAndContinue.waitForExistence(timeout: 10))
+        createAndContinue.tap()
+        let generateRecoveryPhrase = application.buttons["Generate recovery phrase"]
+        XCTAssertTrue(generateRecoveryPhrase.waitForExistence(timeout: 10))
+        XCTAssertFalse(
+            application.buttons["Skip for now"].exists,
+            "native onboarding must not bypass protected root creation"
+        )
+        generateRecoveryPhrase.tap()
 
-        if !capabilityPresent {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let passcodePrompt = springboard.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Enter iPhone Passcode")
+        ).firstMatch
+        let promptObserved = passcodePrompt.waitForExistence(timeout: 5)
+
+        if promptObserved {
             XCTAssertFalse(
-                application.buttons["Use my receive address"].exists,
-                "unavailable native custody must not release protected wallet material"
+                application.otherElements["New wallet recovery phrase"].exists,
+                "device authorization must complete before the recovery phrase is released"
             )
             return
         }
 
-        application.buttons["Wallet"].tap()
-        let activate = application.buttons["Activate protected Midnight account"]
-        XCTAssertTrue(activate.waitForExistence(timeout: 10))
-        activate.tap()
-
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let cancel = springboard.buttons["Cancel"]
-        let promptObserved = cancel.waitForExistence(timeout: 5)
-        if promptObserved { cancel.tap() }
-
-        let derived = application.buttons["Use my receive address"]
         let failedClosed = application.staticTexts["wallet authorization was denied"]
             .waitForExistence(timeout: 10)
             || application.staticTexts["wallet protection is unavailable"]
                 .waitForExistence(timeout: 1)
         XCTAssertTrue(promptObserved || failedClosed)
-        XCTAssertFalse(derived.exists, "cancelling or lacking user presence must not release custody")
+        XCTAssertFalse(
+            application.otherElements["New wallet recovery phrase"].exists,
+            "cancelling or lacking user presence must not release the recovery phrase"
+        )
+        XCTAssertFalse(
+            application.buttons["Finish and open wallet"].exists,
+            "cancelling or lacking user presence must not complete onboarding"
+        )
     }
 }

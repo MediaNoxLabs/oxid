@@ -366,6 +366,7 @@ impl CredentialPresentationProtocolPort for StandaloneOpenId4VpVerifier {
                 challenge_hash: prepared.challenge_hash,
                 verifier_domain_hash: prepared.verifier_domain_hash,
                 requested_claims: prepared.requested_claims.clone(),
+                authority: request.authority,
             };
             let proof = self
                 .proof
@@ -1059,6 +1060,11 @@ mod tests {
         VerificationStageView,
     };
     use oxid_foundation::UnixTimestampMillis;
+    use oxid_identity_application::{
+        AcceptedCredentialPresentationContext, AcceptedCredentialPresentationFlow,
+        CredentialPresentationAuthorityPort, CredentialPresentationFlowService,
+    };
+    use oxid_identity_domain::IdentityProfileId;
     use oxid_platform_ports::PlatformError;
     use oxid_presentation_application::{
         PresentationProofArtifact, UnavailablePresentationProof, UnavailablePresentationVerifier,
@@ -1070,6 +1076,21 @@ mod tests {
         fn now(&self) -> Result<UnixTimestampMillis, PlatformError> {
             Ok(UnixTimestampMillis::new(1_700_000_000_000))
         }
+    }
+
+    fn presentation_authority(
+        profile: &str,
+        presentation: &str,
+        credential: &str,
+    ) -> AcceptedCredentialPresentationFlow {
+        CredentialPresentationFlowService::new(Arc::new(Clock))
+            .mint(AcceptedCredentialPresentationContext::new(
+                IdentityProfileId::parse(profile).expect("identity profile"),
+                oxid_presentation_application::OPENID4VP_CREDENTIAL_PRESENTATION_FLOW_ID,
+                presentation,
+                credential,
+            ))
+            .expect("test presentation authority")
     }
 
     struct Credentials;
@@ -1259,14 +1280,17 @@ mod tests {
                 profile_id: profile.clone(),
                 presentation_id: prepared.id.clone(),
                 credential_id: "vc_one".to_owned(),
+                authority: presentation_authority("profile_one", prepared.id.as_str(), "vc_one"),
             })),
             Err(PresentationProtocolError::ProofUnavailable)
         );
+        let authority = presentation_authority("profile_one", prepared.id.as_str(), "vc_one");
         assert_eq!(
             futures::executor::block_on(adapter.present(ProtocolPresentCredentialRequest {
                 profile_id: profile,
                 presentation_id: prepared.id,
                 credential_id: "vc_one".to_owned(),
+                authority,
             })),
             Err(PresentationProtocolError::InvalidRequest)
         );
@@ -1294,11 +1318,13 @@ mod tests {
                 request: standalone_openid4vp_request(),
             }))
             .expect("prepare");
+        let authority = presentation_authority("profile_one", prepared.id.as_str(), "vc_one");
         let outcome =
             futures::executor::block_on(adapter.present(ProtocolPresentCredentialRequest {
                 profile_id: profile,
                 presentation_id: prepared.id,
                 credential_id: "vc_one".to_owned(),
+                authority,
             }))
             .expect("present");
         assert!(outcome.verifier_validated);

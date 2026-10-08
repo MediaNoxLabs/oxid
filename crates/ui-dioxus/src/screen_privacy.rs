@@ -10,7 +10,18 @@ use crate::Route;
 pub(crate) const fn route_forces_screen_privacy(route: Route) -> bool {
     matches!(
         route,
-        Route::Settings | Route::BackupRecovery | Route::Documents | Route::CredentialRequest
+        Route::Settings
+            | Route::Security
+            | Route::Backup
+            | Route::Recovery
+            | Route::Preferences
+            | Route::About
+            | Route::BackupRecovery
+            | Route::Documents
+            | Route::CredentialRequest
+            | Route::Present
+            | Route::ManageIdentities
+            | Route::DidAuthenticationRequest
     )
 }
 
@@ -36,10 +47,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn backup_and_credential_routes_force_native_snapshot_protection() {
-        assert!(route_forces_screen_privacy(Route::Settings));
+    fn sensitive_settings_identity_and_credential_routes_force_native_snapshot_protection() {
+        for route in [
+            Route::Settings,
+            Route::Security,
+            Route::Backup,
+            Route::Recovery,
+            Route::Preferences,
+            Route::About,
+        ] {
+            assert!(route_forces_screen_privacy(route), "{route:?}");
+        }
         assert!(route_forces_screen_privacy(Route::Documents));
         assert!(route_forces_screen_privacy(Route::CredentialRequest));
+        assert!(route_forces_screen_privacy(Route::Present));
+        assert!(route_forces_screen_privacy(Route::ManageIdentities));
+        assert!(route_forces_screen_privacy(Route::DidAuthenticationRequest));
         assert!(!route_forces_screen_privacy(Route::Home));
         assert!(!route_forces_screen_privacy(Route::Wallet));
     }

@@ -138,7 +138,7 @@ async function runSynthetic(t, overrides = {}) {
 test("the policy is closed and classifies every workspace package exactly once", async () => {
   const policy = await loadPolicy();
   const packages = await discoverWorkspacePackages(repoRoot);
-  assert.equal(packages.length, 45);
+  assert.equal(packages.length, 46);
   assert.doesNotThrow(() => validatePolicy(policy, packages));
   assert.deepEqual(policy.classifications.plainTestExclusions.map(({ package: name }) => name), ["oxid-app"]);
   assert.deepEqual(policy.classifications.plainTestExclusions[0].command, ["cargo", "test", "-p", "oxid-app"]);
@@ -461,11 +461,12 @@ test("hosted coverage supplies a fetched, non-empty source comparison base", asy
   assert.match(coverageJob, /fetch-depth: 0/u);
   assert.match(
     coverageJob,
-    /OXID_COVERAGE_BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.before \|\| 'origin\/develop' \}\}/u,
+    /OXID_COVERAGE_BASE: \$\{\{ github\.event\.pull_request\.base\.sha \|\| inputs\.comparison_base \|\| github\.event\.before \|\| 'origin\/develop' \}\}/u,
   );
   assert.match(coverageJob, /\.\/run\.sh coverage --strict/u);
-  assert.match(coverageJob, /timeout-minutes: 27/u);
-  assert.match(coverageJob, /name: Measure the non-UI workspace once\n        timeout-minutes: 25/u);
+  assert.match(coverageJob, /node scripts\/coverage\/verify-manifest\.mjs/u);
+  assert.match(coverageJob, /timeout-minutes: 42/u);
+  assert.match(coverageJob, /name: Measure the non-UI workspace once\n        timeout-minutes: 40/u);
   assert.match(coverageJob, /name: Upload immutable coverage-policy evidence\n        if: always\(\)/u);
   assert.match(coverageJob, /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/u);
   assert.match(coverageJob, /name: coverage-policy-evidence-\$\{\{ github\.sha \}\}/u);

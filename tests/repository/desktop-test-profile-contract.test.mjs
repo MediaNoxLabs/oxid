@@ -61,6 +61,30 @@ test("desktop driver startup contracts are phased, bounded, and payload-free", a
   assert.doesNotMatch(harness, /System Events|Accessibility/);
 });
 
+test("headless Portal source provenance is exact-pin-bound before service mutation", async () => {
+  const [harness, runbook] = await Promise.all([
+    text("scripts/e2e/portal-headless-e2e.sh"),
+    text("docs/factory/portal-macos-laptop.md"),
+  ]);
+
+  assert.match(harness, /git -C "\$RUN_TREE" fetch origin "\$PORTAL_COMMIT"/);
+  assert.match(harness, /fetch origin "\$PORTAL_COMMIT".*fail source-fetch/s);
+  assert.match(harness, /rev-parse FETCH_HEAD\^\{commit\}\)" = "\$PORTAL_COMMIT".*fail portal-commit/);
+  assert.match(harness, /rev-parse FETCH_HEAD\^\{tree\}\)" = "\$PORTAL_TREE".*fail portal-tree/);
+  assert.match(harness, /remote set-url origin "\$PORTAL_REMOTE"/);
+  assert.doesNotMatch(harness, /fetch origin integration/);
+  assert.match(harness, /portal-headless-e2e: FAIL phase=%s/);
+
+  const remoteLock = harness.indexOf('remote set-url origin "$PORTAL_REMOTE"');
+  const exactFetch = harness.indexOf('fetch origin "$PORTAL_COMMIT"');
+  const treeCheck = harness.indexOf('rev-parse FETCH_HEAD^{tree}');
+  const firstMutation = harness.indexOf('portal-consumer-lifecycle.sh" prerequisite');
+  assert.ok(remoteLock >= 0 && remoteLock < exactFetch);
+  assert.ok(exactFetch < treeCheck && treeCheck < firstMutation);
+  assert.match(runbook, /exact pinned Portal commit and tree,\s+independently of the mutable upstream branch head/);
+  assert.match(runbook, /fails before Docker or service\s+mutation/);
+});
+
 test("canonical macOS laptop lane runs headless before desktop and validates both exact-head records", async () => {
   const [justfile, runner] = await Promise.all([text("Justfile"), text("run.sh")]);
   const match = justfile.match(/^portal-macos-laptop-e2e:\n((?:    .*\n)+)/m);
@@ -237,10 +261,50 @@ test("desktop test feature is exact and its rendered-control driver has no direc
   assert.match(desktopHarness, /visibleScreenshotDenylistClear:true/);
 });
 
+test("developer pager smoke is isolated, viewport-bound, redacted, and owner-invoked", async () => {
+  const [app, main, driver, harness, justfile, ownershipSource] = await Promise.all([
+    text("apps/oxid/Cargo.toml"), text("apps/oxid/src/main.rs"),
+    text("crates/ui-dioxus/src/desktop_developer_pager_driver.rs"),
+    text("scripts/e2e/developer-pager-desktop-e2e.sh"), text("Justfile"),
+    text("scripts/architecture/capability-facades.json"),
+  ]);
+  assert.match(app, /desktop-developer-pager-test = \[[\s\S]*"developer-proof-benchmark"[\s\S]*"oxid-ui-dioxus\/desktop-developer-pager-driver"[\s\S]*\]/);
+  assert.match(main, /OXID_DEVELOPER_PAGER_VIEWPORT/);
+  assert.match(main, /"360x640"/);
+  assert.match(main, /"390x844"/);
+  assert.match(driver, /scroll:2/);
+  assert.match(driver, /developer-section-nav__item\.active/);
+  assert.match(driver, /oxid-developer-pager-screenshot-redaction/);
+  assert.match(driver, /window\.innerWidth/);
+  assert.match(driver, /getComputedStyle/);
+  assert.match(driver, /Create private wallet/);
+  assert.match(driver, /Open global application menu/);
+  assert.match(driver, /global-application-menu/);
+  assert.match(driver, /"Back"/);
+  assert.doesNotMatch(driver, /\.execute\(/);
+  for (const viewport of ["360x640", "390x844"]) assert.match(harness, new RegExp(`run_viewport ${viewport}`));
+  assert.match(harness, /CGPreflightScreenCaptureAccess\(\)/);
+  assert.match(harness, /screencapture -x -l "\$id"/);
+  assert.match(harness, /rm -rf -- "\$RUNTIME"/);
+  assert.match(harness, /rm -rf -- "\$RUNTIME\/home"/);
+  assert.match(harness, /evidence-denylist/);
+  assert.match(harness, /app=%s driver=%s reason=%s log=%s/);
+  assert.match(driver, /failed:invalid-code/);
+  assert.match(harness, /wait_for "\$CONTROL\/driver-admitted" 600/);
+  assert.match(harness, /cleanupOwned:true/);
+  assert.match(justfile, /developer-pager-desktop-e2e:\n\s+\.\/scripts\/e2e\/developer-pager-desktop-e2e\.sh/);
+  const uiOwnership = JSON.parse(ownershipSource).crates
+    .find((crate) => crate.name === "oxid-ui-dioxus").capabilityOwners
+    .find((owner) => owner.name === "desktop-test-driver").modulePathPrefixes;
+  assert.ok(uiOwnership.includes("crates/ui-dioxus/src/desktop_developer_pager_driver"));
+});
+
 test("normal release gate excludes every desktop-test marker and localhost route", async () => {
   const release = await text("scripts/check-ui-profile-release.sh");
   assert.match(release, /OXID_DESKTOP_PORTAL_TEST_PROFILE/);
   assert.match(release, /desktop-portal-test compiled outside ARM64 macOS/);
+  assert.match(release, /desktop-developer-pager-test compiled outside ARM64 macOS/);
+  assert.match(release, /normal release binary contains the developer pager test profile/);
   assert.match(release, /portal-offer\\\.capability/);
   assert.match(
     release,

@@ -793,10 +793,22 @@ impl DidResolution {
     }
 }
 
+/// Authoritative knowledge about whether a DID has been published to its network.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DidPublicationState {
+    /// A successful resolution or publication boundary established publication.
+    Published,
+    /// The DID was created locally and has not crossed a publication boundary.
+    Unpublished,
+    /// Legacy or incomplete lifecycle evidence cannot establish either state.
+    Unknown,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DidRecord {
     profile_id: IdentityProfileId,
     resolution: DidResolution,
+    publication_state: DidPublicationState,
 }
 
 impl DidRecord {
@@ -805,7 +817,13 @@ impl DidRecord {
         Self {
             profile_id,
             resolution,
+            publication_state: DidPublicationState::Unknown,
         }
+    }
+    #[must_use]
+    pub const fn with_publication_state(mut self, publication_state: DidPublicationState) -> Self {
+        self.publication_state = publication_state;
+        self
     }
     #[must_use]
     pub const fn profile_id(&self) -> &IdentityProfileId {
@@ -814,6 +832,10 @@ impl DidRecord {
     #[must_use]
     pub const fn resolution(&self) -> &DidResolution {
         &self.resolution
+    }
+    #[must_use]
+    pub const fn publication_state(&self) -> DidPublicationState {
+        self.publication_state
     }
     #[must_use]
     pub fn into_resolution(self) -> DidResolution {

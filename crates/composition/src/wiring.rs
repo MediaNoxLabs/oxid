@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -38,7 +38,6 @@ use oxid_adapter_openid4vp::{CredentialDisclosureCandidateSource, StandaloneOpen
 use oxid_adapter_passport_vault::NativePassportVaultContractStateDecoder;
 use oxid_adapter_passport_vault::StandalonePassportVaultCredential;
 use oxid_adapter_siopv2::{DidSelfIssuedIdentityProof, StandaloneSiopV2Verifier};
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_adapter_storage_dev::DevelopmentWalletOnboardingAuthorization;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_storage_mobile::NativeMobileWalletOnboardingAuthorization;
@@ -52,9 +51,13 @@ use super::identity::{
 use super::passport_vault::{
     PassportVaultRepositoryComposition, headless_passport_vault_repository,
 };
-use super::services::ApplicationServices;
+use super::{
+    AutomaticDustRealmReconciler, WalletDustSettlementCapability, services::ApplicationServices,
+};
+#[cfg(any(target_os = "ios", target_os = "android", target_os = "macos"))]
+use oxid_adapter_platform_system::NativePublicTextExporter;
 #[cfg(any(target_os = "ios", target_os = "android"))]
-use oxid_adapter_platform_system::{NativePublicTextExporter, NativeScreenPrivacy};
+use oxid_adapter_platform_system::NativeScreenPrivacy;
 use oxid_adapter_platform_system::{OsRandom, SystemClock};
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_storage_json::JsonWalletProfileRepository;
@@ -83,11 +86,15 @@ use oxid_diagnostics_application::{
     ClearDiagnosticsUseCase, DiagnosticEventSinkPort, DiagnosticsService,
     GetDiagnosticSnapshotUseCase,
 };
+use oxid_identity_application::UnavailableDidDeployment;
 use oxid_identity_application::{
-    CreateDidUseCase, DeactivateDidUseCase, DidJubjubChallengeSigningPort, DidLifecyclePort,
+    CreateDidUseCase, CredentialIssuanceFlowService, CredentialPresentationFlowService,
+    DeactivateDidUseCase, DeployDidUseCase, DidJubjubChallengeSigningPort, DidLifecyclePort,
     DidPublicationService, DidResolutionPort, DidService, ForgetDidUseCase, GetDidRecordUseCase,
-    ListDidRecordsUseCase, PublishDidUseCase, ResolveDidUseCase, SignDidPayloadUseCase,
-    UpdateDidUseCase,
+    ListDidRecordsUseCase, PublishDidUseCase, ResolveDidUseCase,
+    SelfIssuedAuthenticationFlowService, SignCredentialIssuancePayloadUseCase,
+    SignCredentialPresentationBundleUseCase, SignDidPayloadUseCase,
+    SignSelfIssuedAuthenticationPayloadUseCase, UpdateDidUseCase,
 };
 use oxid_passport_vault_application::{
     AuthorizePassportVaultCallUseCase, CancelPassportVaultCallSubmissionUseCase,
@@ -95,29 +102,30 @@ use oxid_passport_vault_application::{
     DecodePassportVaultContractStateUseCase, DepositPassportVaultLockUseCase,
     GetPassportVaultCallSubmissionStatusUseCase, GetPassportVaultCallUseCase,
     ListPassportVaultCallSubmissionsUseCase, ListPassportVaultLocksUseCase,
-    PassportVaultContractCallService, PassportVaultContractStateDecoderPort,
-    PassportVaultContractStateService, PassportVaultContractStateSourcePort,
-    PassportVaultCredentialPort, PassportVaultService, PreparePassportVaultCallUseCase,
-    ReadPassportVaultContractStateUseCase, ReconcilePassportVaultCallSubmissionUseCase,
-    SubmitPassportVaultCallUseCase, UnavailablePassportVaultContractCall,
-    UnavailablePassportVaultContractStateSource, UnavailablePassportVaultCredential,
-    WithdrawPassportVaultLockUseCase,
+    PassportVaultActivityStore, PassportVaultContractCallService,
+    PassportVaultContractStateDecoderPort, PassportVaultContractStateService,
+    PassportVaultContractStateSourcePort, PassportVaultCredentialPort, PassportVaultService,
+    PreparePassportVaultCallUseCase, ReadPassportVaultContractStateUseCase,
+    ReconcilePassportVaultCallSubmissionUseCase, SubmitPassportVaultCallUseCase,
+    UnavailablePassportVaultContractCall, UnavailablePassportVaultContractStateSource,
+    UnavailablePassportVaultCredential, WithdrawPassportVaultLockUseCase,
 };
+#[cfg(not(any(target_os = "ios", target_os = "android", target_os = "macos")))]
+use oxid_platform_ports::UnavailablePublicTextExporter;
 use oxid_platform_ports::{
     IdentityLinkIngressPort, PublicTextExportPort, QrScannerPort, ScreenPrivacyPort,
 };
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_platform_ports::{
-    UnavailableIdentityLinkIngress, UnavailablePublicTextExporter, UnavailableQrScanner,
-    UnavailableScreenPrivacy,
+    UnavailableIdentityLinkIngress, UnavailableQrScanner, UnavailableScreenPrivacy,
 };
 use oxid_presentation_application::{
     AcceptCredentialPresentationUseCase, CancelCredentialPresentationUseCase,
     CredentialPresentationProtocolPort, CredentialPresentationService,
-    GetCredentialPresentationUseCase, ListCredentialPresentationsUseCase,
-    PrepareCredentialPresentationUseCase, RefuseCredentialPresentationUseCase,
-    SetCredentialPresentationForegroundUseCase, UnavailableCredentialPresentationProtocol,
-    UnavailablePresentationVerifier,
+    GetCredentialPresentationUseCase, ListCredentialPresentationActivityUseCase,
+    ListCredentialPresentationsUseCase, PrepareCredentialPresentationUseCase,
+    RefuseCredentialPresentationUseCase, SetCredentialPresentationForegroundUseCase,
+    UnavailableCredentialPresentationProtocol, UnavailablePresentationVerifier,
 };
 #[cfg(all(
     feature = "mobile-compact-artifacts",
@@ -128,13 +136,87 @@ use oxid_protocol_application::{
     AcceptCredentialIssuanceUseCase, AcceptSelfIssuedAuthenticationUseCase,
     CredentialIssuanceProtocolPort, CredentialIssuanceService, GetCredentialIssuanceUseCase,
     GetSelfIssuedAuthenticationUseCase, IdentityRequestRouterPort, IdentityRequestRoutingService,
-    IssuedCredentialSinkPort, ListCredentialIssuancesUseCase, ListSelfIssuedAuthenticationsUseCase,
+    IssuedCredentialSinkPort, ListCredentialIssuanceActivityUseCase,
+    ListCredentialIssuancesUseCase, ListSelfIssuedAuthenticationsUseCase,
     PrepareCredentialIssuanceUseCase, PrepareSelfIssuedAuthenticationUseCase,
     RefuseCredentialIssuanceUseCase, RefuseSelfIssuedAuthenticationUseCase,
     SelfIssuedAuthenticationProtocolPort, SelfIssuedAuthenticationService,
     UnavailableCredentialIssuanceProtocol, UnavailableIssuedCredentialSink,
     UnavailableSelfIssuedAuthenticationProtocol,
 };
+
+struct CredentialIssuanceAuthorityBridge(Arc<CredentialIssuanceFlowService>);
+
+impl oxid_protocol_application::CredentialIssuanceAuthorityPort
+    for CredentialIssuanceAuthorityBridge
+{
+    fn mint(
+        &self,
+        request: oxid_protocol_application::CredentialIssuanceAuthorityRequest,
+    ) -> Result<
+        oxid_identity_application::AcceptedCredentialIssuanceFlow,
+        oxid_protocol_application::AcceptedFlowApprovalError,
+    > {
+        self.0
+            .mint_for_accepted_transport(
+                request.profile_id,
+                request.holder_did,
+                request.method_id,
+                request.flow_id.to_owned(),
+                request.session_id,
+            )
+            .map_err(|_| oxid_protocol_application::AcceptedFlowApprovalError::Unavailable)
+    }
+}
+
+struct SelfIssuedAuthenticationAuthorityBridge(Arc<SelfIssuedAuthenticationFlowService>);
+
+impl oxid_protocol_application::SelfIssuedAuthenticationAuthorityPort
+    for SelfIssuedAuthenticationAuthorityBridge
+{
+    fn mint(
+        &self,
+        request: oxid_protocol_application::SelfIssuedAuthenticationAuthorityRequest,
+    ) -> Result<
+        oxid_identity_application::AcceptedSelfIssuedAuthenticationFlow,
+        oxid_protocol_application::AcceptedFlowApprovalError,
+    > {
+        self.0
+            .mint_for_accepted_transport(
+                request.profile_id,
+                request.holder_did,
+                request.method_id,
+                request.flow_id.to_owned(),
+                request.session_id,
+            )
+            .map_err(|_| oxid_protocol_application::AcceptedFlowApprovalError::Unavailable)
+    }
+}
+
+struct CredentialPresentationAuthorityBridge(Arc<CredentialPresentationFlowService>);
+
+impl oxid_presentation_application::CredentialPresentationAuthorityPort
+    for CredentialPresentationAuthorityBridge
+{
+    fn mint(
+        &self,
+        request: oxid_presentation_application::CredentialPresentationAuthorityRequest,
+    ) -> Result<
+        oxid_identity_application::AcceptedCredentialPresentationFlow,
+        oxid_presentation_application::CredentialPresentationApprovalError,
+    > {
+        self.0
+            .mint_for_accepted_transport(
+                request.profile_id,
+                request.flow_id.to_owned(),
+                request.session_id,
+                request.credential_id,
+            )
+            .map_err(|_| {
+                oxid_presentation_application::CredentialPresentationApprovalError::Unavailable
+            })
+    }
+}
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 use oxid_wallet_application::UnavailablePortableWalletBackupDocuments;
 #[cfg(target_arch = "wasm32")]
@@ -142,6 +224,7 @@ use oxid_wallet_application::UnavailableWalletDustRegistrationPort;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_wallet_application::WalletDustRegistrationPort;
 use oxid_wallet_application::{
+    AuthorizeDevelopmentWalletDustRegistrationUseCase, AuthorizeDevelopmentWalletTransferUseCase,
     AuthorizeWalletDustRegistrationUseCase, AuthorizeWalletTransferUseCase,
     CancelSelectedWalletRealmSyncUseCase, CancelWalletDustRegistrationSubmissionUseCase,
     CancelWalletDustSyncUseCase, CancelWalletShieldedSyncUseCase,
@@ -150,28 +233,34 @@ use oxid_wallet_application::{
     ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase, GetActiveWalletProfileService,
     GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase, GetWalletBackupReceiptUseCase,
     GetWalletDustRegistrationStatusUseCase, GetWalletDustRegistrationUseCase,
-    GetWalletDustSyncStatusUseCase, GetWalletSecurityStatusUseCase,
-    GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
-    GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
-    ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesService,
-    ListWalletTransferSubmissionsUseCase, LockWalletUseCase, PortableWalletBackupDocumentPort,
+    GetWalletDustSyncStatusUseCase, GetWalletOperationTimelineUseCase,
+    GetWalletSecurityStatusUseCase, GetWalletShieldedSyncStatusUseCase,
+    GetWalletTransferDraftUseCase, GetWalletTransferSubmissionStatusUseCase,
+    InitializeWalletSecurityUseCase, ListWalletKeysUseCase, ListWalletNetworksUseCase,
+    ListWalletProfilesService, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
+    ManageWalletActionWatchUseCase, PortableWalletBackupDocumentPort,
     PrepareShieldedWalletTransferUseCase, PrepareWalletDustRegistrationUseCase,
-    PrepareWalletTransferUseCase, ReconcileWalletDustRegistrationSubmissionUseCase,
+    PrepareWalletTransferUseCase, ReconcileSelectedWalletRealmUseCase,
+    ReconcileWalletDustRegistrationSubmissionUseCase, ReconcileWalletRealmLifecycleUseCase,
     ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
     RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupUseCase,
-    SelectWalletNetworkUseCase, SelectWalletProfileService, SelectedWalletRealmSyncService,
-    SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
-    SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase,
-    SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
-    WalletAccountDerivationPort, WalletAccountDerivationService, WalletAccountReadPort,
-    WalletAccountService, WalletBackupReceiptRepository, WalletBackupReceiptService,
-    WalletDustRegistrationService, WalletDustSyncPort, WalletDustSyncService,
-    WalletJubjubChallengeSigningPort, WalletKeyOperationPort, WalletKeyService, WalletNetworkPort,
-    WalletNetworkService, WalletOnboardingService, WalletPortableBackupPort,
-    WalletPortableBackupService, WalletProfileAssociationRepository, WalletProfileRepository,
-    WalletProtectionPort, WalletProtectionService, WalletRootRecoveryPort,
-    WalletRootRecoveryService, WalletShieldedSyncPort, WalletShieldedSyncService,
-    WalletTransactionPort, WalletTransactionService,
+    SelectWalletNetworkUseCase, SelectWalletProfileService, SelectedWalletRealmRuntime,
+    SelectedWalletRealmSyncService, SignWalletDataUseCase, StartWalletDustSyncUseCase,
+    StartWalletShieldedSyncUseCase, SubmitDevelopmentWalletDustRegistrationUseCase,
+    SubmitDevelopmentWalletTransferUseCase, SubmitWalletDustRegistrationUseCase,
+    SubmitWalletTransferUseCase, SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase,
+    UnlockWalletUseCase, WalletAccountDerivationPort, WalletAccountDerivationService,
+    WalletAccountReadPort, WalletAccountService, WalletBackupReceiptRepository,
+    WalletBackupReceiptService, WalletDerivedSecretUsePort,
+    WalletDustRegistrationRecoveryStoreProvider, WalletDustRegistrationService, WalletDustSyncPort,
+    WalletDustSyncService, WalletJubjubChallengeSigningPort, WalletKeyOperationPort,
+    WalletKeyService, WalletNetworkPort, WalletNetworkSelectionObserver, WalletNetworkService,
+    WalletOnboardingService, WalletPortableBackupPort, WalletPortableBackupService,
+    WalletProfileAssociationRepository, WalletProfileRepository, WalletProtectionPort,
+    WalletProtectionService, WalletRealmFacetState, WalletRealmLifecycleService,
+    WalletRealmReconciliationState, WalletRootRecoveryPort, WalletRootRecoveryService,
+    WalletShieldedSyncPort, WalletShieldedSyncService, WalletTransactionPort,
+    WalletTransactionService,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -224,27 +313,30 @@ pub(super) fn complete_wallet_recovery_journal() -> Arc<dyn RecoveryJournalPort>
 
 /// Adds private-wallet onboarding only after the caller has selected the exact
 /// network bound by its profile composition.
-pub(super) fn with_wallet_onboarding<R, S, M>(
+fn with_wallet_onboarding_authorization<R, S, M, A>(
     services: ApplicationServices,
     repository: Arc<R>,
     security: Arc<S>,
     midnight: Arc<M>,
     network_id: String,
+    authorization: Arc<A>,
 ) -> ApplicationServices
 where
     R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
     S: WalletProtectionPort + WalletRootRecoveryPort + 'static,
     M: WalletNetworkPort + WalletAccountDerivationPort + 'static,
+    A: oxid_wallet_application::WalletOnboardingAuthorizationPort + 'static,
 {
-    let Ok(recovery) =
-        WalletRootRecoveryService::new(repository, security, midnight, network_id.clone())
-    else {
+    let network_selection = services.select_wallet_network();
+    let Ok(recovery) = WalletRootRecoveryService::new(
+        repository,
+        security,
+        midnight,
+        network_selection,
+        network_id.clone(),
+    ) else {
         return services;
     };
-    #[cfg(any(target_os = "ios", target_os = "android"))]
-    let authorization = Arc::new(NativeMobileWalletOnboardingAuthorization);
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    let authorization = Arc::new(DevelopmentWalletOnboardingAuthorization);
     let onboarding = Arc::new(WalletOnboardingService::new(
         Arc::new(OsRandom),
         Arc::new(Bip39WalletMnemonic),
@@ -259,6 +351,58 @@ where
     ))
 }
 
+/// Adds deterministic onboarding to an explicitly selected development
+/// composition, including iOS and Android simulator builds.
+///
+/// Authorization follows the composition's trust boundary rather than the
+/// compilation target. Native and production compositions must call
+/// [`with_native_wallet_onboarding`] instead.
+pub(super) fn with_wallet_onboarding<R, S, M>(
+    services: ApplicationServices,
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    network_id: String,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
+    S: WalletProtectionPort + WalletRootRecoveryPort + 'static,
+    M: WalletNetworkPort + WalletAccountDerivationPort + 'static,
+{
+    with_wallet_onboarding_authorization(
+        services,
+        repository,
+        security,
+        midnight,
+        network_id,
+        Arc::new(DevelopmentWalletOnboardingAuthorization),
+    )
+}
+
+/// Adds platform-authorized onboarding to a native mobile composition.
+#[cfg(any(target_os = "ios", target_os = "android"))]
+pub(super) fn with_native_wallet_onboarding<R, S, M>(
+    services: ApplicationServices,
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    network_id: String,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository + WalletProfileAssociationRepository + 'static,
+    S: WalletProtectionPort + WalletRootRecoveryPort + 'static,
+    M: WalletNetworkPort + WalletAccountDerivationPort + 'static,
+{
+    with_wallet_onboarding_authorization(
+        services,
+        repository,
+        security,
+        midnight,
+        network_id,
+        Arc::new(NativeMobileWalletOnboardingAuthorization),
+    )
+}
+
 pub(super) fn compose_with_adapters<R, S, M>(
     repository: Arc<R>,
     security: Arc<S>,
@@ -268,9 +412,11 @@ where
     R: WalletProfileRepository
         + WalletProfileAssociationRepository
         + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -300,9 +446,11 @@ where
     R: WalletProfileRepository
         + WalletProfileAssociationRepository
         + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -340,9 +488,11 @@ where
     R: WalletProfileRepository
         + WalletProfileAssociationRepository
         + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -381,9 +531,106 @@ where
     R: WalletProfileRepository
         + WalletProfileAssociationRepository
         + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
+        + WalletJubjubChallengeSigningPort
+        + WalletPortableBackupPort
+        + PortableCustodyVaultPort
+        + 'static,
+    M: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletAccountDerivationPort
+        + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
+        + WalletShieldedSyncPort
+        + WalletTransactionPort
+        + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
+        + NativeMidnightCompositionCapability
+        + 'static,
+    F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
+{
+    compose_with_adapters_and_credential_profile_and_did_approvals(
+        repository,
+        security,
+        midnight,
+        credential_presentation,
+        credential_profile,
+        protection_for_security,
+        None,
+    )
+}
+
+pub(super) fn compose_with_adapters_and_credential_profile_and_did_approvals<R, S, M, F>(
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    credential_presentation: CredentialPresentationComposition,
+    credential_profile: HeadlessCredentialProfile,
+    protection_for_security: F,
+    did_approvals: Option<Arc<oxid_identity_application::DidApprovalService>>,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
+        + 'static,
+    S: WalletProtectionPort
+        + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
+        + WalletJubjubChallengeSigningPort
+        + WalletPortableBackupPort
+        + PortableCustodyVaultPort
+        + 'static,
+    M: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletAccountDerivationPort
+        + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
+        + WalletShieldedSyncPort
+        + WalletTransactionPort
+        + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
+        + NativeMidnightCompositionCapability
+        + 'static,
+    F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
+{
+    compose_with_adapters_and_credential_profile_and_approvals(
+        repository,
+        security,
+        midnight,
+        credential_presentation,
+        credential_profile,
+        protection_for_security,
+        None,
+        did_approvals,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn compose_with_adapters_and_credential_profile_and_approvals<R, S, M, F>(
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    credential_presentation: CredentialPresentationComposition,
+    credential_profile: HeadlessCredentialProfile,
+    protection_for_security: F,
+    approvals: Option<Arc<oxid_wallet_application::WalletApprovalService>>,
+    did_approvals: Option<Arc<oxid_identity_application::DidApprovalService>>,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
+        + 'static,
+    S: WalletProtectionPort
+        + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -449,7 +696,7 @@ where
             Arc::new(SystemClock),
             trust_anchor,
         ));
-    compose_with_identity_adapters(
+    compose_with_identity_adapters_and_approvals(
         repository,
         security,
         midnight,
@@ -470,6 +717,8 @@ where
         },
         headless_passport_vault_repository(),
         protection_for_security,
+        approvals,
+        did_approvals,
     )
 }
 
@@ -485,9 +734,60 @@ where
     R: WalletProfileRepository
         + WalletProfileAssociationRepository
         + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
         + 'static,
     S: WalletProtectionPort
         + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
+        + WalletJubjubChallengeSigningPort
+        + WalletPortableBackupPort
+        + PortableCustodyVaultPort
+        + 'static,
+    M: WalletNetworkPort
+        + WalletAccountReadPort
+        + WalletAccountDerivationPort
+        + WalletDustSyncPort
+        + NativeWalletDustRegistrationCapability
+        + WalletShieldedSyncPort
+        + WalletTransactionPort
+        + MidnightPublicCallContextSource
+        + MidnightDiagnosticAttachPort
+        + NativeMidnightCompositionCapability
+        + 'static,
+    F: FnOnce(Arc<S>) -> Arc<dyn WalletProtectionPort>,
+{
+    compose_with_identity_adapters_and_approvals(
+        repository,
+        security,
+        midnight,
+        identity_adapters,
+        passport_vault_repository,
+        protection_for_security,
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn compose_with_identity_adapters_and_approvals<R, S, M, F>(
+    repository: Arc<R>,
+    security: Arc<S>,
+    midnight: Arc<M>,
+    identity_adapters: IdentityAdapters,
+    passport_vault_repository: PassportVaultRepositoryComposition,
+    protection_for_security: F,
+    approvals: Option<Arc<oxid_wallet_application::WalletApprovalService>>,
+    did_approvals: Option<Arc<oxid_identity_application::DidApprovalService>>,
+) -> ApplicationServices
+where
+    R: WalletProfileRepository
+        + WalletProfileAssociationRepository
+        + WalletBackupReceiptRepository
+        + WalletDustRegistrationRecoveryStoreProvider
+        + 'static,
+    S: WalletProtectionPort
+        + WalletKeyOperationPort
+        + WalletDerivedSecretUsePort
         + WalletJubjubChallengeSigningPort
         + WalletPortableBackupPort
         + PortableCustodyVaultPort
@@ -561,9 +861,9 @@ where
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let identity_link_ingress: Arc<dyn IdentityLinkIngressPort> =
         Arc::new(UnavailableIdentityLinkIngress);
-    #[cfg(any(target_os = "ios", target_os = "android"))]
+    #[cfg(any(target_os = "ios", target_os = "android", target_os = "macos"))]
     let public_text_exporter: Arc<dyn PublicTextExportPort> = Arc::new(NativePublicTextExporter);
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    #[cfg(not(any(target_os = "ios", target_os = "android", target_os = "macos")))]
     let public_text_exporter: Arc<dyn PublicTextExportPort> =
         Arc::new(UnavailablePublicTextExporter);
     #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -595,6 +895,11 @@ where
     #[cfg(target_arch = "wasm32")]
     let compact_presentation_proof_available = false;
     let clock = Arc::new(SystemClock);
+    let approvals = approvals.unwrap_or_else(|| {
+        Arc::new(oxid_wallet_application::WalletApprovalService::new(
+            clock.clone(),
+        ))
+    });
     let random = Arc::new(OsRandom);
     let complete_custody: Arc<dyn PortableCustodyVaultPort> = security.clone();
     let complete_profiles: Arc<dyn WalletProfileRepository> = repository.clone();
@@ -616,16 +921,27 @@ where
         Arc::clone(&random),
     ));
     let list_wallet_profiles = Arc::new(ListWalletProfilesService::new(Arc::clone(&repository)));
-    let select_wallet_profile = Arc::new(SelectWalletProfileService::new(Arc::clone(&repository)));
+    let select_wallet_profile = Arc::new(SelectWalletProfileService::with_approvals(
+        Arc::clone(&repository),
+        approvals.clone(),
+    ));
     let get_active_wallet_profile =
         Arc::new(GetActiveWalletProfileService::new(Arc::clone(&repository)));
     let backup_receipts = Arc::new(WalletBackupReceiptService::new(
-        repository,
+        Arc::clone(&repository),
         Arc::clone(&clock),
     ));
     let protection_port = protection_for_security(Arc::clone(&security));
-    let protection = Arc::new(WalletProtectionService::new(protection_port));
+    let protection = Arc::new(WalletProtectionService::with_approvals(
+        protection_port,
+        approvals.clone(),
+    ));
     let portable_backup = Arc::new(WalletPortableBackupService::new(Arc::clone(&security)));
+    let sensitive_keys = Arc::new(oxid_wallet_application::WalletSensitiveKeyService::new(
+        security.clone(),
+        approvals.clone(),
+        Arc::new(oxid_adapter_platform_system::SystemSha256),
+    ));
     let keys = Arc::new(WalletKeyService::new(security));
     let midnight_public_call_context: Arc<dyn MidnightPublicCallContextSource> = midnight.clone();
     #[cfg(not(target_arch = "wasm32"))]
@@ -633,34 +949,89 @@ where
     #[cfg(not(target_arch = "wasm32"))]
     let midnight_contract_call_submission: Arc<dyn MidnightContractCallSubmissionPort> =
         midnight.clone();
-    let networks = Arc::new(WalletNetworkService::new(Arc::clone(&midnight)));
+    let deploy_did: Arc<dyn DeployDidUseCase> = Arc::new(UnavailableDidDeployment);
+    let selected_realm_runtime = Arc::new(Mutex::new(SelectedWalletRealmRuntime::default()));
+    let selected_realm_selection_gate = Arc::new(Mutex::new(()));
+    let selected_realm_sync = Arc::new(
+        SelectedWalletRealmSyncService::with_runtime_and_selection_gate(
+            Arc::clone(&midnight),
+            selected_realm_runtime,
+            Arc::clone(&selected_realm_selection_gate),
+        ),
+    );
+    let selection_observer: Arc<dyn WalletNetworkSelectionObserver> = selected_realm_sync.clone();
+    let networks = Arc::new(WalletNetworkService::with_selection_observer_and_gate(
+        Arc::clone(&midnight),
+        selection_observer,
+        selected_realm_selection_gate,
+    ));
     let account_derivation = Arc::new(WalletAccountDerivationService::new(Arc::clone(&midnight)));
     let accounts = Arc::new(WalletAccountService::new(Arc::clone(&midnight)));
     let dust = Arc::new(WalletDustSyncService::new(Arc::clone(&midnight)));
     let shielded = Arc::new(WalletShieldedSyncService::new(Arc::clone(&midnight)));
-    let selected_realm_sync = Arc::new(SelectedWalletRealmSyncService::new(Arc::clone(&midnight)));
     #[cfg(not(target_arch = "wasm32"))]
-    let dust_registrations = Arc::new(WalletDustRegistrationService::new(
+    let dust_registrations = Arc::new(WalletDustRegistrationService::with_approvals(
         Arc::clone(&midnight),
         Arc::clone(&clock),
+        approvals.clone(),
     ));
     #[cfg(target_arch = "wasm32")]
-    let dust_registrations = Arc::new(WalletDustRegistrationService::new(
+    let dust_registrations = Arc::new(WalletDustRegistrationService::with_approvals(
         Arc::new(UnavailableWalletDustRegistrationPort),
         Arc::clone(&clock),
+        approvals.clone(),
     ));
-    let transactions = Arc::new(WalletTransactionService::new(midnight, Arc::clone(&clock)));
+    let transactions = Arc::new(WalletTransactionService::with_approvals(
+        midnight,
+        Arc::clone(&clock),
+        approvals,
+    ));
     let publish_did = did_publisher.map(|publisher| {
         Arc::new(DidPublicationService::new(
             Arc::clone(&did_repository),
             publisher,
         )) as Arc<dyn PublishDidUseCase>
     });
-    let identity = Arc::new(DidService::from_ports(
-        did_repository,
-        did_resolver,
-        did_lifecycle,
-    ));
+    let credential_issuance_authority = did_approvals
+        .as_ref()
+        .map(|_| Arc::new(CredentialIssuanceFlowService::new(clock.clone())));
+    let self_issued_authentication_authority = did_approvals
+        .as_ref()
+        .map(|_| Arc::new(SelfIssuedAuthenticationFlowService::new(clock.clone())));
+    let credential_presentation_authority = did_approvals
+        .as_ref()
+        .map(|_| Arc::new(CredentialPresentationFlowService::new(clock.clone())));
+    let identity = DidService::from_ports(did_repository, Arc::clone(&did_resolver), did_lifecycle);
+    let identity = match did_approvals {
+        Some(approvals) => identity.with_approvals(
+            approvals,
+            Arc::new(oxid_adapter_platform_system::SystemSha256),
+        ),
+        None => identity,
+    };
+    let identity = match &credential_issuance_authority {
+        Some(authority) => identity.with_credential_issuance_authority(
+            Arc::clone(authority),
+            Arc::new(oxid_adapter_platform_system::SystemSha256),
+        ),
+        None => identity,
+    };
+    let identity = match &self_issued_authentication_authority {
+        Some(authority) => identity.with_self_issued_authentication_authority(
+            Arc::clone(authority),
+            Arc::new(oxid_adapter_platform_system::SystemSha256),
+        ),
+        None => identity,
+    };
+    let identity = match &credential_presentation_authority {
+        Some(authority) => identity.with_credential_presentation_authority(
+            Arc::clone(authority),
+            Arc::new(oxid_adapter_platform_system::SystemSha256),
+            Arc::clone(&did_jubjub_challenge_signing),
+        ),
+        None => identity,
+    };
+    let identity = Arc::new(identity);
     #[cfg(not(target_arch = "wasm32"))]
     let protected_passport_vault_presentations = standalone_passport_vault.then(|| {
         let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
@@ -694,7 +1065,7 @@ where
         ),
         CredentialIssuanceComposition::Standalone => {
             let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
-            let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+            let sign_did: Arc<dyn SignCredentialIssuancePayloadUseCase> = identity.clone();
             let proof = Arc::new(DidCredentialHolderProof::new(
                 Arc::clone(&get_did),
                 sign_did,
@@ -723,7 +1094,7 @@ where
         ))]
         CredentialIssuanceComposition::Portal(factory) => {
             let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
-            let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+            let sign_did: Arc<dyn SignCredentialIssuancePayloadUseCase> = identity.clone();
             let proof = Arc::new(DidCredentialHolderProof::new(
                 Arc::clone(&get_did),
                 sign_did,
@@ -736,10 +1107,14 @@ where
             )
         }
     };
-    let issuance = Arc::new(CredentialIssuanceService::new(
-        issuance_protocol,
-        issuance_sink,
-    ));
+    let issuance = Arc::new(match credential_issuance_authority {
+        Some(authority) => CredentialIssuanceService::with_authority(
+            issuance_protocol,
+            issuance_sink,
+            Arc::new(CredentialIssuanceAuthorityBridge(authority)),
+        ),
+        None => CredentialIssuanceService::new(issuance_protocol, issuance_sink),
+    });
     let presentation_protocol: Arc<dyn CredentialPresentationProtocolPort> =
         match credential_presentation {
             CredentialPresentationComposition::Unavailable => {
@@ -749,22 +1124,23 @@ where
                 let list: Arc<dyn ListCredentialsUseCase> = credentials.clone();
                 let disclosure: Arc<dyn GetCredentialDisclosureUseCase> = credentials.clone();
                 let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
-                let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
-                let holder_authorization =
-                    Arc::new(ManagedDidJubjubHolderAuthorization::with_challenge_signing(
+                let sign_bundle: Arc<dyn SignCredentialPresentationBundleUseCase> =
+                    identity.clone();
+                let holder_authorization = Arc::new(
+                    ManagedDidJubjubHolderAuthorization::with_presentation_bundle(
                         get_did,
-                        sign_did,
-                        did_jubjub_challenge_signing,
-                    ));
-                let holder_proof: Arc<dyn CompactHolderProofPort> = holder_authorization.clone();
+                        sign_bundle,
+                    ),
+                );
                 Arc::new(StandaloneOpenId4VpVerifier::new(
                     Arc::new(CredentialDisclosureCandidateSource::new(list, disclosure)),
-                    Arc::new(PreflightOnlyCompactPresentationProof::with_holder_proof(
-                        presentation_credential_repository,
-                        clock.clone(),
-                        holder_authorization,
-                        holder_proof,
-                    )),
+                    Arc::new(
+                        PreflightOnlyCompactPresentationProof::with_accepted_holder_proof(
+                            presentation_credential_repository,
+                            clock.clone(),
+                            holder_authorization,
+                        ),
+                    ),
                     Arc::new(UnavailablePresentationVerifier),
                     clock.clone(),
                 ))
@@ -775,23 +1151,24 @@ where
                 let disclosure: Arc<dyn GetCredentialDisclosureUseCase> = credentials.clone();
                 let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
                 let verifier_get_did = Arc::clone(&get_did);
-                let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
-                let holder_authorization =
-                    Arc::new(ManagedDidJubjubHolderAuthorization::with_challenge_signing(
+                let sign_bundle: Arc<dyn SignCredentialPresentationBundleUseCase> =
+                    identity.clone();
+                let holder_authorization = Arc::new(
+                    ManagedDidJubjubHolderAuthorization::with_presentation_bundle(
                         get_did,
-                        sign_did,
-                        did_jubjub_challenge_signing,
-                    ));
-                let holder_proof: Arc<dyn CompactHolderProofPort> = holder_authorization.clone();
+                        sign_bundle,
+                    ),
+                );
                 Arc::new(StandaloneOpenId4VpVerifier::new(
                     Arc::new(CredentialDisclosureCandidateSource::new(list, disclosure)),
-                    Arc::new(PreflightOnlyCompactPresentationProof::with_runtime(
-                        presentation_credential_repository,
-                        clock.clone(),
-                        holder_authorization,
-                        holder_proof,
-                        Arc::clone(&runtime),
-                    )),
+                    Arc::new(
+                        PreflightOnlyCompactPresentationProof::with_accepted_runtime(
+                            presentation_credential_repository,
+                            clock.clone(),
+                            holder_authorization,
+                            Arc::clone(&runtime),
+                        ),
+                    ),
                     Arc::new(NativeCompactPresentationVerifier::new(
                         runtime,
                         clock.clone(),
@@ -809,20 +1186,19 @@ where
                 let disclosure: Arc<dyn GetCredentialDisclosureUseCase> = credentials.clone();
                 let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
                 let verifier_get_did = Arc::clone(&get_did);
-                let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
-                let holder_authorization =
-                    Arc::new(ManagedDidJubjubHolderAuthorization::with_challenge_signing(
+                let sign_bundle: Arc<dyn SignCredentialPresentationBundleUseCase> =
+                    identity.clone();
+                let holder_authorization = Arc::new(
+                    ManagedDidJubjubHolderAuthorization::with_presentation_bundle(
                         get_did,
-                        sign_did,
-                        did_jubjub_challenge_signing,
-                    ));
-                let holder_proof: Arc<dyn CompactHolderProofPort> = holder_authorization.clone();
+                        sign_bundle,
+                    ),
+                );
                 let proof = Arc::new(ForegroundCompactPresentationProofWorker::new(Arc::new(
-                    PreflightOnlyCompactPresentationProof::with_runtime(
+                    PreflightOnlyCompactPresentationProof::with_accepted_runtime(
                         presentation_credential_repository,
                         clock.clone(),
                         holder_authorization,
-                        holder_proof,
                         Arc::clone(&runtime),
                     ),
                 )));
@@ -841,8 +1217,13 @@ where
                 ))
             }
         };
-    let credential_presentation =
-        Arc::new(CredentialPresentationService::new(presentation_protocol));
+    let credential_presentation = Arc::new(match credential_presentation_authority {
+        Some(authority) => CredentialPresentationService::with_authority(
+            presentation_protocol,
+            Arc::new(CredentialPresentationAuthorityBridge(authority)),
+        ),
+        None => CredentialPresentationService::new(presentation_protocol),
+    });
     let self_issued_protocol: Arc<dyn SelfIssuedAuthenticationProtocolPort> =
         match self_issued_authentication {
             SelfIssuedAuthenticationComposition::Unavailable => {
@@ -850,7 +1231,8 @@ where
             }
             SelfIssuedAuthenticationComposition::Standalone => {
                 let get_did: Arc<dyn GetDidRecordUseCase> = identity.clone();
-                let sign_did: Arc<dyn SignDidPayloadUseCase> = identity.clone();
+                let sign_did: Arc<dyn SignSelfIssuedAuthenticationPayloadUseCase> =
+                    identity.clone();
                 let proof = Arc::new(DidSelfIssuedIdentityProof::new(
                     Arc::clone(&get_did),
                     sign_did,
@@ -858,8 +1240,13 @@ where
                 Arc::new(StandaloneSiopV2Verifier::new(proof, get_did, clock.clone()))
             }
         };
-    let self_issued_authentication =
-        Arc::new(SelfIssuedAuthenticationService::new(self_issued_protocol));
+    let self_issued_authentication = Arc::new(match self_issued_authentication_authority {
+        Some(authority) => SelfIssuedAuthenticationService::with_authority(
+            self_issued_protocol,
+            Arc::new(SelfIssuedAuthenticationAuthorityBridge(authority)),
+        ),
+        None => SelfIssuedAuthenticationService::new(self_issued_protocol),
+    });
     let passport_vault_state_persistence = passport_vault_repository.persistence;
     let passport_vault_credential: Arc<dyn PassportVaultCredentialPort> =
         if standalone_passport_vault {
@@ -871,11 +1258,15 @@ where
         } else {
             Arc::new(UnavailablePassportVaultCredential)
         };
-    let passport_vault = Arc::new(PassportVaultService::new(
-        passport_vault_repository.repository,
-        passport_vault_credential,
-        random.clone(),
-    ));
+    let passport_vault_activity = Arc::new(PassportVaultActivityStore::new(clock.clone()));
+    let passport_vault = Arc::new(
+        PassportVaultService::new(
+            passport_vault_repository.repository,
+            passport_vault_credential,
+            random.clone(),
+        )
+        .with_activity(passport_vault_activity.clone()),
+    );
     #[cfg(not(target_arch = "wasm32"))]
     let passport_vault_contract_state_decoder: Arc<dyn PassportVaultContractStateDecoderPort> =
         Arc::new(NativePassportVaultContractStateDecoder);
@@ -888,12 +1279,15 @@ where
         passport_vault_contract_state_decoder,
         Arc::clone(&passport_vault_contract_state_source),
     ));
-    let passport_vault_contract_calls = Arc::new(PassportVaultContractCallService::new(
-        passport_vault_contract_state_source,
-        Arc::new(UnavailablePassportVaultContractCall),
-        clock.clone(),
-        random,
-    ));
+    let passport_vault_contract_calls = Arc::new(
+        PassportVaultContractCallService::new(
+            passport_vault_contract_state_source,
+            Arc::new(UnavailablePassportVaultContractCall),
+            clock.clone(),
+            random,
+        )
+        .with_activity(passport_vault_activity.clone()),
+    );
 
     let get_wallet_security_status: Arc<dyn GetWalletSecurityStatusUseCase> = protection.clone();
     let initialize_wallet_security: Arc<dyn InitializeWalletSecurityUseCase> = protection.clone();
@@ -911,19 +1305,23 @@ where
     let record_wallet_backup_receipt: Arc<dyn RecordWalletBackupReceiptUseCase> = backup_receipts;
     let generate_wallet_key: Arc<dyn GenerateWalletKeyUseCase> = keys.clone();
     let list_wallet_keys: Arc<dyn ListWalletKeysUseCase> = keys.clone();
-    let sign_wallet_data: Arc<dyn SignWalletDataUseCase> = keys.clone();
-    let delete_wallet_key: Arc<dyn DeleteWalletKeyUseCase> = keys;
+    let sign_wallet_data: Arc<dyn SignWalletDataUseCase> = sensitive_keys.clone();
+    let delete_wallet_key: Arc<dyn DeleteWalletKeyUseCase> = sensitive_keys;
     let list_wallet_networks: Arc<dyn ListWalletNetworksUseCase> = networks.clone();
     let select_wallet_network: Arc<dyn SelectWalletNetworkUseCase> = networks;
     let derive_wallet_account: Arc<dyn DeriveWalletAccountUseCase> = account_derivation;
     let get_wallet_account: Arc<dyn GetWalletAccountUseCase> = accounts.clone();
     let sync_wallet_account: Arc<dyn SyncWalletAccountUseCase> = accounts;
-    let sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase> =
+    let raw_sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase> =
         selected_realm_sync.clone();
     let get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase> =
         selected_realm_sync.clone();
+    let raw_selected_realm_reconciliation: Arc<dyn ReconcileSelectedWalletRealmUseCase> =
+        selected_realm_sync.clone();
     let cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase> =
-        selected_realm_sync;
+        selected_realm_sync.clone();
+    let get_wallet_operation_timeline: Arc<dyn GetWalletOperationTimelineUseCase> =
+        selected_realm_sync.clone();
     let get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase> = dust.clone();
     let start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase> = dust.clone();
     let cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase> = dust;
@@ -935,8 +1333,14 @@ where
         dust_registrations.clone();
     let authorize_wallet_dust_registration: Arc<dyn AuthorizeWalletDustRegistrationUseCase> =
         dust_registrations.clone();
+    let authorize_development_wallet_dust_registration: Arc<
+        dyn AuthorizeDevelopmentWalletDustRegistrationUseCase,
+    > = dust_registrations.clone();
     let submit_wallet_dust_registration: Arc<dyn SubmitWalletDustRegistrationUseCase> =
         dust_registrations.clone();
+    let submit_development_wallet_dust_registration: Arc<
+        dyn SubmitDevelopmentWalletDustRegistrationUseCase,
+    > = dust_registrations.clone();
     let get_wallet_dust_registration: Arc<dyn GetWalletDustRegistrationUseCase> =
         dust_registrations.clone();
     let get_wallet_dust_registration_status: Arc<dyn GetWalletDustRegistrationStatusUseCase> =
@@ -946,12 +1350,53 @@ where
     > = dust_registrations.clone();
     let reconcile_wallet_dust_registration_submission: Arc<
         dyn ReconcileWalletDustRegistrationSubmissionUseCase,
-    > = dust_registrations;
+    > = dust_registrations.clone();
+    let dust_registration_recovery = repository.wallet_dust_registration_recovery_store();
+    let wallet_dust_settlement = Arc::new(
+        WalletDustSettlementCapability::with_automatic_development_authority_and_recovery_store(
+            Arc::clone(&get_selected_wallet_realm_sync),
+            Arc::clone(&raw_sync_selected_wallet_realm),
+            Arc::clone(&get_wallet_dust_sync_status),
+            Arc::clone(&prepare_wallet_dust_registration),
+            authorize_development_wallet_dust_registration,
+            submit_development_wallet_dust_registration,
+            Arc::clone(&get_wallet_dust_registration_status),
+            Arc::clone(&reconcile_wallet_dust_registration_submission),
+            dust_registration_recovery,
+        )
+        .expect("DUST settlement capability construction is infallible"),
+    );
+    let automatic_dust_reconciler = Arc::new(AutomaticDustRealmReconciler::new(
+        raw_sync_selected_wallet_realm,
+        raw_selected_realm_reconciliation,
+        Arc::clone(&get_selected_wallet_realm_sync),
+        Arc::clone(&wallet_dust_settlement),
+    ));
+    let sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase> =
+        automatic_dust_reconciler.clone();
+    let selected_realm_reconciliation: Arc<dyn ReconcileSelectedWalletRealmUseCase> =
+        automatic_dust_reconciler;
+    let wallet_realm_lifecycle = Arc::new(WalletRealmLifecycleService::new(
+        selected_realm_reconciliation,
+        WalletRealmReconciliationState {
+            account: WalletRealmFacetState::Missing,
+            dust: WalletRealmFacetState::Missing,
+            shielded: WalletRealmFacetState::Missing,
+        },
+    ));
+    let reconcile_wallet_realm_lifecycle: Arc<dyn ReconcileWalletRealmLifecycleUseCase> =
+        wallet_realm_lifecycle.clone();
+    let manage_wallet_action_watch: Arc<dyn ManageWalletActionWatchUseCase> =
+        wallet_realm_lifecycle;
     let prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase> =
         transactions.clone();
     let prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase> = transactions.clone();
     let authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase> = transactions.clone();
     let submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase> = transactions.clone();
+    let authorize_development_wallet_transfer: Arc<dyn AuthorizeDevelopmentWalletTransferUseCase> =
+        transactions.clone();
+    let submit_development_wallet_transfer: Arc<dyn SubmitDevelopmentWalletTransferUseCase> =
+        transactions.clone();
     let get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase> = transactions.clone();
     let get_wallet_transfer_submission_status: Arc<dyn GetWalletTransferSubmissionStatusUseCase> =
         transactions.clone();
@@ -982,7 +1427,9 @@ where
     let accept_credential_issuance: Arc<dyn AcceptCredentialIssuanceUseCase> = issuance.clone();
     let refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase> = issuance.clone();
     let get_credential_issuance: Arc<dyn GetCredentialIssuanceUseCase> = issuance.clone();
-    let list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase> = issuance;
+    let list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase> = issuance.clone();
+    let list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase> =
+        issuance;
     let prepare_self_issued_authentication: Arc<dyn PrepareSelfIssuedAuthenticationUseCase> =
         self_issued_authentication.clone();
     let accept_self_issued_authentication: Arc<dyn AcceptSelfIssuedAuthenticationUseCase> =
@@ -1007,6 +1454,8 @@ where
     let get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase> =
         credential_presentation.clone();
     let list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase> =
+        credential_presentation.clone();
+    let list_credential_presentation_activity: Arc<dyn ListCredentialPresentationActivityUseCase> =
         credential_presentation;
     let list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase> = passport_vault.clone();
     let decode_passport_vault_contract_state: Arc<dyn DecodePassportVaultContractStateUseCase> =
@@ -1083,7 +1532,10 @@ where
         sync_wallet_account,
         sync_selected_wallet_realm,
         get_selected_wallet_realm_sync,
+        reconcile_wallet_realm_lifecycle,
+        manage_wallet_action_watch,
         cancel_selected_wallet_realm_sync,
+        get_wallet_operation_timeline,
         get_wallet_dust_sync_status,
         start_wallet_dust_sync,
         cancel_wallet_dust_sync,
@@ -1097,15 +1549,20 @@ where
         get_wallet_dust_registration_status,
         cancel_wallet_dust_registration_submission,
         reconcile_wallet_dust_registration_submission,
+        wallet_dust_settlement,
         prepare_shielded_wallet_transfer,
         prepare_wallet_transfer,
         authorize_wallet_transfer,
         submit_wallet_transfer,
+        authorize_development_wallet_transfer,
+        submit_development_wallet_transfer,
         get_wallet_transfer_draft,
         get_wallet_transfer_submission_status,
         cancel_wallet_transfer_submission,
         list_wallet_transfer_submissions,
         reconcile_wallet_transfer_submission,
+        deploy_did,
+        did_resolution_port: Arc::clone(&did_resolver),
         create_did,
         resolve_did,
         list_did_records,
@@ -1128,6 +1585,7 @@ where
         refuse_credential_issuance,
         get_credential_issuance,
         list_credential_issuances,
+        list_credential_issuance_activity,
         prepare_self_issued_authentication,
         accept_self_issued_authentication,
         refuse_self_issued_authentication,
@@ -1140,7 +1598,9 @@ where
         refuse_credential_presentation,
         get_credential_presentation,
         list_credential_presentations,
+        list_credential_presentation_activity,
         list_passport_vault_locks,
+        passport_vault_activity,
         decode_passport_vault_contract_state,
         read_passport_vault_contract_state,
         create_passport_vault_lock,

@@ -12,6 +12,21 @@ use oxid_adapter_passport_vault::{
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_passport_vault_application::PassportVaultContractStateSourcePort;
 
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-movement-approval",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+#[path = "development_movement_approval_fixture.rs"]
+mod development_movement_approval_fixture;
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-movement-approval",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+use self::development_movement_approval_fixture::development_movement_approval_service;
 #[cfg(not(target_arch = "wasm32"))]
 use super::environment::{
     HeadlessCompositionError, HeadlessEnvironmentPlan, HeadlessEnvironmentPolicy,
@@ -27,6 +42,13 @@ use super::identity::HeadlessCredentialProfile;
 use super::passport_vault::{with_native_passport_vault_calls, with_passport_vault_state_source};
 #[cfg(all(
     not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-movement-approval",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+use super::profile_headless::compose_headless_standalone_with_checkpoint_options_and_movement_approvals;
+#[cfg(all(
+    not(target_arch = "wasm32"),
     not(target_os = "ios"),
     not(target_os = "android")
 ))]
@@ -38,11 +60,25 @@ use super::profile_headless::{
     compose_headless_with_presentation, compose_headless_with_submission_journal_and_presentation,
 };
 #[cfg(all(
+    feature = "development-did-approval",
+    not(target_arch = "wasm32"),
+    not(any(target_os = "ios", target_os = "android"))
+))]
+use super::profile_headless::{
+    compose_headless_with_credential_profile_and_did_approvals, development_did_approval_service,
+};
+#[cfg(all(
     not(target_arch = "wasm32"),
     not(target_os = "ios"),
     not(target_os = "android")
 ))]
 use super::profile_mobile::compose_development_portal_from_config;
+#[cfg(all(
+    feature = "development-did-approval",
+    not(target_arch = "wasm32"),
+    not(any(target_os = "ios", target_os = "android"))
+))]
+use super::profile_mobile::compose_development_portal_from_config_with_did_approvals;
 #[cfg(not(target_arch = "wasm32"))]
 use super::services::ApplicationServices;
 
@@ -62,6 +98,74 @@ pub fn compose_headless_from_environment() -> Result<ApplicationServices, Headle
 pub fn compose_native_headless_process_from_environment()
 -> Result<ApplicationServices, HeadlessCompositionError> {
     compose_headless_from_environment_with_policy(HeadlessEnvironmentPolicy::NativeHeadlessProcess)
+}
+
+/// Builds only the two persistent test-fixture profiles that need explicit DID
+/// lifecycle authority. Production executables cannot select this function.
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-did-approval",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+pub fn compose_native_headless_process_with_development_did_approval_from_environment()
+-> Result<ApplicationServices, HeadlessCompositionError> {
+    let plan = load_headless_environment_plan(HeadlessEnvironmentPolicy::NativeHeadlessProcess)?;
+    let approvals = development_did_approval_service();
+    match (plan.midnight_config, plan.portal) {
+        (Some(HeadlessMidnightConfig::Standalone(config)), Some(portal)) => {
+            Ok(compose_development_portal_from_config_with_did_approvals(
+                config,
+                portal,
+                plan.credential_presentation,
+                approvals,
+            ))
+        }
+        (None, credential_profile) if plan.submission_journal.is_none() => {
+            Ok(compose_headless_with_credential_profile_and_did_approvals(
+                plan.credential_presentation,
+                credential_profile.map_or(HeadlessCredentialProfile::Standalone, |portal| {
+                    HeadlessCredentialProfile::Portal(Box::new(portal))
+                }),
+                Some(approvals),
+            ))
+        }
+        _ => Err(HeadlessCompositionError::DevelopmentDidApprovalFixtureUnavailable),
+    }
+}
+
+/// Builds the separately named local scenario fixture with authority limited
+/// to the two NIGHT transfer approval intents. Runtime input cannot enable this
+/// function in the ordinary headless executable.
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "headless-portal-local",
+    feature = "development-movement-approval",
+    not(any(target_os = "ios", target_os = "android"))
+))]
+pub fn compose_native_headless_process_with_development_movement_approval_from_environment()
+-> Result<ApplicationServices, HeadlessCompositionError> {
+    let plan = load_headless_environment_plan(HeadlessEnvironmentPolicy::NativeHeadlessProcess)?;
+    match (plan.midnight_config, plan.portal) {
+        (Some(HeadlessMidnightConfig::Standalone(config)), None)
+            if plan.passport_vault_deployment_height.is_none()
+                && plan.passport_vault_composer.is_none() =>
+        {
+            let approvals = development_movement_approval_service();
+            Ok(
+                compose_headless_standalone_with_checkpoint_options_and_movement_approvals(
+                    config,
+                    plan.checkpoints,
+                    plan.dust_checkpoints,
+                    plan.shielded_checkpoints,
+                    plan.submission_journal,
+                    plan.credential_presentation,
+                    approvals,
+                ),
+            )
+        }
+        _ => Err(HeadlessCompositionError::DevelopmentMovementApprovalFixtureUnavailable),
+    }
 }
 
 /// Selects the exact Phase 1 Portal + local-standalone policy for the

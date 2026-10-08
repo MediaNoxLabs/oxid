@@ -12,11 +12,39 @@ readonly PROCESS_SUPPORT="$ROOT/scripts/e2e/android-avd-process-ownership.sh"
 readonly EVIDENCE_RENDERER="$ROOT/scripts/e2e/portal-virtual-mobile-evidence.mjs"
 readonly PORTAL_STATE="$ROOT/target/portal-virtual-mobile/runtime"
 readonly PORTAL_LOCK="$ROOT/target/portal-virtual-mobile/stack.lock"
-readonly RUN_ROOT="$ROOT/target/ios-portal-exact-sequence-simulator"
+readonly DIAGNOSTIC_ROOT="$ROOT/target/ios-portal-diagnostic"
+readonly DIAGNOSTIC_CACHE_ROOT="$ROOT/target/ios-portal-diagnostic-cache"
+readonly DIAGNOSTIC_CACHE_RECEIPT="$DIAGNOSTIC_CACHE_ROOT/receipt.json"
+readonly DIAGNOSTIC_APP_BUNDLE="$ROOT/target/dx/oxid-app/debug/ios/OxidApp.app"
+readonly DIAGNOSTIC_ARTIFACT_RECEIPT="$ROOT/target/dx/oxid-app/debug/ios/oxid-app-artifact-receipt.json"
+readonly OPERATION="${1:-run}"
+readonly DIAGNOSTIC_PHASE="${2:-}"
+early_fail() {
+  printf 'ios-portal-exact-sequence-simulator: FAIL phase=%s\n' "$1" >&2
+  exit 1
+}
+case "$OPERATION" in
+  run|--preflight) [ "$#" -le 1 ] && [ -z "$DIAGNOSTIC_PHASE" ] || early_fail operation ;;
+  --diagnostic-phase)
+    [ "$#" -eq 2 ] || early_fail diagnostic-phase
+    case "$DIAGNOSTIC_PHASE" in
+      cold-route|prepare-holder|route-refuse|malformed|protocol-error|protocol-timeout|issue-error|issue|restored) ;;
+      *) early_fail diagnostic-phase ;;
+    esac
+    ;;
+  *) early_fail operation ;;
+esac
+if [ "$OPERATION" = --diagnostic-phase ]; then
+  RUN_ROOT="$DIAGNOSTIC_ROOT/$DIAGNOSTIC_PHASE"
+else
+  RUN_ROOT="$ROOT/target/ios-portal-exact-sequence-simulator"
+fi
+readonly RUN_ROOT
 readonly PRIVATE_STATE="$RUN_ROOT/private"
 readonly PRIVATE_LOG="$PRIVATE_STATE/journey.log"
 readonly FAILURE_SCREENSHOT="$PRIVATE_STATE/failure.png"
 readonly EVIDENCE="$RUN_ROOT/evidence.json"
+readonly DIAGNOSTIC_RESULT="$RUN_ROOT/diagnostic.json"
 readonly PROTOCOL_ERROR_DIAGNOSTIC="$RUN_ROOT/protocol-error-diagnostic.json"
 readonly BUILD_RECEIPT="$PRIVATE_STATE/build-receipt.tsv"
 readonly RECEIPT="$PRIVATE_STATE/simulator-receipt.json"
@@ -25,12 +53,27 @@ readonly TRIGGER="openid-credential-offer://standalone-portal-test-fetch"
 readonly CONTROL_ORIGIN="http://127.0.0.1:18095"
 readonly PORTAL_COMMIT="25499870f84d77173c46e4af3021311decfb840b"
 readonly PORTAL_TREE="2d845d2293603dfd8adce5362c8a9941e6ba78a9"
-readonly OPERATION="${1:-run}"
+# Keep compilation separate from product execution: a cold bundle gets one bounded
+# budget, while every XCTest scenario keeps its independent execution budget.
+readonly XCTEST_COLD_BUILD_TIMEOUT_SECONDS=1800
+readonly XCTEST_SCENARIO_TIMEOUT_SECONDS=600
+readonly PORTAL_JOURNEY_TIMEOUT_SECONDS=5400
+readonly PORTAL_ACCEPTANCE_TIMEOUT_SECONDS=9000
 readonly -a PORTAL_PORTS=(18090 18091 18092 18093 18094 18095)
 readonly -a SHARED_PORTS=(6300 8088 9944)
 
 # shellcheck source=e2e/ios-simulator-ownership.sh
 source "$OWNERSHIP_SUPPORT"
+if [ "${1:-}" = --preflight ]; then
+  oxid_ios_supervise_acceptance "$ROOT" ios-portal-preflight 180 \
+    "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh" "$@"
+elif [ "${1:-}" = --diagnostic-phase ]; then
+  oxid_ios_supervise_acceptance "$ROOT" "ios-portal-diagnostic-$DIAGNOSTIC_PHASE" "$PORTAL_ACCEPTANCE_TIMEOUT_SECONDS" \
+    "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh" "$@"
+else
+  oxid_ios_supervise_acceptance "$ROOT" ios-portal-exact-sequence "$PORTAL_ACCEPTANCE_TIMEOUT_SECONDS" \
+    "$ROOT/scripts/test-ios-portal-exact-sequence-simulator.sh" "$@"
+fi
 # shellcheck source=e2e/android-avd-process-ownership.sh
 source "$PROCESS_SUPPORT"
 
@@ -39,6 +82,7 @@ launcher_pid=""
 arm_pid=""
 mediator_pid=""
 cleanup_running=0
+cleanup_owner_pid="${BASHPID:-$$}"
 cleanup_ok=true
 run_root_owned=0
 run_root_identity=""
@@ -48,6 +92,9 @@ portal_ready=0
 simulator_mutation_started=0
 simulator_owned=0
 evidence_published=0
+diagnostic_result_published=0
+diagnostic_build_reused=false
+diagnostic_started_at=$SECONDS
 journey_status="not_started"
 failure_phase="none"
 head=""
@@ -85,7 +132,17 @@ fail() {
   exit 1
 }
 
-case "$OPERATION" in run|--preflight) ;; *) fail operation ;; esac
+[ -z "$(git -C "$ROOT" status --porcelain)" ] || fail dirty-source
+if ! command -v nix >/dev/null 2>&1 \
+  && [ -x /nix/var/nix/profiles/default/bin/nix ]; then
+  export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+fi
+command -v nix >/dev/null 2>&1 || fail missing-tool
+if [ "${OXID_IOS_ACCEPTANCE_IN_NIX:-0}" != 1 ]; then
+  export OXID_SKIP_PI_PROVISION=1
+  exec nix develop "$ROOT" --command env \
+    OXID_IOS_ACCEPTANCE_IN_NIX=1 "$0" "$@"
+fi
 [ ! -e "$RUN_ROOT" ] && [ ! -L "$RUN_ROOT" ] || fail occupied-evidence
 [ "$(uname -s)" = Darwin ] || fail platform
 [ -z "${OXID_IOS_DEVICE:-}" ] || fail existing-device-selector
@@ -95,10 +152,13 @@ done
 [ -x /usr/bin/xcodebuild ] && [ -x /usr/bin/xcrun ] && [ -x /usr/bin/plutil ] || fail xcode-tools
 if timeout -k 1s 0.1s sleep 5; then fail timeout-capability; else [ "$?" -eq 124 ] || fail timeout-capability; fi
 
-readonly DEVELOPER_DIR_SELECTED="${OXID_XCODE_DEVELOPER_DIR:-}"
-readonly RUNTIME_ID="${OXID_IOS_RUNTIME_ID:-}"
-readonly DEVICE_TYPE_ID="${OXID_IOS_DEVICE_TYPE_ID:-}"
-oxid_ios_preflight "$DEVELOPER_DIR_SELECTED" "$RUNTIME_ID" "$DEVICE_TYPE_ID" || fail selectors
+developer_dir_selected="$(oxid_ios_discover_developer_directory "${OXID_XCODE_DEVELOPER_DIR:-}")" || fail simulator-capability
+selector_values="$(oxid_ios_resolve_selectors "$developer_dir_selected" "${OXID_IOS_RUNTIME_ID:-}" "${OXID_IOS_DEVICE_TYPE_ID:-}")" \
+  || fail simulator-capability
+IFS=$'\t' read -r runtime_id device_type_id <<<"$selector_values"
+readonly DEVELOPER_DIR_SELECTED="$developer_dir_selected"
+readonly RUNTIME_ID="$runtime_id"
+readonly DEVICE_TYPE_ID="$device_type_id"
 
 run_deadline() {
   local seconds="$1" remaining
@@ -182,6 +242,7 @@ write_evidence() {
       portal:{integrationCommit:"25499870f84d77173c46e4af3021311decfb840b",integrationTree:"2d845d2293603dfd8adce5362c8a9941e6ba78a9",provenanceSha256:"63d2dd182f1a315d8fe7677ae6481aecebd2fd9cff709cc438b6c0261a3cf4c7"},
       deployment:{manifestSchema:"oxid-portal-deployment-v3",authoritySchema:"oxid-app-profile-authority-v2"},
       platform:{kind:"ios_simulator",osFamily:"ios",apiLevel:$api,architecture:$architecture},
+      applicationState:{install:"fresh",restart:"preserved",migration:"not_exercised"},
       artifactSha256:$artifact,scenarios:$scenarios,totalCounters:$counters,
       offer:{triggerOnly:true,capabilityMode0600:$capabilityMode,capabilityHex64:$capabilityHex,
         stagedAtomically:$staged,burnedBeforeNetwork:$burned,oneShotReadyThenEmpty:$oneShot,
@@ -206,9 +267,106 @@ write_evidence() {
   evidence_published=1
 }
 
+diagnostic_rust_target() {
+  case "$(uname -m)" in
+    arm64) printf '%s\n' aarch64-apple-ios-sim ;;
+    x86_64) printf '%s\n' x86_64-apple-ios ;;
+    *) return 1 ;;
+  esac
+}
+
+diagnostic_artifact_configuration() {
+  printf '%s\n' 'mobile,standalone-development,standalone-local,standalone-portal|ui=user|custody=development|network=local|tailnet=none|portal=local|proving=unavailable'
+}
+
+diagnostic_artifact_valid() {
+  local target configuration receipt_sha mode
+  target="$(diagnostic_rust_target)" || return 1
+  configuration="$(diagnostic_artifact_configuration)" || return 1
+  [ -d "$DIAGNOSTIC_APP_BUNDLE" ] && [ ! -L "$DIAGNOSTIC_APP_BUNDLE" ] \
+    && [ -f "$DIAGNOSTIC_ARTIFACT_RECEIPT" ] && [ ! -L "$DIAGNOSTIC_ARTIFACT_RECEIPT" ] \
+    && [ -f "$DIAGNOSTIC_CACHE_RECEIPT" ] && [ ! -L "$DIAGNOSTIC_CACHE_RECEIPT" ] || return 1
+  if mode="$(stat -c '%a' "$DIAGNOSTIC_CACHE_RECEIPT" 2>/dev/null)"; then :; else mode="$(stat -f '%Lp' "$DIAGNOSTIC_CACHE_RECEIPT")"; fi
+  [ "$mode" = 600 ] || return 1
+  node "$ROOT/scripts/app-artifact-receipt.mjs" verify \
+    --platform ios-simulator --artifact "$DIAGNOSTIC_APP_BUNDLE" --target "$target" \
+    --configuration "$configuration" --receipt "$DIAGNOSTIC_ARTIFACT_RECEIPT" \
+    >>"$PRIVATE_LOG" 2>&1 || return 1
+  receipt_sha="$(shasum -a 256 "$DIAGNOSTIC_ARTIFACT_RECEIPT" | awk '{print $1}')" || return 1
+  run_deadline 10 jq -e --arg head "$head" --arg tree "$tree" --arg manifest "$manifest_sha" \
+    --arg receipt "$receipt_sha" --arg target "$target" --arg configuration "$configuration" '
+      (keys | sort) == ["artifactReceiptSha256","configuration","head","portalManifestSha256","schema","target","tree"]
+      and .schema == "oxid-ios-portal-diagnostic-cache-v1"
+      and .head == $head and .tree == $tree
+      and .portalManifestSha256 == $manifest
+      and .artifactReceiptSha256 == $receipt
+      and .target == $target and .configuration == $configuration
+    ' "$DIAGNOSTIC_CACHE_RECEIPT" >/dev/null
+}
+
+write_diagnostic_cache_receipt() {
+  local target configuration receipt_sha candidate
+  target="$(diagnostic_rust_target)" || return 1
+  configuration="$(diagnostic_artifact_configuration)" || return 1
+  receipt_sha="$(shasum -a 256 "$DIAGNOSTIC_ARTIFACT_RECEIPT" | awk '{print $1}')" || return 1
+  [ ! -e "$DIAGNOSTIC_CACHE_ROOT" ] || { [ -d "$DIAGNOSTIC_CACHE_ROOT" ] && [ ! -L "$DIAGNOSTIC_CACHE_ROOT" ]; } || return 1
+  run_deadline 5 mkdir -p -- "$DIAGNOSTIC_CACHE_ROOT" || return 1
+  run_deadline 5 chmod 700 "$DIAGNOSTIC_CACHE_ROOT" || return 1
+  [ ! -e "$DIAGNOSTIC_CACHE_RECEIPT" ] || { [ -f "$DIAGNOSTIC_CACHE_RECEIPT" ] && [ ! -L "$DIAGNOSTIC_CACHE_RECEIPT" ]; } || return 1
+  candidate="$PRIVATE_STATE/diagnostic-cache-receipt.json"
+  run_deadline 10 jq -cn --arg head "$head" --arg tree "$tree" --arg manifest "$manifest_sha" \
+    --arg receipt "$receipt_sha" --arg target "$target" --arg configuration "$configuration" \
+    '{schema:"oxid-ios-portal-diagnostic-cache-v1",head:$head,tree:$tree,portalManifestSha256:$manifest,artifactReceiptSha256:$receipt,target:$target,configuration:$configuration}' \
+    >"$candidate" || return 1
+  run_deadline 5 chmod 600 "$candidate" || return 1
+  run_deadline 5 mv -f -- "$candidate" "$DIAGNOSTIC_CACHE_RECEIPT" || return 1
+}
+
+run_diagnostic_app_launcher() {
+  local operation="$1"
+  env OXID_XCODE_DEVELOPER_DIR="$DEVELOPER_DIR_SELECTED" OXID_IOS_DEVICE="$udid" \
+    OXID_IOS_RESET_DATA=0 OXID_MOBILE_CUSTODY=development OXID_STANDALONE_NETWORK_PROFILE=local \
+    OXID_MOBILE_PORTAL_PROFILE=local OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$manifest_path" \
+    OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$manifest_sha" \
+    "$ROOT/scripts/run-ios-simulator.sh" "$operation" >>"$PRIVATE_LOG" 2>&1
+}
+
+prepare_diagnostic_app() {
+  if diagnostic_artifact_valid; then
+    diagnostic_build_reused=true
+  else
+    run_diagnostic_app_launcher build || return 1
+    write_diagnostic_cache_receipt || return 1
+    diagnostic_artifact_valid || return 1
+  fi
+  run_diagnostic_app_launcher deploy
+}
+
+write_diagnostic_result() {
+  local duration candidate
+  [ "$journey_status" = diagnostic ] || return 1
+  [ ! -e "$DIAGNOSTIC_RESULT" ] && [ ! -L "$DIAGNOSTIC_RESULT" ] || return 1
+  duration=$((SECONDS - diagnostic_started_at))
+  candidate="$PRIVATE_STATE/diagnostic-result.json"
+  run_deadline 10 jq -cn --arg phase "$DIAGNOSTIC_PHASE" --arg head "$head" --arg tree "$tree" \
+    --arg artifact "$app_sha256" --argjson reused "$diagnostic_build_reused" --argjson duration "$duration" \
+    '{schema:"oxid-ios-portal-focused-diagnostic-v1",runClass:"focused_diagnostic",phase:$phase,source:{head:$head,tree:$tree},artifactSha256:$artifact,buildReused:$reused,durationSeconds:$duration,acceptanceEvidence:false,canonicalReceiptTouched:false}' \
+    >"$candidate" || return 1
+  run_deadline 5 chmod 600 "$candidate" || return 1
+  run_deadline 5 mv -- "$candidate" "$DIAGNOSTIC_RESULT" || return 1
+  diagnostic_result_published=1
+}
+
 cleanup() {
-  local incoming=$? after_portal project_ids build_receipt_path build_receipt_identity
-  if [ "$cleanup_running" -eq 1 ]; then exit "$incoming"; fi
+  local incoming=$? build_receipt_path build_receipt_identity current_head head_check
+  if [ "${BASHPID:-$$}" != "$cleanup_owner_pid" ] || [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
+  if [ "$cleanup_running" -eq 1 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
   cleanup_running=1
   journey_deadline=0
   trap - EXIT INT TERM HUP
@@ -246,10 +404,14 @@ cleanup() {
   fi
 
   if [ "$portal_ready" -eq 1 ]; then
-    after_portal="$(listener_fingerprint "${PORTAL_PORTS[@]}")"
-    if ! run_deadline 5 rg -q '[[:digit:]]+:p[0-9]+' <<<"$after_portal"; then listener_cleanup=true; else cleanup_ok=false; fi
-    if project_ids="$(run_deadline 15 docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet 2>/dev/null)" \
-      && [ -z "$project_ids" ] && [ ! -e "$PORTAL_STATE" ] && [ ! -e "$PORTAL_LOCK" ]; then
+    if ! listener_fingerprint "${PORTAL_PORTS[@]}" | run_deadline 5 rg -q '[[:digit:]]+:p[0-9]+'; then
+      listener_cleanup=true
+    else
+      cleanup_ok=false
+    fi
+    if run_deadline 15 docker info >/dev/null 2>&1 \
+      && ! run_deadline 15 docker ps -a --filter label=com.docker.compose.project=oxid-portal-consumer --quiet 2>/dev/null | run_deadline 5 rg -q . \
+      && [ ! -e "$PORTAL_STATE" ] && [ ! -e "$PORTAL_LOCK" ]; then
       stack_cleanup=true
     else
       cleanup_ok=false
@@ -285,12 +447,22 @@ cleanup() {
   elif [ "$private_state_owned" -eq 1 ]; then
     printf 'ios-portal-exact-sequence-simulator: private failure diagnostics retained mode=0600\n' >&2
   fi
-  if [ "$(run_deadline 10 git -C "$ROOT" rev-parse HEAD 2>/dev/null)" = "$head" ] \
-    && [ "$(run_deadline 10 git -C "$ROOT" rev-parse 'HEAD^{tree}' 2>/dev/null)" = "$tree" ] \
-    && [ -z "$(run_deadline 10 git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then head_clean=true; else cleanup_ok=false; fi
+  head_check="$RUN_ROOT/.cleanup-head"
+  if [ ! -e "$head_check" ] && [ ! -L "$head_check" ] \
+    && run_deadline 10 git -C "$ROOT" rev-parse HEAD >"$head_check" 2>/dev/null \
+    && IFS= read -r current_head <"$head_check" \
+    && run_deadline 5 rm -f -- "$head_check" \
+    && [ "$current_head" = "$head" ] \
+    && run_deadline 10 git -C "$ROOT" diff --quiet "$tree" HEAD -- \
+    && run_deadline 10 git -C "$ROOT" diff-index --quiet HEAD --; then
+    head_clean=true
+  else
+    run_deadline 5 rm -f -- "$head_check" >/dev/null 2>&1 || true
+    cleanup_ok=false
+  fi
 
-  if [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ] && [ "$journey_status" = passed ]; then write_evidence || cleanup_ok=false; fi
-  if [ "$run_root_owned" -eq 1 ] && [ "$evidence_published" -eq 0 ]; then
+  if [ "$incoming" -eq 0 ] && [ "$cleanup_ok" = true ] && [ "$journey_status" = passed ] && [ "$OPERATION" = run ]; then write_evidence || cleanup_ok=false; fi
+  if [ "$run_root_owned" -eq 1 ] && [ "$evidence_published" -eq 0 ] && [ "$diagnostic_result_published" -eq 0 ]; then
     if oxid_path_has_identity "$RUN_ROOT" "$run_root_identity"; then
       if [ "$protocol_error_diagnostic_retained" != true ] && [ ! -e "$PRIVATE_STATE" ]; then
         run_deadline 5 rmdir -- "$RUN_ROOT" >/dev/null 2>&1 || cleanup_ok=false
@@ -302,6 +474,9 @@ cleanup() {
     printf 'ios-portal-exact-sequence-simulator: cleanup could not prove owned-state restoration\n' >&2
   elif [ "$evidence_published" -eq 1 ]; then
     printf 'ios-portal-exact-sequence-simulator: PASS evidence=target/ios-portal-exact-sequence-simulator/evidence.json\n'
+  elif [ "$diagnostic_result_published" -eq 1 ]; then
+    printf 'ios-portal-exact-sequence-simulator: DIAGNOSTIC PASS phase=%s evidence=none metrics=target/ios-portal-diagnostic/%s/diagnostic.json\n' \
+      "$DIAGNOSTIC_PHASE" "$DIAGNOSTIC_PHASE"
   fi
   exit "$incoming"
 }
@@ -368,27 +543,33 @@ run_deadline 10 jq -e --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
   '.schema == "oxid-portal-deployment-v3" and .integrationCommit == $commit and .integrationTree == $tree' "$manifest_path" >/dev/null || fail portal-manifest
 portal_ready=1
 
-archive="$PRIVATE_STATE/source.tar"
-run_deadline 60 git -C "$ROOT" archive --format=tar --output="$archive" "$head" || fail build-source-archive
-BUILD_SOURCE="$(run_deadline 5 mktemp -d "${TMPDIR:-/tmp}/oxid-ios-portal-build.XXXXXX")" || fail build-source-create
-build_owned=1
-[ -d "$BUILD_SOURCE" ] && [ ! -L "$BUILD_SOURCE" ] || fail build-source-create
-build_identity="$(oxid_filesystem_identity "$BUILD_SOURCE")" || fail build-source-identity
-printf '%s\t%s\n' "$BUILD_SOURCE" "$build_identity" >"$BUILD_RECEIPT" || fail build-receipt
-run_deadline 5 chmod 600 "$BUILD_RECEIPT" || fail build-receipt-mode
-run_deadline 60 tar -xf "$archive" -C "$BUILD_SOURCE" || fail build-source-extract
-run_deadline 5 rm -f -- "$archive" || fail build-archive-remove
-[ ! -e "$BUILD_SOURCE/target" ] || fail isolated-build-output
-timeout -k 30s 4500s env OXID_XCODE_DEVELOPER_DIR="$DEVELOPER_DIR_SELECTED" OXID_IOS_DEVICE="$udid" \
-  OXID_IOS_RESET_DATA=0 OXID_MOBILE_CUSTODY=development OXID_STANDALONE_NETWORK_PROFILE=local \
-  OXID_MOBILE_PORTAL_PROFILE=local OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$manifest_path" \
-  OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$manifest_sha" \
-  "$BUILD_SOURCE/scripts/run-ios-simulator.sh" >>"$PRIVATE_LOG" 2>&1 &
-launcher_pid=$!
-oxid_job_is_running "$launcher_pid" || fail launcher-supervisor
-wait "$launcher_pid" || fail ios-launcher
-launcher_pid=""
-app_bundle="$BUILD_SOURCE/target/dx/oxid-app/debug/ios/OxidApp.app"
+if [ "$OPERATION" = --diagnostic-phase ]; then
+  BUILD_SOURCE="$ROOT"
+  prepare_diagnostic_app || fail diagnostic-artifact
+  app_bundle="$DIAGNOSTIC_APP_BUNDLE"
+else
+  archive="$PRIVATE_STATE/source.tar"
+  run_deadline 60 git -C "$ROOT" archive --format=tar --output="$archive" "$head" || fail build-source-archive
+  BUILD_SOURCE="$(run_deadline 5 mktemp -d "${TMPDIR:-/tmp}/oxid-ios-portal-build.XXXXXX")" || fail build-source-create
+  build_owned=1
+  [ -d "$BUILD_SOURCE" ] && [ ! -L "$BUILD_SOURCE" ] || fail build-source-create
+  build_identity="$(oxid_filesystem_identity "$BUILD_SOURCE")" || fail build-source-identity
+  printf '%s\t%s\n' "$BUILD_SOURCE" "$build_identity" >"$BUILD_RECEIPT" || fail build-receipt
+  run_deadline 5 chmod 600 "$BUILD_RECEIPT" || fail build-receipt-mode
+  run_deadline 60 tar -xf "$archive" -C "$BUILD_SOURCE" || fail build-source-extract
+  run_deadline 5 rm -f -- "$archive" || fail build-archive-remove
+  [ ! -e "$BUILD_SOURCE/target" ] || fail isolated-build-output
+  timeout -k 30s 4500s env OXID_XCODE_DEVELOPER_DIR="$DEVELOPER_DIR_SELECTED" OXID_IOS_DEVICE="$udid" \
+    OXID_IOS_RESET_DATA=0 OXID_MOBILE_CUSTODY=development OXID_STANDALONE_NETWORK_PROFILE=local \
+    OXID_MOBILE_PORTAL_PROFILE=local OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_PATH="$manifest_path" \
+    OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$manifest_sha" \
+    "$BUILD_SOURCE/scripts/run-ios-simulator.sh" >>"$PRIVATE_LOG" 2>&1 &
+  launcher_pid=$!
+  oxid_job_is_running "$launcher_pid" || fail launcher-supervisor
+  wait "$launcher_pid" || fail ios-launcher
+  launcher_pid=""
+  app_bundle="$BUILD_SOURCE/target/dx/oxid-app/debug/ios/OxidApp.app"
+fi
 [ -d "$app_bundle" ] && [ ! -L "$app_bundle" ] || fail app-bundle
 bundle_identifier="$(/usr/bin/plutil -extract CFBundleIdentifier raw "$app_bundle/Info.plist")"
 [ "$bundle_identifier" = "$PACKAGE" ] || fail app-id
@@ -402,23 +583,41 @@ run_deadline 5 mkdir -p "$app_support" || fail app-support
 capability_path="$app_support/portal-offer.capability"
 capability_candidate="$app_support/.portal-offer.capability.tmp"
 
-journey_deadline=$((SECONDS + 600))
 xcode_project="$PRIVATE_STATE/ios-project"
 run_deadline 5 mkdir "$xcode_project" || fail xcode-project-create
 run_deadline 300 env OXID_REPOSITORY_ROOT="$BUILD_SOURCE" xcodegen generate \
   --spec "$BUILD_SOURCE/tests/mobile/ios/project.yml" --project "$xcode_project" >>"$PRIVATE_LOG" 2>&1 || fail xcodegen
 host_user="$(id -un)"
+xcode_clang="$DEVELOPER_DIR_SELECTED/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+xcode_clang_wrapper="$ROOT/scripts/e2e/xcode-swift-only-clang-wrapper.sh"
+[ -x "$xcode_clang" ] && [ ! -L "$xcode_clang" ] || fail xcode-clang
+[ -x "$xcode_clang_wrapper" ] && [ ! -L "$xcode_clang_wrapper" ] || fail xcode-clang-wrapper
+run_ios_build_for_testing() {
+  oxid_ios_run_xctest "$ROOT" portal-build-for-testing "$XCTEST_COLD_BUILD_TIMEOUT_SECONDS" env -i \
+    DEVELOPER_DIR="$DEVELOPER_DIR_SELECTED" HOME="$HOME" LANG="${LANG:-en_US.UTF-8}" \
+    LOGNAME="$host_user" PATH=/usr/bin:/bin:/usr/sbin:/sbin TMPDIR="${TMPDIR:-/tmp}" USER="$host_user" \
+    OXID_XCODE_REAL_CLANG="$xcode_clang" \
+    /usr/bin/xcodebuild build-for-testing -project "$xcode_project/OxidMobileSmoke.xcodeproj" -scheme OxidUITests \
+    -destination "platform=iOS Simulator,id=$udid" -derivedDataPath "$PRIVATE_STATE/derived-data" CODE_SIGNING_ALLOWED=NO \
+    CC="$xcode_clang_wrapper" LD="$xcode_clang" \
+    >>"$PRIVATE_LOG" 2>&1
+}
 run_ios_test() {
-  local method="$1" phase_directory="${2:-}"
-  run_deadline 600 env -i DEVELOPER_DIR="$DEVELOPER_DIR_SELECTED" HOME="$HOME" \
-    LANG="${LANG:-en_US.UTF-8}" LOGNAME="$host_user" PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-    TMPDIR="${TMPDIR:-/tmp}" USER="$host_user" \
-    /usr/bin/xcodebuild test -project "$xcode_project/OxidMobileSmoke.xcodeproj" -scheme OxidUITests \
+  local method="$1" phase_directory="${2:-}" scenario_name
+  scenario_name="$(oxid_ios_scenario_name portal "$method")"
+  oxid_ios_run_xctest "$ROOT" "$scenario_name" "$XCTEST_SCENARIO_TIMEOUT_SECONDS" env -i \
+    DEVELOPER_DIR="$DEVELOPER_DIR_SELECTED" HOME="$HOME" LANG="${LANG:-en_US.UTF-8}" \
+    LOGNAME="$host_user" PATH=/usr/bin:/bin:/usr/sbin:/sbin TMPDIR="${TMPDIR:-/tmp}" USER="$host_user" \
+    OXID_XCODE_REAL_CLANG="$xcode_clang" \
+    /usr/bin/xcodebuild test-without-building -project "$xcode_project/OxidMobileSmoke.xcodeproj" -scheme OxidUITests \
     -destination "platform=iOS Simulator,id=$udid" -derivedDataPath "$PRIVATE_STATE/derived-data" \
     -only-testing:"OxidUITests/PortalFlowTests/$method" CODE_SIGNING_ALLOWED=NO \
+    CC="$xcode_clang_wrapper" LD="$xcode_clang" \
     OXID_PORTAL_PHASE_DIRECTORY="$phase_directory" \
     OXID_PORTAL_PROTOCOL_ERROR_DIAGNOSTIC_PATH="$PROTOCOL_ERROR_DIAGNOSTIC" >>"$PRIVATE_LOG" 2>&1
 }
+run_ios_build_for_testing || fail xctest-build
+journey_deadline=$((SECONDS + PORTAL_JOURNEY_TIMEOUT_SECONDS))
 stage_capability() {
   local source_kind="$1" source_path="$2"
   run_deadline 5 rm -f -- "$capability_candidate" "$capability_path" || return 1
@@ -472,7 +671,60 @@ run_measured_offer() {
   assert_consumed
 }
 
+run_diagnostic_cold_route() {
+  stage_capability file "$PORTAL_STATE/portal-offer.capability" || return 1
+  run_deadline 5 rm -f -- "$PORTAL_STATE/portal-offer.capability" || return 1
+  deliver_offer || return 1
+  run_ios_test testColdRoute || return 1
+  assert_consumed
+}
+
+prepare_diagnostic_holder() {
+  local did_store="$app_support/private/did-records.json"
+  run_ios_test testPrepareHolder || return 1
+  [ -f "$did_store" ] && [ ! -L "$did_store" ] || return 1
+  run_deadline 10 cat "$did_store" | control_curl -H 'Content-Type: application/json' \
+    --data-binary @- "$CONTROL_ORIGIN/holder" >/dev/null
+}
+
+restart_diagnostic_app() {
+  oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" terminate "$PACKAGE" >>"$PRIVATE_LOG" 2>&1 || return 1
+  oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" launch "$PACKAGE" >>"$PRIVATE_LOG" 2>&1
+}
+
+run_diagnostic_phase() {
+  if [ "$DIAGNOSTIC_PHASE" != cold-route ]; then run_diagnostic_cold_route || return 1; fi
+  case "$DIAGNOSTIC_PHASE" in
+    cold-route) run_diagnostic_cold_route ;;
+    prepare-holder) prepare_diagnostic_holder ;;
+    route-refuse) run_measured_offer route-refuse testRouteRefuse normal '{}' ;;
+    malformed) run_measured_offer malformed testMalformed malformed '{}' ;;
+    protocol-error) run_measured_offer protocol-error testProtocolError unavailable '{}' ;;
+    protocol-timeout) run_measured_offer protocol-timeout testProtocolTimeout timeout '{}' ;;
+    issue-error)
+      prepare_diagnostic_holder || return 1
+      run_measured_offer issue-error testIssueError normal '{}'
+      ;;
+    issue)
+      prepare_diagnostic_holder || return 1
+      run_measured_offer issue testIssue normal '{}'
+      ;;
+    restored)
+      prepare_diagnostic_holder || return 1
+      run_measured_offer issue testIssue normal '{}' || return 1
+      restart_diagnostic_app || return 1
+      run_ios_test testRestored
+      ;;
+  esac
+}
+
 journey_status=running
+if [ "$OPERATION" = --diagnostic-phase ]; then
+  run_diagnostic_phase || fail "diagnostic-$DIAGNOSTIC_PHASE"
+  journey_status=diagnostic
+  write_diagnostic_result || fail diagnostic-result
+  exit 0
+fi
 [ "$(handoff_state)" = ready ] || fail cold-handoff-ready
 stage_capability file "$PORTAL_STATE/portal-offer.capability" || fail cold-capability-stage
 run_deadline 5 rm -f -- "$PORTAL_STATE/portal-offer.capability" || fail cold-capability-remove
@@ -518,7 +770,7 @@ first_generation="${first_launch##* }"
 oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" terminate "$PACKAGE" >>"$PRIVATE_LOG" 2>&1 || fail process-stop
 for ((_attempt = 0; _attempt < 50; _attempt++)); do
   launch_list="$(oxid_ios_owned_simctl "$DEVELOPER_DIR_SELECTED" "$RECEIPT" spawn launchctl list 2>/dev/null || true)"
-  if ! run_deadline 5 rg -qF "$PACKAGE" <<<"$launch_list"; then process_absent=true; break; fi
+  if ! run_deadline 5 rg -qF "$PACKAGE" < <(printf '%s\n' "$launch_list"); then process_absent=true; break; fi
   run_deadline 2 sleep 0.1
 done
 [ "$process_absent" = true ] || fail process-absence
@@ -549,3 +801,6 @@ case "$(uname -m)" in arm64) architecture=arm64 ;; x86_64) architecture=x86_64 ;
 [ "$SECONDS" -lt "$journey_deadline" ] || fail journey-timeout
 journey_deadline=0
 journey_status=passed
+# Successful evidence rendering uses command substitutions. Finalize from normal
+# control flow so those children cannot inherit an actively executing EXIT trap.
+cleanup

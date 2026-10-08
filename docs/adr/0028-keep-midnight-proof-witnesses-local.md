@@ -31,7 +31,7 @@ the transaction types.
 
 Add `midnight-zkir 2.1.0` as a native-only dependency from the official HTTPS
 Git source at the full ledger revision
-`d9414884db9da9e9b1f6f3a7f742d79a5732f817`, with default features disabled.
+`b85f5d8e503fd1d7a1b128bbc1d7156baf823a65`, with default features disabled.
 Use its `LocalProvingProvider` behind the existing Midnight transaction adapter;
 do not expose ZKIR or ledger proof types through application ports.
 

@@ -1,4 +1,4 @@
-# ADR-0112: Adopt private Docker Sandboxes as an opt-in Pi deploy target
+# ADR-0121: Adopt private Docker Sandboxes as an opt-in Pi deploy target
 
 - Status: Accepted
 - Date: 2026-09-26

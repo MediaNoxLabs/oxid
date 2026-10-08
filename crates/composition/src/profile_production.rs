@@ -29,7 +29,8 @@ use super::wiring::compose_with_identity_adapters;
     feature = "preprod-observation",
     any(target_os = "ios", target_os = "android")
 ))]
-use super::wiring::with_wallet_onboarding;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+use super::wiring::with_native_wallet_onboarding;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use oxid_adapter_platform_system::OsRandom;
 use oxid_adapter_platform_system::SystemClock;
@@ -214,7 +215,7 @@ pub fn compose_authenticated_production(
         any(target_os = "ios", target_os = "android")
     ))]
     {
-        let services = with_wallet_onboarding(
+        let services = with_native_wallet_onboarding(
             services,
             Arc::clone(&profiles),
             Arc::clone(&security),

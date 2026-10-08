@@ -31,14 +31,29 @@ test("inventory validates the recovery native-presence scenario and renders only
   assert.match(unsupported, /physical iOS signing and deployment are unavailable/i);
 });
 
-test("inventory keeps standalone asset synchronization diagnostic and route-scoped", () => {
+test("inventory keeps standalone asset synchronization automatic, evidenced, and route-scoped", async () => {
   const inventory = loadInventory();
   const scenario = inventory.scenarios.find(({ id }) => id === "standalone-profile-asset-synchronization");
+  const synchronization = inventory.useCases.find(({ id }) => id === "synchronize-profile-scoped-midnight-assets");
   assert.equal(scenario.evidenceClass, "diagnostic");
   assert.equal(scenario.cadence, "on-demand");
+  assert.deepEqual(synchronization.interactionBudget, {
+    status: "active",
+    entryTapsMax: 0,
+    decisionScreensMax: 0,
+    authorizationPromptsMax: 0,
+    routineManualSyncActionsMax: 0,
+  });
+  assert.match(synchronization.outcome, /automatically reconciles.*relevant checkpoints/u);
+  assert.match(synchronization.outcome, /refresh controls remain in developer diagnostics only/u);
+  for (const sourceReference of synchronization.sourceReferences) {
+    await readFile(path.join(repoRoot, sourceReference), "utf8");
+  }
   assert.deepEqual(scenario.orderedUseCaseIds, [
     "select-compile-time-standalone-profile",
     "synchronize-profile-scoped-midnight-assets",
+    "share-active-undeployed-night-receive-request",
+    "import-undeployed-night-receive-request-into-send",
   ]);
   const local = renderPreparationBrief(inventory, scenario.id, "android-emulator");
   assert.match(local, /Target: android-emulator \(supported; diagnostic\)/u);
@@ -49,6 +64,30 @@ test("inventory keeps standalone asset synchronization diagnostic and route-scop
   assert.match(tailnet, /just android-phone/u);
   assert.match(tailnet, /not production or public-network acceptance/i);
   assert.doesNotMatch(tailnet, /stable public NIGHT, DUST, or shielded balances/i);
+  const manualSteps = scenario.manualSteps.join("\n");
+  assert.match(manualSteps, /Observe automatic public NIGHT, DUST, shielded, and activity reconciliation/u);
+  assert.match(manualSteps, /single contextual retry only if the aggregate state reports degraded recovery/u);
+  const ownerJourney = [
+    synchronization.outcome,
+    ...scenario.manualSteps,
+    ...scenario.expectedOutcomes,
+    scenario.testMapping.manual,
+    scenario.testMapping.planned,
+  ].join("\n");
+  assert.doesNotMatch(
+    ownerJourney,
+    /\b(?:tap|press|use|choose|select)\b[^.\n]{0,80}\b(?:Sync now|account sync|DUST sync|shielded sync)\b/iu,
+  );
+  assert.match(scenario.expectedOutcomes.join("\n"), /no routine manual synchronization/u);
+  assert.match(scenario.testMapping.manual, /no subsystem refresh control is part of the owner journey/u);
+  assert.doesNotMatch(scenario.testMapping.planned, /proves fixed standalone funding/u);
+  const iosAcceptance = await readFile(
+    path.join(repoRoot, "tests/mobile/ios/OxidUITests/StandaloneLocalAccountTests.swift"),
+    "utf8",
+  );
+  assert.match(iosAcceptance, /func testSynchronizesProtectedAccountFromLocalStandaloneStack\(\) async throws/u);
+  assert.match(iosAcceptance, /requestFixedGrant\(for: address\)/u);
+  assert.doesNotMatch(iosAcceptance, /buttons\["Sync now"\]/u);
 });
 
 test("inventory splits a bounded low-k proof from headless and rendered local diagnostics", async () => {
@@ -118,6 +157,7 @@ test("inventory keeps Portal Final issuance evidence target-scoped", () => {
     "portal-final-issuance-localhost",
     "portal-final-issuance-virtual-mobile",
     "portal-final-issuance-physical-tailnet",
+    "portal-final-issuance-physical-tailnet-interactive",
   ]);
   const localhost = renderPreparationBrief(inventory, "portal-final-issuance-localhost", "headless-development");
   assert.match(localhost, /Target: headless-development \(supported; preflight\)/u);
@@ -132,6 +172,107 @@ test("inventory keeps Portal Final issuance evidence target-scoped", () => {
   assert.match(physical, /just android-portal-tailnet-physical-smoke/u);
   assert.match(physical, /not production, release, native-custody, live-KYC, or public-network acceptance/u);
   assert.match(physical, /restores its exact prior Serve baseline/u);
+
+  const interactive = renderPreparationBrief(inventory, "portal-final-issuance-physical-tailnet-interactive");
+  assert.match(interactive, /just portal-tailnet-manual-prepare/u);
+  assert.match(interactive, /just portal-tailnet-manual-start/u);
+  assert.match(interactive, /just portal-tailnet-manual-status/u);
+  assert.match(interactive, /just portal-tailnet-manual-stop/u);
+  assert.match(interactive, /preserves Oxid application data by default/u);
+  assert.doesNotMatch(interactive, /just portal-tailnet-manual-reset/u);
+});
+
+test("inventory records closed native transport trust readiness without sensitive coordinates", () => {
+  const inventory = loadInventory();
+  const readiness = inventory.transportTrustReadiness;
+  assert.deepEqual(readiness.services, ["indexer", "node", "prover"]);
+  assert.deepEqual(readiness.environments.map(({ id, policy }) => [id, policy]), [
+    ["standalone", "development-loopback"],
+    ["tailnet", "bundled-public-roots"],
+    ["preprod", "platform-trust"],
+  ]);
+  for (const environment of readiness.environments) {
+    assert.deepEqual(environment.serviceIds, readiness.services);
+    assert.deepEqual(environment.targetEvidence.map(({ targetId }) => targetId), [
+      "android-emulator",
+      "ios-simulator",
+      "android-physical",
+      "ios-physical",
+    ]);
+  }
+  assert.deepEqual(readiness.environments[0].targetEvidence.map(({ availability, evidenceClass }) => [availability, evidenceClass]), [
+    ["automated", "diagnostic"],
+    ["automated", "diagnostic"],
+    ["unsupported", "planned"],
+    ["unsupported", "planned"],
+  ]);
+  assert.deepEqual(readiness.environments[1].targetEvidence.map(({ availability, evidenceClass }) => [availability, evidenceClass]), [
+    ["unsupported", "planned"],
+    ["manual", "diagnostic"],
+    ["manual", "acceptance"],
+    ["unsupported", "planned"],
+  ]);
+  assert.deepEqual(readiness.environments[2].targetEvidence.map(({ availability, evidenceClass }) => [availability, evidenceClass]), [
+    ["unsupported", "planned"],
+    ["unsupported", "planned"],
+    ["manual", "acceptance"],
+    ["unsupported", "planned"],
+  ]);
+  assert.deepEqual(readiness.verifierDependency.lines, [
+    { version: "0.5.3", owner: "jsonrpsee-client-transport-0.24.11" },
+    { version: "0.7.0", owner: "reqwest-0.13.4-and-platform-system" },
+  ]);
+  assert.equal(readiness.verifierDependency.disposition, "temporary-upstream-split");
+  assert.equal(readiness.verifierDependency.auditReference, "scripts/check-transport-trust.sh");
+
+  const publishedEvidence = JSON.stringify(readiness);
+  assert.doesNotMatch(publishedEvidence, /(?:https?|wss?):\/\//u);
+  assert.doesNotMatch(publishedEvidence, /(?:^|[^a-z])(?:endpoint|peer|credential|certificate-payload|device-identity)(?:[^a-z]|$)/iu);
+  assert.doesNotMatch(publishedEvidence, /(?:\d{1,3}\.){3}\d{1,3}/u);
+});
+
+test("inventory records approved product journeys without claiming deferred Vault acceptance", () => {
+  const inventory = loadInventory();
+  const approvedUseCases = [
+    "fresh-wallet-onboarding", "wallet-recovery", "profile-and-realm-switching",
+    "automatic-account-reconciliation", "receive-and-fund-night", "send-night",
+    "did-inventory-and-creation", "did-details-and-maintenance", "oid4vci-issuance",
+    "credential-inventory-and-details", "oid4vp-presentation", "siopv2-authentication",
+    "activity-and-transaction-detail", "security-and-backup-settings",
+    "passport-vault-journey", "developer-diagnostics",
+  ];
+  const approvedScenarios = [
+    "journey-new-wallet-first-night-transfer", "journey-realm-profile-resilience",
+    "journey-did-to-issued-credential", "journey-presentation-and-authentication",
+    "journey-passport-vault-readiness",
+  ];
+  const approvedDemos = ["oxid-wallet-essentials", "oxid-identity-wallet", "oxid-passport"];
+
+  assert.deepEqual(approvedUseCases.filter((id) => !inventory.useCases.some((useCase) => useCase.id === id)), []);
+  assert.deepEqual(approvedScenarios.filter((id) => !inventory.scenarios.some((scenario) => scenario.id === id)), []);
+  assert.deepEqual(approvedDemos.filter((id) => !inventory.demos.some((demo) => demo.id === id)), []);
+
+  for (const useCaseId of approvedUseCases.filter((id) => id !== "passport-vault-journey")) {
+    const budget = inventory.useCases.find(({ id }) => id === useCaseId).interactionBudget;
+    assert.equal(budget.status, "active", `${useCaseId} requires an active interaction budget`);
+    assert.equal(budget.routineManualSyncActionsMax, 0, `${useCaseId} cannot require routine manual sync`);
+  }
+  assert.deepEqual(
+    inventory.useCases.find(({ id }) => id === "passport-vault-journey").interactionBudget,
+    { status: "deferred" },
+  );
+
+  for (const scenarioId of approvedScenarios) {
+    const scenario = inventory.scenarios.find(({ id }) => id === scenarioId);
+    assert.equal(scenario.evidenceClass, "planned");
+    assert.equal(scenario.testMapping.status, "planned");
+    assert.match(renderPreparationBrief(inventory, scenarioId), /Target: .+ \(unsupported; planned\)/u);
+  }
+
+  const vault = inventory.scenarios.find(({ id }) => id === "journey-passport-vault-readiness");
+  assert.match(vault.targetPlans[0].note, /deferred beyond 0\.2\.0.+not milestone acceptance/u);
+  const passportDemo = inventory.demos.find(({ id }) => id === "oxid-passport");
+  assert.match(passportDemo.expectedOutcome, /post-0\.2\.0.+does not claim a supported milestone demo/u);
 });
 
 test("validator rejects broken references, unsafe operations, and invalid evidence contracts", () => {
@@ -147,10 +288,28 @@ test("validator rejects broken references, unsafe operations, and invalid eviden
     ["invalid evidence", (inventory) => { inventory.scenarios[0].evidenceClass = "live"; }, /invalid evidence|schema enum/u],
     ["invalid target evidence", (inventory) => { inventory.scenarios[0].targetPlans[0].evidenceClass = "live"; }, /invalid evidence class|schema enum/u],
     ["unsupported default target", (inventory) => { inventory.scenarios[0].defaultTargetId = "ios-physical"; }, /default target must be supported/u],
+    ["planned target without planned evidence", (inventory) => {
+      const scenario = inventory.scenarios.find(({ id }) => id === "journey-new-wallet-first-night-transfer");
+      scenario.targetPlans[0].evidenceClass = "diagnostic";
+    }, /planned default target must use planned evidence/u],
     ["wrong command phase", (inventory) => { inventory.scenarios[0].targetPlans[0].commandIds.build = ["desktop-run"]; }, /from phase 'run'/u],
     ["missing test mapping", (inventory) => { delete inventory.scenarios[0].testMapping; }, /missing a test mapping|schema required property 'testMapping'/u],
+    ["missing approved interaction budget", (inventory) => {
+      delete inventory.useCases.find(({ id }) => id === "send-night").interactionBudget;
+    }, /missing an interaction budget/u],
+    ["negative interaction budget", (inventory) => {
+      inventory.useCases.find(({ id }) => id === "send-night").interactionBudget.entryTapsMax = -1;
+    }, /interactionBudget.*oneOf/u],
+    ["manual sync interaction budget", (inventory) => {
+      inventory.useCases.find(({ id }) => id === "send-night").interactionBudget.routineManualSyncActionsMax = 1;
+    }, /interactionBudget.*oneOf/u],
+    ["unknown interaction budget field", (inventory) => {
+      inventory.useCases.find(({ id }) => id === "send-night").interactionBudget.networkWaits = 1;
+    }, /interactionBudget.*oneOf/u],
     ["unknown schema property", (inventory) => { inventory.products[0].unpublished = true; }, /schema.*additional property|additional property.*schema/u],
     ["invalid command oneOf", (inventory) => { inventory.commands[0].status = "manual"; }, /schema.*oneOf|oneOf.*schema/u],
+    ["unknown trust target", (inventory) => { inventory.transportTrustReadiness.environments[0].targetEvidence[0].targetId = "unknown-target"; }, /trust readiness.*unknown target/u],
+    ["missing trust service", (inventory) => { inventory.transportTrustReadiness.environments[0].serviceIds.pop(); }, /transportTrustReadiness.*serviceIds.*schema const|trust readiness.*service set/u],
   ];
   for (const [name, mutate, error] of cases) {
     const inventory = clone(valid); mutate(inventory);
@@ -164,6 +323,8 @@ test("CLI exposes check, list, show, use-case, and preparation without a command
   assert.match(run("list"), /^wallet-root-recovery-native-presence\tacceptance\tbefore-release/mu);
   assert.match(run("show", "wallet-root-recovery-native-presence"), /"manualSteps"/u);
   assert.match(run("use-case", "show", "recover-existing-midnight-wallet-root"), /use-case:/u);
+  assert.match(run("use-case", "show", "send-night"), /Interaction budget: entry ≤1 taps; decisions ≤4 screens; app authorization prompts ≤1; routine manual sync actions 0\./u);
+  assert.match(run("use-case", "show", "passport-vault-journey"), /Interaction budget: deferred; no current product claim\./u);
   assert.match(run("prepare", "wallet-root-recovery-native-presence"), /active AGENT\.md define execution authority/u);
 });
 

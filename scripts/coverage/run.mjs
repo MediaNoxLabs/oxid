@@ -10,6 +10,7 @@ import {
   readFile,
   realpath,
   rm,
+  stat,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -31,7 +32,10 @@ const EXPECTED_COMMANDS = Object.freeze([
     "--features", "oxid-adapter-deployment-profile/readiness,oxid-adapter-did-midnight/tailnet-test-did-publication,oxid-adapter-storage-dev/development-fixture,oxid-composition/preprod-observation,oxid-composition/proof-benchmark,oxid-composition/standalone-development",
     "--json", "--fail-under-lines", "70",
   ],
-  ["cargo", "llvm-cov", "-p", "oxid-headless", "--all-targets", "--json"],
+  [
+    "cargo", "llvm-cov", "-p", "oxid-headless", "--all-targets",
+    "--features", "standalone-faucet", "--json",
+  ],
   [
     "cargo", "llvm-cov", "-p", "oxid-ui-dioxus", "--all-targets",
     "--features", "ui-profile-dev,app-profile-authority,standalone-deployment-profile,preprod-observation,proof-benchmark", "--json",
@@ -51,6 +55,17 @@ const EXCEPTION_KEYS = Object.freeze([
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const MAX_FAILURE_SUMMARY_ENTRIES = 20;
 const MAX_FAILURE_SUMMARY_RANGES = 20;
+const REQUIRED_COVERAGE_FIXTURES = Object.freeze([
+  Object.freeze({
+    environment: "OXID_MIDNIGHT_DID_ARTIFACTS_DIR",
+    kind: "directory",
+    sentinel: "manifest.json",
+  }),
+  Object.freeze({
+    environment: "OXID_MIDNIGHT_DID_CALL_COMPOSER",
+    kind: "executable",
+  }),
+]);
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -249,7 +264,10 @@ export function validatePolicy(policy, workspacePackages, { now = new Date() } =
   ]) || JSON.stringify(policy.pathRules.excludedDirectories) !== JSON.stringify(["tests", "examples", "benches"])
       || JSON.stringify(policy.pathRules.generated) !== JSON.stringify(["**/generated/**"])
       || JSON.stringify(policy.pathRules.nonExecutableSources) !== JSON.stringify(["crates/composition/src/lib.rs"])
-      || JSON.stringify(policy.pathRules.testOnlySources) !== JSON.stringify(["crates/ui-dioxus/src/desktop_test_driver.rs"])
+      || JSON.stringify(policy.pathRules.testOnlySources) !== JSON.stringify([
+        "crates/composition/src/development_movement_approval_fixture.rs",
+        "crates/ui-dioxus/src/desktop_developer_pager_driver.rs", "crates/ui-dioxus/src/desktop_test_driver.rs",
+      ])
       || policy.pathRules.testModuleFilename !== "tests.rs"
       || policy.pathRules.siblingTestSuffix !== "_tests.rs") {
     throw new Error("production, test, generated, non-executable, or sibling path rules differ from the reviewed contract");
@@ -961,6 +979,36 @@ function coverageJobs(env) {
   return raw;
 }
 
+export async function assertCoverageFixtureEnvironment(env) {
+  for (const fixture of REQUIRED_COVERAGE_FIXTURES) {
+    const configured = env[fixture.environment];
+    if (typeof configured !== "string" || configured.length === 0 || !path.isAbsolute(configured)) {
+      throw new Error(`coverage fixture ${fixture.environment} must be an absolute path`);
+    }
+    let fixturePath;
+    let metadata;
+    try {
+      fixturePath = await realpath(configured);
+      metadata = await stat(fixturePath);
+    } catch {
+      throw new Error(`coverage fixture ${fixture.environment} is unavailable`);
+    }
+    if (fixture.kind === "directory") {
+      if (!metadata.isDirectory()) {
+        throw new Error(`coverage fixture ${fixture.environment} must be a directory`);
+      }
+      try {
+        const sentinel = await stat(path.join(fixturePath, fixture.sentinel));
+        if (!sentinel.isFile() || sentinel.size === 0) throw new Error("invalid sentinel");
+      } catch {
+        throw new Error(`coverage fixture ${fixture.environment} has no authenticated manifest`);
+      }
+    } else if (!metadata.isFile() || (metadata.mode & 0o111) === 0) {
+      throw new Error(`coverage fixture ${fixture.environment} must be executable`);
+    }
+  }
+}
+
 async function writePrivateFile(filePath, contents) {
   await writeFile(filePath, contents, { flag: "wx", mode: 0o600 });
   await chmod(filePath, 0o600);
@@ -1013,6 +1061,7 @@ export async function runCoverage({
   const packageInventory = await discoverWorkspacePackageInventory(repoRoot);
   const generatedAt = now();
   validatePolicy(policy, packageInventory, { now: generatedAt });
+  if (!suppliedExecutor && !dryRun) await assertCoverageFixtureEnvironment(env);
   const jobs = coverageJobs(env);
   const source = initialSourceState(git, base);
   const lockPath = path.join(stateRoot, ".oxid-coverage.lock");

@@ -17,11 +17,13 @@ oxid-protocol-application.workspace = true
 oxid-protocol-domain.workspace = true
 p256.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+oxid-foundation.workspace = true
+oxid-identity-application = { workspace = true, features = ["development-approval"] }
 oxid-adapter-did-midnight.workspace = true
 oxid-adapter-platform-system.workspace = true
 oxid-adapter-storage-dev.workspace = true

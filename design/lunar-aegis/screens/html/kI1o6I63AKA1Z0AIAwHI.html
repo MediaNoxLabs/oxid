@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Oxid - Home</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@400;500&display=swap');
+        
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #07090E;
+            color: #F8FAFC;
+            -webkit-tap-highlight-color: transparent;
+            overflow-x: hidden;
+        }
+
+        .font-heading { font-family: 'Space Grotesk', sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        
+        .glass {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(30, 41, 59, 0.5);
+        }
+
+        .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+        .safe-top { padding-top: env(safe-area-inset-top); }
+
+        .masked-value {
+            letter-spacing: 0.1em;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #1E293B; border-radius: 10px; }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen">
+
+    <!-- Top Bar -->
+    <header id="header" class="safe-top sticky top-0 z-50 glass border-b border-[#1E293B]">
+        <!-- Compact safe-area-aware banner -->
+        <div class="bg-cyan-900/40 border-b border-cyan-500/20 px-5 py-1.5 flex items-center justify-center gap-2">
+            <i class="fa-solid fa-flask-vial text-[10px] text-cyan-400"></i>
+            <span class="text-[10px] font-bold uppercase tracking-widest text-cyan-400">Simulated Environment</span>
+        </div>
+        <div class="px-5 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-[#0F172A] border border-[#1E293B] flex items-center justify-center shadow-inner relative overflow-hidden group">
+                    <div class="absolute inset-0 bg-cyan-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <img src="https://storage.googleapis.com/uxpilot-auth.appspot.com/mcp-canvas-assets/sbo9HjaII9WGCx7j4TzA5Z7aWnH2/r30d8UxUa7xuLus8ZH2j/1790500071694-eccfe7a6-4733-425a-817f-a47b5ab3bb98-New-brand-reference-OXID-Lunar-Aegis-master-vector.svg" alt="OXID Lunar Aegis" class="w-10 h-10 rounded-xl object-cover" />
+                </div>
+                <div>
+                    <h1 class="text-sm font-heading font-bold text-white tracking-wide">OXID</h1>
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
+                        <span class="text-[10px] font-bold text-slate-500 uppercase tracking-tighter">Standalone</span>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <button class="w-10 h-10 rounded-xl glass border border-[#1E293B] flex items-center justify-center text-slate-400 active:scale-95 transition-all hover:text-white" aria-label="Security">
+                    <i class="fa-solid fa-shield-halved text-sm"></i>
+                </button>
+                <button class="w-10 h-10 rounded-xl glass border border-[#1E293B] flex items-center justify-center text-slate-400 active:scale-95 transition-all hover:text-white" aria-label="Settings">
+                    <i class="fa-solid fa-cog text-sm"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-grow px-5 py-6 space-y-8 pb-24">
+        
+        <!-- Fold Section: Balance & Credentials -->
+        <section id="hero-overview" class="space-y-6">
+            <!-- Balance Card -->
+            <div class="space-y-2">
+                <div class="flex items-center justify-between text-slate-500 text-[10px] font-bold tracking-[0.2em] uppercase">
+                    <span>Night Balance</span>
+                    <button id="toggle-privacy" class="flex items-center gap-2 text-cyan-500 hover:text-cyan-400 transition-colors" aria-label="Reveal balance">
+                        <i class="fa-solid fa-eye-slash text-[10px]"></i>
+                        <span class="text-[10px]">Show</span>
+                    </button>
+                </div>
+                <div class="flex items-baseline gap-3">
+                    <span class="text-5xl font-heading font-bold tracking-tight text-white masked-value" id="balance-display">••••••</span>
+                    <span class="text-lg font-bold text-slate-600 uppercase tracking-widest">Night</span>
+                </div>
+            </div>
+
+            <!-- Quick Credentials Status -->
+            <div class="grid grid-cols-2 gap-3">
+                <div class="glass rounded-[20px] p-4 border border-[#1E293B] relative overflow-hidden group">
+                    <div class="absolute top-0 right-0 w-16 h-16 bg-slate-500/5 blur-2xl rounded-full"></div>
+                    <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-2">Identity</div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-6 h-6 rounded-lg bg-slate-800/50 flex items-center justify-center">
+                            <i class="fa-solid fa-fingerprint text-slate-600 text-[10px]"></i>
+                        </div>
+                        <span class="text-xs font-bold text-slate-400">Not Verified</span>
+                    </div>
+                </div>
+                <div class="glass rounded-[20px] p-4 border border-[#1E293B] relative overflow-hidden">
+                    <div class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-2">Credentials</div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-6 h-6 rounded-lg bg-slate-800/50 flex items-center justify-center">
+                            <i class="fa-solid fa-badge-check text-slate-600 text-[10px]"></i>
+                        </div>
+                        <span class="text-xs font-bold text-slate-400">0 Available</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Primary Actions -->
+        <section id="primary-actions" class="grid grid-cols-2 gap-4">
+            <button class="group relative flex flex-col items-center justify-center gap-3 bg-[#0F172A] border border-[#1E293B] text-slate-600 rounded-[24px] py-7 transition-all active:scale-95">
+                <div class="w-12 h-12 rounded-2xl bg-slate-800/30 flex items-center justify-center text-xl">
+                    <i class="fa-solid fa-arrow-up text-lg"></i>
+                </div>
+                <span class="font-bold text-[13px] uppercase tracking-wide">Send</span>
+                <span class="absolute bottom-3 text-[9px] font-bold text-slate-700 uppercase tracking-tighter">Setup Required</span>
+            </button>
+            <button class="flex flex-col items-center justify-center gap-3 bg-[#0F172A] border border-[#1E293B] hover:border-cyan-500/30 text-white rounded-[24px] py-7 transition-all active:scale-95 group">
+                <div class="w-12 h-12 rounded-2xl bg-cyan-500/10 flex items-center justify-center text-xl text-cyan-500 group-hover:scale-110 transition-transform">
+                    <i class="fa-solid fa-qrcode"></i>
+                </div>
+                <span class="font-bold text-[13px] uppercase tracking-wide">Receive</span>
+            </button>
+            <button class="group relative flex flex-col items-center justify-center gap-3 bg-[#0F172A] border border-[#1E293B] text-slate-600 rounded-[24px] py-7 transition-all active:scale-95">
+                <div class="w-12 h-12 rounded-2xl bg-slate-800/30 flex items-center justify-center text-xl">
+                    <i class="fa-solid fa-address-card text-lg"></i>
+                </div>
+                <span class="font-bold text-[13px] uppercase tracking-wide">Present</span>
+                <span class="absolute bottom-3 text-[9px] font-bold text-slate-700 uppercase tracking-tighter">No ID Found</span>
+            </button>
+            <button class="flex flex-col items-center justify-center gap-3 bg-cyan-600 hover:bg-cyan-500 text-oxid-bg rounded-[24px] py-7 transition-all active:scale-95 shadow-lg shadow-cyan-900/20">
+                <div class="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center text-xl text-white">
+                    <i class="fa-solid fa-camera"></i>
+                </div>
+                <span class="font-bold text-[13px] uppercase tracking-wide">Scan QR</span>
+            </button>
+        </section>
+
+        <!-- Recent Activity -->
+        <section id="activity" class="space-y-4">
+            <div class="flex items-center justify-between px-1">
+                <h3 class="text-sm font-bold text-white uppercase tracking-widest">Recent Activity</h3>
+                <button class="text-cyan-500 text-[10px] font-bold uppercase tracking-widest opacity-50 cursor-not-allowed">All</button>
+            </div>
+            <div class="bg-[#0F172A] border border-[#1E293B] rounded-[24px] p-10 flex flex-col items-center justify-center text-center space-y-4">
+                <div class="w-16 h-16 rounded-full bg-slate-900 flex items-center justify-center text-slate-700 border border-[#1E293B]">
+                    <i class="fa-solid fa-list-ul text-2xl"></i>
+                </div>
+                <div class="space-y-1">
+                    <p class="text-sm font-bold text-slate-300">No recent activity</p>
+                    <p class="text-[11px] text-slate-500 max-w-[200px] leading-relaxed">Connect to Midnight to view synced history.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Connectivity Prerequisite -->
+        <section class="pb-10">
+            <button class="w-full bg-[#0F172A] border border-[#1E293B] rounded-[20px] p-5 flex items-center gap-4 text-left active:scale-[0.98] transition-all hover:border-cyan-500/20 group">
+                <div class="w-12 h-12 rounded-xl bg-cyan-950/30 border border-cyan-500/20 flex items-center justify-center text-cyan-500 shrink-0 group-hover:bg-cyan-500 group-hover:text-white transition-all">
+                    <i class="fa-solid fa-link text-lg"></i>
+                </div>
+                <div class="space-y-0.5">
+                    <p class="text-sm font-bold text-white tracking-tight leading-tight">Connect Midnight Source</p>
+                    <p class="text-[11px] text-slate-500">Link a live account to unlock features.</p>
+                </div>
+                <i class="fa-solid fa-chevron-right text-slate-700 ml-auto group-hover:translate-x-1 transition-transform"></i>
+            </button>
+        </section>
+    </main>
+
+    <!-- Navigation Bar -->
+    <nav id="nav" aria-label="Primary navigation" style="position:fixed;bottom:0;left:0;right:0;z-index:50;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2px;background:#07090E;border-top:1px solid #1E293B;padding:7px 6px calc(7px + env(safe-area-inset-bottom));box-shadow:0 -8px 28px rgba(0,0,0,.25)">
+<button type="button" aria-label="Home" aria-current="page" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#06B6D4;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer"><span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></span><span>Home</span><span aria-hidden="true" style="width:16px;height:2px;border-radius:2px;background:#06B6D4"></span></button>
+<button type="button" aria-label="Wallet" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer"><span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg></span><span>Wallet</span></button>
+<button type="button" aria-label="Scan" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer"><span style="width:42px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:14px;background:linear-gradient(135deg,#38BDF8,#06B6D4);color:#07131d"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg></span><span>Scan</span></button>
+<button type="button" aria-label="Documents" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer"><span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></svg></span><span>Documents</span></button>
+<button type="button" aria-label="Activity" style="min-height:56px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;background:transparent;color:#94A3B8;font:600 11px/1.1 system-ui,sans-serif;cursor:pointer"><span style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;color:inherit"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.5.5 0 0 1-.96 0L9.24 2.18a.5.5 0 0 0-.96 0l-2.35 8.36A2 2 0 0 1 4 12H2"/></svg></span><span>Activity</span></button>
+</nav>
+
+    <script>
+        const balanceDisplay = document.getElementById('balance-display');
+        const toggleBtn = document.getElementById('toggle-privacy');
+        const MASK_PLACEHOLDER = "••••••";
+        const SIMULATED_VALUE = "Unavailable";
+        let isMasked = true;
+
+        toggleBtn.addEventListener('click', function() {
+            isMasked = !isMasked;
+            const icon = this.querySelector('i');
+            const label = this.querySelector('span');
+            
+            if (isMasked) {
+                balanceDisplay.innerText = MASK_PLACEHOLDER;
+                balanceDisplay.classList.add('masked-value');
+                icon.classList.replace('fa-eye', 'fa-eye-slash');
+                label.innerText = 'Show';
+                this.setAttribute('aria-label', 'Reveal balance');
+            } else {
+                balanceDisplay.innerText = SIMULATED_VALUE;
+                balanceDisplay.classList.remove('masked-value');
+                icon.classList.replace('fa-eye-slash', 'fa-eye');
+                label.innerText = 'Hide';
+                this.setAttribute('aria-label', 'Hide balance');
+            }
+        });
+    </script>
+</body>
+</html>

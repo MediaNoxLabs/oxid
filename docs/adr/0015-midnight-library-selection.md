@@ -38,7 +38,7 @@ revisions as the initial M2 compatibility baseline:
 
 | Concern | Repository | Revision | Use in Oxid |
 | --- | --- | --- | --- |
-| Ledger semantics | `https://github.com/midnightntwrk/midnight-ledger.git` | `d9414884db9da9e9b1f6f3a7f742d79a5732f817` | Semantic source; a Git dependency only for adapters that consume canonical transaction/state types or serialization |
+| Ledger semantics | `https://github.com/MediaNoxLabs/midnight-ledger.git` | `b85f5d8e503fd1d7a1b128bbc1d7156baf823a65` | Semantic source; a Git dependency only for adapters that consume canonical transaction/state types or serialization |
 | Proof system | `https://github.com/midnightntwrk/midnight-zk.git` | `cd2c27b2659de157409a9b96dba0dbaf1218f00b` | A proving adapter only when proving is implemented and measured |
 | Wallet protocol and vectors | `https://github.com/midnightntwrk/midnight-wallet.git` | `25d0c3857fc0e20435e06a9225bd8709ecce1115` | Protocol reference and public conformance vectors; not a runtime dependency |
 | Indexer GraphQL v4 | `https://github.com/midnightntwrk/midnight-indexer.git` | `82759bf186184684f13a9ffa97b58b7b7684f47c` | Narrow HTTP/WebSocket adapter documents and schema-contract tests |
@@ -50,10 +50,12 @@ acceptable pin. Use the smallest feature set for each adapter. In particular,
 do not add `midnight-zk`, `midnight-zkir`, or proving features to account-read
 adapters that do not prove or verify transactions.
 
-ADR-0028 selects `midnight-zkir 2.1.0` from the same official ledger Git
-revision for the native local-proving adapter. The published proof-system crates
-remain transitively selected by that immutable graph; Oxid does not add a second
-direct `midnight-zk` source for the same implementation.
+ADR-0028 selects `midnight-zkir 2.1.1` from the same reviewed ledger Git
+revision for the native local-proving adapter. The selected ledger workspace
+requires its exact immutable `midnight-proofs 0.7.3` patch from
+`MediaNoxLabs/midnight-zk@083c82824dc5979fd7d509229e6f6b362d5b1ebf`;
+Oxid repeats that root patch because Cargo does not propagate patch tables
+through Git dependencies.
 
 Treat the official Wallet SDK as the behavioral reference for network IDs,
 HD roles, Bech32m address formats, synchronization state, transaction history,

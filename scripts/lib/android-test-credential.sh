@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+
+# Shared disposable-emulator credential ceremony for Android smoke harnesses.
+# Call prepare once, run authorize in the background before the WebView journey,
+# and call cleanup from the owning harness trap.
+
+oxid_android_test_credential_require_emulator() {
+  local adb_command="$1"
+  local device="$2"
+
+  case "$device" in
+    emulator-*) ;;
+    *)
+      echo "The Android credential smoke helper refuses a non-emulator target." >&2
+      return 1
+      ;;
+  esac
+  if [ "$($adb_command -s "$device" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')" != "1" ]; then
+    echo "The Android credential smoke helper requires a disposable QEMU emulator." >&2
+    return 1
+  fi
+}
+
+oxid_android_test_credential_prepare() {
+  local adb_command="$1"
+  local device="$2"
+  local recovery_script
+
+  oxid_android_test_credential_require_emulator "$adb_command" "$device"
+  oxid_android_test_credential_pin="${OXID_ANDROID_TEST_PIN:-}"
+  if [ -z "$oxid_android_test_credential_pin" ]; then
+    oxid_android_test_credential_pin="$(od -An -N4 -tu4 /dev/urandom | awk '{ printf "%06d", ($1 % 900000) + 100000 }')"
+  fi
+  if ! [[ "$oxid_android_test_credential_pin" =~ ^[0-9]{6,12}$ ]]; then
+    echo "OXID_ANDROID_TEST_PIN must contain 6 to 12 digits." >&2
+    return 1
+  fi
+
+  oxid_android_test_credential_recovery_directory="$(
+    umask 077
+    mktemp -d "${TMPDIR:-/tmp}/oxid-android-test-credential.XXXXXX"
+  )"
+  chmod 700 "$oxid_android_test_credential_recovery_directory"
+  oxid_android_test_credential_completion_file="$oxid_android_test_credential_recovery_directory/onboarding-complete"
+  export OXID_ANDROID_ONBOARDING_COMPLETE_FILE="$oxid_android_test_credential_completion_file"
+  recovery_script="$oxid_android_test_credential_recovery_directory/clear-owned-credential.sh"
+  {
+    printf '#!/usr/bin/env bash\nset -eu\n'
+    printf '%q -s %q shell locksettings clear --old %q >/dev/null\n' \
+      "$adb_command" "$device" "$oxid_android_test_credential_pin"
+    printf 'rm -f -- %q %q\nrmdir -- %q\n' \
+      "$recovery_script" "$oxid_android_test_credential_completion_file" \
+      "$oxid_android_test_credential_recovery_directory"
+  } >"$recovery_script"
+  chmod 700 "$recovery_script"
+  oxid_android_test_credential_recovery_script="$recovery_script"
+
+  if ! "$adb_command" -s "$device" shell locksettings set-pin \
+    "$oxid_android_test_credential_pin" >/dev/null; then
+    echo "The disposable emulator did not admit a temporary PIN; an existing credential was not replaced." >&2
+    rm -f -- "$oxid_android_test_credential_recovery_script"
+    rmdir -- "$oxid_android_test_credential_recovery_directory"
+    oxid_android_test_credential_recovery_script=""
+    oxid_android_test_credential_recovery_directory=""
+    oxid_android_test_credential_completion_file=""
+    unset OXID_ANDROID_ONBOARDING_COMPLETE_FILE
+    oxid_android_test_credential_pin=""
+    return 1
+  fi
+  oxid_android_test_credential_owned=1
+}
+
+oxid_android_test_credential_prompt_focused() {
+  local adb_command="$1"
+  local device="$2"
+  local focused
+  focused="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null \
+    | rg 'topResumedActivity|ResumedActivity' || true)"
+  rg -q 'ConfirmDeviceCredential|ConfirmLockPassword|ConfirmLockPattern|Keyguard' <<<"$focused"
+}
+
+oxid_android_test_credential_resume_app() {
+  local adb_command="$1"
+  local device="$2"
+  local resumed
+
+  # startActivityForResult must deliver its result before the calling activity
+  # resumes. Do not race that delivery with a synthetic `am start`: transiently
+  # seeing neither activity is the normal system transition on a cold AVD.
+  for _oxid_resume_attempt in $(seq 1 75); do
+    resumed="$($adb_command -s "$device" shell dumpsys activity activities 2>/dev/null \
+      | rg 'topResumedActivity|ResumedActivity' || true)"
+    if rg -q 'io\.medianox\.oxid/dev\.dioxus\.main\.MainActivity' <<<"$resumed"; then
+      return 0
+    fi
+    if oxid_android_test_credential_prompt_focused "$adb_command" "$device"; then
+      # A second owned onboarding request replaced the first surface before
+      # MainActivity resumed. Let the bounded authorizer service it.
+      return 2
+    fi
+    sleep 0.2
+  done
+  echo "Android did not resume the app after owned device authorization." >&2
+  return 1
+}
+
+oxid_android_test_credential_authorize() {
+  local adb_command="$1"
+  local device="$2"
+  local authorization_count=0
+  local resume_status=0
+
+  # The UI owns a 90-second wait for each native preparation step. Observe the
+  # exact private completion marker for at most 200 seconds so a slow render
+  # cannot outlive the authorizer, while a stalled ceremony still terminates.
+  for _oxid_attempt in $(seq 1 1000); do
+    if oxid_android_test_credential_prompt_focused "$adb_command" "$device"; then
+      authorization_count=$((authorization_count + 1))
+      echo "Android device-credential prompt observed (owned onboarding authorization $authorization_count)." >&2
+      sleep 1
+      "$adb_command" -s "$device" shell input text \
+        "$oxid_android_test_credential_pin" >/dev/null
+      "$adb_command" -s "$device" shell input keyevent ENTER >/dev/null
+      for _oxid_settle_attempt in $(seq 1 50); do
+        if ! oxid_android_test_credential_prompt_focused "$adb_command" "$device"; then
+          break
+        fi
+        sleep 0.2
+      done
+      if oxid_android_test_credential_prompt_focused "$adb_command" "$device"; then
+        echo "Android device-credential prompt remained open after PIN submission." >&2
+        return 1
+      fi
+      resume_status=0
+      oxid_android_test_credential_resume_app "$adb_command" "$device" || resume_status=$?
+      if [ "$resume_status" -eq 2 ]; then
+        continue
+      fi
+      if [ "$resume_status" -ne 0 ]; then
+        return "$resume_status"
+      fi
+      continue
+    fi
+    if [ -f "$oxid_android_test_credential_completion_file" ]; then
+      if [ "$authorization_count" -eq 0 ]; then
+        echo "Android onboarding completed without an observed device-credential prompt." >&2
+        return 1
+      fi
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "Android device-credential authorization did not reach bounded onboarding completion." >&2
+  return 1
+}
+
+oxid_android_test_credential_cleanup() {
+  local adb_command="$1"
+  local device="$2"
+  if [ "${oxid_android_test_credential_owned:-0}" -eq 1 ]; then
+    if ! "$adb_command" -s "$device" shell locksettings clear \
+      --old "$oxid_android_test_credential_pin" >/dev/null 2>&1; then
+      echo "Failed to remove the disposable emulator PIN." >&2
+      echo "Run the private recovery helper retained at: $oxid_android_test_credential_recovery_script" >&2
+      echo "Credential ownership remains recorded; the credential and device identifier were not printed." >&2
+      return 1
+    fi
+    oxid_android_test_credential_owned=0
+    oxid_android_test_credential_pin=""
+    rm -f -- "$oxid_android_test_credential_recovery_script" \
+      "$oxid_android_test_credential_completion_file"
+    rmdir -- "$oxid_android_test_credential_recovery_directory"
+    oxid_android_test_credential_recovery_script=""
+    oxid_android_test_credential_recovery_directory=""
+    oxid_android_test_credential_completion_file=""
+    unset OXID_ANDROID_ONBOARDING_COMPLETE_FILE
+  fi
+}

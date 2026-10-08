@@ -6,29 +6,57 @@ use std::{error::Error, fmt, fmt::Write as _, sync::Arc};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_platform_ports::{ClockPort, PlatformError, RandomPort};
-use oxid_wallet_domain::{ProfileName, ProfileNameError, WalletProfile, WalletProfileId};
+pub use oxid_wallet_domain::{
+    ChainNetworkId, ChainTransactionId, WalletAccountSource, WalletProfileId, WalletSyncState,
+    WalletTransactionDraftId,
+};
+use oxid_wallet_domain::{ProfileName, ProfileNameError, WalletProfile};
 
+mod action_watch;
+mod approval;
 mod backup;
 mod chain;
 mod dust;
 mod dust_registration;
+mod dust_registration_coordinator;
+mod dust_registration_driver;
+mod dust_registration_policy;
+mod dust_registration_recovery;
+mod dust_registration_runtime;
 mod onboarding;
+mod operation_timeline;
 mod proof_benchmark;
+mod realm_lifecycle_policy;
+mod realm_lifecycle_runtime;
+mod realm_reconciliation;
 mod realm_sync;
 mod root_recovery;
 mod security;
+mod sensitive_keys;
 mod shielded;
 mod transaction;
 
+pub use action_watch::*;
+pub use approval::*;
 pub use backup::*;
 pub use chain::*;
 pub use dust::*;
 pub use dust_registration::*;
+pub use dust_registration_coordinator::*;
+pub use dust_registration_driver::*;
+pub use dust_registration_policy::*;
+pub use dust_registration_recovery::*;
+pub use dust_registration_runtime::*;
 pub use onboarding::*;
+pub use operation_timeline::*;
 pub use proof_benchmark::*;
+pub use realm_lifecycle_policy::*;
+pub use realm_lifecycle_runtime::*;
+pub use realm_reconciliation::*;
 pub use realm_sync::*;
 pub use root_recovery::*;
 pub use security::*;
+pub use sensitive_keys::*;
 pub use shielded::*;
 pub use transaction::*;
 
@@ -270,12 +298,24 @@ where
 /// Application service for selecting the active wallet profile.
 pub struct SelectWalletProfileService<R> {
     repository: Arc<R>,
+    approvals: Option<Arc<WalletApprovalService>>,
 }
 
 impl<R> SelectWalletProfileService<R> {
     #[must_use]
     pub const fn new(repository: Arc<R>) -> Self {
-        Self { repository }
+        Self {
+            repository,
+            approvals: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_approvals(repository: Arc<R>, approvals: Arc<WalletApprovalService>) -> Self {
+        Self {
+            repository,
+            approvals: Some(approvals),
+        }
     }
 }
 
@@ -289,6 +329,11 @@ where
     ) -> Result<WalletProfileView, SelectWalletProfileError> {
         let id = WalletProfileId::parse(command.profile_id)
             .map_err(SelectWalletProfileError::InvalidIdentifier)?;
+        if let Some(approvals) = &self.approvals {
+            approvals.invalidate().map_err(|_| {
+                SelectWalletProfileError::Persistence(WalletProfileRepositoryError::Unavailable)
+            })?;
+        }
         self.repository
             .set_active(&id)
             .map(|profile| WalletProfileView::from(&profile))

@@ -33,6 +33,8 @@
         "-p",
         "oxid-headless",
         "--all-targets",
+        "--features",
+        "standalone-faucet",
         "--json"
       ]
     },
@@ -75,6 +77,8 @@
       "crates/composition/src/lib.rs"
     ],
     "testOnlySources": [
+      "crates/composition/src/development_movement_approval_fixture.rs",
+      "crates/ui-dioxus/src/desktop_developer_pager_driver.rs",
       "crates/ui-dioxus/src/desktop_test_driver.rs"
     ],
     "testModuleFilename": "tests.rs",
@@ -120,6 +124,7 @@
       "oxid-adapter-siopv2",
       "oxid-adapter-midnight",
       "oxid-adapter-passport-vault",
+      "oxid-adapter-diagnostics-encrypted",
       "oxid-adapter-store-atomic",
       "oxid-adapter-storage-json",
       "oxid-adapter-storage-credential-json",

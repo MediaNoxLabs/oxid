@@ -98,10 +98,13 @@ impl HeadlessWallet {
             .execute(SelectWalletProfileCommand {
                 profile_id: params.profile_id,
             }) {
-            Ok(profile) => Dispatch::continue_with(Response::success(
-                request.id,
-                json!({ "profile": profile_value(&profile) }),
-            )),
+            Ok(profile) => {
+                let _ = self.drive_selected_realm(profile.id.clone());
+                Dispatch::continue_with(Response::success(
+                    request.id,
+                    json!({ "profile": profile_value(&profile) }),
+                ))
+            }
             Err(error) => Dispatch::continue_with(select_profile_error(request.id, error)),
         }
     }

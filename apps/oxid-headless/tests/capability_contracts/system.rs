@@ -46,14 +46,14 @@ fn reports_ready_and_queued_capabilities() {
     }));
     assert!(methods.iter().any(|capability| {
         capability["method"] == "wallet.transaction.send_unshielded"
-            && capability["status"] == "ready"
+            && capability["status"] == "unavailable"
             && capability["aliasFor"] == "wallet.transaction.submit_unshielded"
     }));
     assert_eq!(responses[0]["result"]["custodyMode"], "development_only");
     assert!(methods.iter().any(|capability| {
         capability["method"] == "wallet.key.sign"
-            && capability["status"] == "ready"
-            && capability["mode"] == "development_only"
+            && capability["status"] == "unavailable"
+            && capability["mode"] == "approval_unavailable"
     }));
     assert!(methods.iter().any(|capability| {
         capability["method"] == "wallet.key.generate"
@@ -75,6 +75,13 @@ fn reports_ready_and_queued_capabilities() {
         capability["method"] == "wallet.transaction.prepare_unshielded"
             && capability["status"] == "ready"
             && capability["submissionReady"] == false
+    }));
+    assert!(methods.iter().any(|capability| {
+        capability["method"] == "wallet.receive_request.import"
+            && capability["status"] == "ready"
+            && capability["network"] == "active_undeployed"
+            && capability["asset"] == "NIGHT"
+            && capability["formats"] == json!(["midnight-receive:v1", "raw_bech32m"])
     }));
     assert!(methods.iter().any(|capability| {
         capability["method"] == "did.resolve"

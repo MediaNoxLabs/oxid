@@ -86,7 +86,7 @@ and Android artifacts must be built. A successful command ends with:
 Oxid Tailnet identity demo: READY
 ```
 
-Check the same exact-head receipt and live Midnight services at any time:
+Check the durable owner receipt and live Midnight services at any time:
 
 ```bash
 demo/status.sh
@@ -130,17 +130,24 @@ configuration. If another session owned the healthy standalone stack, the
 stack and routes remain running. The installed app and its local wallet data
 remain on the phone; removing either is a separate, explicit device action.
 
-Missing, stale, permissive, symlinked, or ambiguous receipts fail closed and
-preserve state for owner review. Never use global Docker deletion, `tailscale
-serve reset`, or recursive worktree cleanup as a recovery shortcut.
+Missing, stale, permissive, symlinked, ambiguous, or label-only receipts fail
+closed and preserve state for owner review. If a retired temporary
+`${TMPDIR}/oxid-standalone` directory is detected, durable state ignores it;
+verify it is unused and remove only that directory manually. Never use global Docker
+deletion, `tailscale serve reset`, or recursive worktree cleanup as a recovery
+shortcut.
 
 ## Boundaries
 
 The scripts do not print or track device IDs, MagicDNS identities, offers,
 request objects, capabilities, credentials, proofs, or protocol secrets.
-Private runtime state is under `target/` with restrictive permissions. The kit
-supports physical Android only; physical iOS signing and deployment are out of
-scope.
+Private demo receipts remain under `target/` with restrictive permissions. The
+shared standalone Compose definition, generated indexer environment, startup
+lease, and owner receipt live under the physical Git common directory at
+`oxid/standalone`, after the launcher proves that its script root is that
+checkout's Git top level. Their identity does not change with the invoking
+worktree or launcher lifetime. The kit supports physical Android only;
+physical iOS signing and deployment are out of scope.
 
 For the underlying compile-time Tailnet profile and service ownership model,
 see [ADR-0097](../docs/adr/0097-build-standalone-phone-routes-at-compile-time.md).

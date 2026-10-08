@@ -1,0 +1,75 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    { "title": "Agento11y local viewer", "type": "link", "url": "http://127.0.0.1:8765", "targetBlank": true }
+  ],
+  "panels": [
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "oxid-pi-agento11y" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green" }] } }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [{ "columns": [{ "selector": "calls", "text": "Sessions", "type": "number" }], "format": "table", "parser": "backend", "refId": "A", "root_selector": "aggregate", "source": "url", "type": "json", "url": "http://127.0.0.1:8765/api/v1/metrics/conversations" }],
+      "title": "Pi sessions", "type": "stat"
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "oxid-pi-agento11y" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green" }, { "color": "red", "value": 1 }] } }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [{ "columns": [{ "selector": "errored", "text": "Errored", "type": "number" }], "format": "table", "parser": "backend", "refId": "A", "root_selector": "aggregate", "source": "url", "type": "json", "url": "http://127.0.0.1:8765/api/v1/metrics/conversations" }],
+      "title": "Errored sessions", "type": "stat"
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "oxid-pi-agento11y" },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 0 },
+      "id": 3,
+      "options": { "displayMode": "gradient", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showUnfilled": true, "valueMode": "color" },
+      "targets": [{ "columns": [{ "selector": "fresh_input", "text": "Fresh input", "type": "number" }, { "selector": "cache_read", "text": "Cache read", "type": "number" }, { "selector": "cache_write", "text": "Cache write", "type": "number" }, { "selector": "output", "text": "Output", "type": "number" }, { "selector": "reasoning", "text": "Reasoning", "type": "number" }], "format": "table", "parser": "backend", "refId": "A", "root_selector": "aggregate.token_buckets", "source": "url", "type": "json", "url": "http://127.0.0.1:8765/api/v1/metrics/conversations" }],
+      "title": "Token buckets", "type": "bargauge"
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "oxid-pi-agento11y" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 5 },
+      "id": 4,
+      "options": { "cellHeight": "sm", "showHeader": true },
+      "targets": [{ "columns": [{ "selector": "started_at", "text": "Started", "type": "time" }, { "selector": "status", "text": "Status", "type": "string" }, { "selector": "calls", "text": "Calls", "type": "number" }, { "selector": "total_tokens", "text": "Tokens", "type": "number" }, { "selector": "branch", "text": "Branch", "type": "string" }, { "selector": "workspace", "text": "Workspace", "type": "string" }], "format": "table", "parser": "backend", "refId": "A", "root_selector": "conversations", "source": "url", "type": "json", "url": "http://127.0.0.1:8765/api/v1/metrics/conversations" }],
+      "title": "Recent Pi sessions", "type": "table"
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "oxid-pi-agento11y" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 5 },
+      "id": 5,
+      "options": { "cellHeight": "sm", "showHeader": true },
+      "targets": [{ "columns": [], "format": "table", "parser": "backend", "refId": "A", "root_selector": "tools.rows", "source": "url", "type": "json", "url": "http://127.0.0.1:8765/api/v1/metrics/skills-tools" }],
+      "title": "Tool execution", "type": "table"
+    },
+    {
+      "datasource": { "type": "yesoreyeram-infinity-datasource", "uid": "oxid-pi-agento11y" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 12, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never" }, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 14 },
+      "id": 6,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "columns": [{ "selector": "t", "text": "Time", "type": "time" }, { "selector": "model", "text": "Model", "type": "string" }, { "selector": "fresh_input", "text": "Fresh input", "type": "number" }, { "selector": "cache_read", "text": "Cache read", "type": "number" }, { "selector": "cache_write", "text": "Cache write", "type": "number" }, { "selector": "output", "text": "Output", "type": "number" }, { "selector": "reasoning", "text": "Reasoning", "type": "number" }], "format": "timeseries", "parser": "backend", "refId": "A", "root_selector": "points", "source": "url", "type": "json", "url": "http://127.0.0.1:8765/api/v1/metrics/tokens" }],
+      "title": "Tokens over time", "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 42,
+  "tags": ["oxid", "pi-dev", "agento11y", "local"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timezone": "browser",
+  "title": "Oxid Pi.dev Factory",
+  "uid": "oxid-pi-factory",
+  "version": 1
+}

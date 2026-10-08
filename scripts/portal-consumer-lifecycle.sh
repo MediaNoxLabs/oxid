@@ -9,57 +9,153 @@ readonly PORTAL_COMMIT="25499870f84d77173c46e4af3021311decfb840b"
 readonly PORTAL_TREE="2d845d2293603dfd8adce5362c8a9941e6ba78a9"
 readonly PORTAL_REMOTE="https://github.com/input-output-hk/lace-id-portal.git"
 readonly PROJECT="oxid-portal-consumer"
+readonly SMOCKER_IMAGE="ghcr.io/smocker-dev/smocker@sha256:b4106c3aec1d58df09b6b94a89eba801298cbe5303f3c9236d105dbcaaaf4ab2"
 readonly REPOSITORY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly COMPOSE_FILE="$REPOSITORY_ROOT/scripts/portal-consumer-stack.yml"
+readonly COMPATIBILITY_AUDIT="$REPOSITORY_ROOT/scripts/check-midnight-integration-compatibility.mjs"
 readonly OPERATION="${1:-}"
 readonly SOURCE="${PORTAL_INTEGRATION_CHECKOUT:-}"
 readonly STATE="${OXID_PORTAL_CONSUMER_STATE_DIR:-}"
 readonly ENV_FILE="$STATE/runtime.env"
 readonly RECEIPT="$STATE/owner-receipt.json"
+readonly STARTING_RECEIPT="$STATE/starting-receipt.json"
 readonly PRIVATE_LOG="$STATE/private.log"
+readonly PREPARED_RECEIPT="$STATE/prepared-receipt.json"
+readonly PREPARE_CHECKPOINT="$STATE/prepare-checkpoint.json"
+readonly PREPARE_LOCK="$STATE/prepare.lock"
+readonly PREPARED_RECEIPT_SCHEMA="oxid-portal-consumer-prepared-v2"
+readonly LEASE_DIR="${OXID_PORTAL_CONSUMER_LEASE_DIR:-${TMPDIR:-/tmp}/oxid-portal-consumer-lease}"
+readonly LEASE_RECORD="$LEASE_DIR/owner.json"
+readonly SESSION_ID="${OXID_PORTAL_CONSUMER_SESSION_ID:-$(printf '%s' "$STATE" | shasum -a 256 | awk '{print $1}')}"
+readonly STATE_FINGERPRINT="$(printf '%s' "$STATE" | shasum -a 256 | awk '{print $1}')"
+readonly EXTERNAL_PREPARED_RECEIPT="${PORTAL_CONSUMER_PREPARED_RECEIPT:-}"
 readonly TAILNET_MOCK_STATE="${PORTAL_TAILNET_MOCK_STATE_DIR:-}"
 readonly TAILNET_MOCK_TRANSFORM="$REPOSITORY_ROOT/scripts/e2e/tailnet-mock-transform.mjs"
+
+# shellcheck source=lib/docker-engine-health.sh
+source "$REPOSITORY_ROOT/scripts/lib/docker-engine-health.sh"
 
 fail() {
   printf 'portal-consumer-lifecycle: FAIL phase=%s\n' "$1" >&2
   exit 1
 }
 
-case "$OPERATION" in prerequisite|up|status|down) ;; *) fail usage ;; esac
-for command_name in awk curl docker git jq nix openssl shasum; do
+case "$OPERATION" in prerequisite|prepare|prepared-status|up|status|down|services-up|services-status|services-stop) ;; *) fail usage ;; esac
+for command_name in awk curl docker git jq nix node openssl shasum timeout; do
   command -v "$command_name" >/dev/null 2>&1 || fail missing-tool
 done
-[[ "$SOURCE" = /* && "$STATE" = /* ]] || fail paths
-[ -d "$SOURCE" ] && [ ! -L "$SOURCE" ] || fail source
-[ "$(git -C "$SOURCE" remote get-url origin 2>/dev/null)" = "$PORTAL_REMOTE" ] || fail source
-[ "$(git -C "$SOURCE" rev-parse HEAD 2>/dev/null)" = "$PORTAL_COMMIT" ] || fail source
-[ "$(git -C "$SOURCE" rev-parse 'HEAD^{tree}' 2>/dev/null)" = "$PORTAL_TREE" ] || fail source
-[ -z "$(git -C "$SOURCE" status --porcelain --untracked-files=all 2>/dev/null)" ] || fail source
-[ -f "$COMPOSE_FILE" ] || fail compose
+[[ "$STATE" = /* ]] || fail paths
+if [ "$OPERATION" = down ]; then
+  # Cleanup is authorized by the private lease and immutable ownership receipt.
+  # It must remain available when a later checkout intentionally changes pins.
+  COMPATIBILITY_MANIFEST_SHA256=""
+else
+  [[ "$SOURCE" = /* ]] || fail paths
+  [ -d "$SOURCE" ] && [ ! -L "$SOURCE" ] || fail source
+  [ "$(git -C "$SOURCE" remote get-url origin 2>/dev/null)" = "$PORTAL_REMOTE" ] || fail source
+  [ "$(git -C "$SOURCE" rev-parse HEAD 2>/dev/null)" = "$PORTAL_COMMIT" ] || fail source
+  [ "$(git -C "$SOURCE" rev-parse 'HEAD^{tree}' 2>/dev/null)" = "$PORTAL_TREE" ] || fail source
+  [ -z "$(git -C "$SOURCE" status --porcelain --untracked-files=all 2>/dev/null)" ] || fail source
+  [ -f "$COMPOSE_FILE" ] || fail compose
+  [ -f "$COMPATIBILITY_AUDIT" ] || fail compatibility-audit
+  compatibility_result="$(node "$COMPATIBILITY_AUDIT" --portal-source "$SOURCE")" || fail compatibility
+  COMPATIBILITY_MANIFEST_SHA256="$(jq -r '.manifestSha256 // empty' <<<"$compatibility_result")"
+  [[ "$COMPATIBILITY_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] || fail compatibility
+fi
+readonly COMPATIBILITY_MANIFEST_SHA256
 
 umask 077
-mkdir -p "$STATE"
-chmod 700 "$STATE"
-[ -d "$STATE" ] && [ ! -L "$STATE" ] || fail state
 
 project_ids() {
-  docker ps -a --filter "label=com.docker.compose.project=$PROJECT" --quiet 2>/dev/null | sort
+  oxid_docker_read ps -a --filter "label=com.docker.compose.project=$PROJECT" --quiet 2>/dev/null | sort
 }
 
 running_ids() {
-  docker ps --filter "label=com.docker.compose.project=$PROJECT" --quiet 2>/dev/null | sort
+  oxid_docker_read ps --filter "label=com.docker.compose.project=$PROJECT" --quiet 2>/dev/null | sort
 }
 
 count_lines() {
   awk 'NF { count++ } END { print count + 0 }' <<<"$1"
 }
 
+private_regular_file() {
+  [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  local mode
+  if mode="$(stat -c '%a' -- "$1" 2>/dev/null)"; then :; else mode="$(stat -f '%Lp' -- "$1")"; fi
+  [ "$mode" = 600 ]
+}
+
+lease_held=0
+lease_release_allowed=1
+lease_retained=0
+lease_reused=0
+emit_contention() {
+  local owner
+  if ! owner="$(jq -r '.session // empty' "$LEASE_RECORD" 2>/dev/null)"; then
+    fail lease-ambiguous
+  fi
+  [[ "$owner" =~ ^[0-9a-f]{64}$ ]] || fail lease-ambiguous
+  jq -cn --arg owner "${owner:0:16}" \
+    '{schema:"oxid-portal-consumer-lease-v1",state:"contention",owner:{session:$owner}}'
+  exit 2
+}
+lease_record_valid_for_session() {
+  private_regular_file "$LEASE_RECORD" && jq -e \
+    --arg session "$SESSION_ID" --arg fingerprint "$STATE_FINGERPRINT" \
+    '.schema == "oxid-portal-consumer-lease-v1" and .session == $session and .stateFingerprint == $fingerprint' \
+    "$LEASE_RECORD" >/dev/null
+}
+acquire_lease() {
+  [[ "$LEASE_DIR" = /* && "$SESSION_ID" =~ ^[0-9a-f]{64}$ ]] || fail lease-path
+  if mkdir "$LEASE_DIR" 2>/dev/null; then
+    chmod 700 "$LEASE_DIR" || fail lease-permissions
+    jq -cn --arg session "$SESSION_ID" --arg fingerprint "$STATE_FINGERPRINT" \
+      '{schema:"oxid-portal-consumer-lease-v1",session:$session,stateFingerprint:$fingerprint}' \
+      >"$LEASE_RECORD" || fail lease-write
+    chmod 600 "$LEASE_RECORD" || fail lease-permissions
+    lease_record_valid_for_session || fail lease-write
+    lease_held=1
+    return
+  fi
+  [ -d "$LEASE_DIR" ] && [ ! -L "$LEASE_DIR" ] || fail lease-ambiguous
+  if lease_record_valid_for_session; then
+    lease_held=1
+    lease_reused=1
+    # A later command from the same session may inspect or operate the detached
+    # project, but only a proven `down` path may release its lifetime lease.
+    lease_release_allowed=0
+    return
+  fi
+  emit_contention
+}
+release_lease() {
+  [ "$lease_held" -eq 1 ] || return 0
+  [ "$lease_release_allowed" -eq 1 ] || return 0
+  lease_record_valid_for_session || return 0
+  rm -f -- "$LEASE_RECORD" || return 0
+  rmdir -- "$LEASE_DIR" 2>/dev/null || return 0
+  lease_held=0
+}
+initialize_state() {
+  mkdir -p "$STATE"
+  chmod 700 "$STATE"
+  [ -d "$STATE" ] && [ ! -L "$STATE" ] || fail state
+}
+
+prepare_lock_held=0
+release_prepare_lock() {
+  if [ "$prepare_lock_held" -eq 1 ]; then
+    rmdir -- "$PREPARE_LOCK" 2>/dev/null || true
+    prepare_lock_held=0
+  fi
+}
+
 shared_midnight_ready() {
   local all running labels
-  all="$(docker ps -a --filter 'label=com.docker.compose.project=oxid-standalone' --quiet 2>/dev/null | sort)" || return 1
-  running="$(docker ps --filter 'label=com.docker.compose.project=oxid-standalone' --quiet 2>/dev/null | sort)" || return 1
+  all="$(oxid_docker_read ps -a --filter 'label=com.docker.compose.project=oxid-standalone' --quiet 2>/dev/null | sort)" || return 1
+  running="$(oxid_docker_read ps --filter 'label=com.docker.compose.project=oxid-standalone' --quiet 2>/dev/null | sort)" || return 1
   [ "$(count_lines "$all")" -eq 3 ] && [ "$all" = "$running" ] || return 1
-  labels="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' $all 2>/dev/null | sort)" || return 1
+  labels="$(oxid_docker_read inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' $all 2>/dev/null | sort)" || return 1
   [ "$labels" = $'indexer\nnode\nproof-server' ] || return 1
   curl --fail --silent --max-time 5 http://127.0.0.1:9944/health >/dev/null 2>&1 || return 1
   curl --fail --silent --max-time 5 -H 'content-type: application/json' \
@@ -75,23 +171,193 @@ compose() {
   docker compose --env-file "$ENV_FILE" -p "$PROJECT" -f "$COMPOSE_FILE" "$@"
 }
 
+compose_bounded() {
+  timeout -k 5s 40s docker compose --env-file "$ENV_FILE" -p "$PROJECT" \
+    -f "$COMPOSE_FILE" "$@"
+}
+
+# Docker Desktop can outlive Compose's container stop timeout while the client
+# waits on its engine. Callers enter here only after validating this session's
+# starting/owner receipt; every target is then revalidated by its Compose
+# project label before an exact-ID removal.
+force_remove_owned_project() {
+  local attempt id removed resource
+  for id in $(project_ids); do
+    # `docker ps --quiet` emits the exact project-filtered short ID by default.
+    # Revalidate its project label before using it as a destructive target.
+    [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || return 1
+    [ "$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$id" 2>/dev/null)" = "$PROJECT" ] || return 1
+  done
+  for id in $(project_ids); do
+    removed=0
+    for attempt in 1 2; do
+      if timeout -k 5s 30s docker rm --force "$id" >>"$PRIVATE_LOG" 2>&1; then
+        removed=1
+        break
+      fi
+      sleep 2
+    done
+    [ "$removed" -eq 1 ] || return 1
+  done
+  for resource in $(docker volume ls --filter "label=com.docker.compose.project=$PROJECT" --quiet); do
+    [ "$(docker volume inspect --format '{{index .Labels "com.docker.compose.project"}}' "$resource" 2>/dev/null)" = "$PROJECT" ] || return 1
+    timeout -k 5s 20s docker volume rm "$resource" >>"$PRIVATE_LOG" 2>&1 || return 1
+  done
+  for resource in $(docker network ls --filter "label=com.docker.compose.project=$PROJECT" --quiet --no-trunc); do
+    [[ "$resource" =~ ^[0-9a-f]{64}$ ]] || return 1
+    [ "$(docker network inspect --format '{{index .Labels "com.docker.compose.project"}}' "$resource" 2>/dev/null)" = "$PROJECT" ] || return 1
+    timeout -k 5s 20s docker network rm "$resource" >>"$PRIVATE_LOG" 2>&1 || return 1
+  done
+  [ -z "$(project_ids)" ]
+}
+
 receipt_valid() {
-  [ -f "$RECEIPT" ] && [ ! -L "$RECEIPT" ] || return 1
-  local mode
-  if mode="$(stat -c '%a' -- "$RECEIPT" 2>/dev/null)"; then :; else mode="$(stat -f '%Lp' -- "$RECEIPT" 2>/dev/null)"; fi
-  [ "$mode" = 600 ] || return 1
+  private_regular_file "$RECEIPT" || return 1
   jq -e \
     --arg commit "$PORTAL_COMMIT" \
     --arg tree "$PORTAL_TREE" \
+    --arg compatibility "$COMPATIBILITY_MANIFEST_SHA256" \
     --arg compose "$(shasum -a 256 "$COMPOSE_FILE" | awk '{print $1}')" \
     --argjson ids "$(printf '%s\n' "$(project_ids)" | jq -Rsc 'split("\n") | map(select(length > 0)) | sort')" \
     '.schema == "oxid-portal-consumer-owner-v1"
       and .source == {commit:$commit,tree:$tree}
+      and .compatibilityManifestSha256 == $compatibility
       and .composeSha256 == $compose
       and .project == "oxid-portal-consumer"
       and .containerIds == $ids
       and (.images | keys | sort == ["didManager","issuer","resolver"])' \
     "$RECEIPT" >/dev/null
+}
+
+starting_receipt_valid() {
+  private_regular_file "$STARTING_RECEIPT" || return 1
+  jq -e \
+    --arg commit "$PORTAL_COMMIT" \
+    --arg tree "$PORTAL_TREE" \
+    --arg compatibility "$COMPATIBILITY_MANIFEST_SHA256" \
+    --arg compose "$(shasum -a 256 "$COMPOSE_FILE" | awk '{print $1}')" '
+      .schema == "oxid-portal-consumer-starting-v1"
+      and .source == {commit:$commit,tree:$tree}
+      and .compatibilityManifestSha256 == $compatibility
+      and .composeSha256 == $compose
+      and .project == "oxid-portal-consumer"
+      and (.startedAtEpoch | type == "number" and . >= 0)
+    ' "$STARTING_RECEIPT" >/dev/null
+}
+
+cleanup_receipt_valid() {
+  private_regular_file "$RECEIPT" || return 1
+  jq -e \
+    --argjson ids "$(printf '%s\n' "$(project_ids)" | jq -Rsc 'split("\n") | map(select(length > 0)) | sort')" '
+      .schema == "oxid-portal-consumer-owner-v1"
+      and (.source.commit | type == "string" and test("^[0-9a-f]{40}$"))
+      and (.source.tree | type == "string" and test("^[0-9a-f]{40}$"))
+      and (.compatibilityManifestSha256 | type == "string" and test("^[0-9a-f]{64}$"))
+      and (.composeSha256 | type == "string" and test("^[0-9a-f]{64}$"))
+      and .project == "oxid-portal-consumer"
+      and .containerIds == $ids
+      and (.images | keys | sort == ["didManager","issuer","resolver"])
+    ' "$RECEIPT" >/dev/null
+}
+
+cleanup_starting_receipt_valid() {
+  private_regular_file "$STARTING_RECEIPT" || return 1
+  jq -e '
+      .schema == "oxid-portal-consumer-starting-v1"
+      and (.source.commit | type == "string" and test("^[0-9a-f]{40}$"))
+      and (.source.tree | type == "string" and test("^[0-9a-f]{40}$"))
+      and (.compatibilityManifestSha256 | type == "string" and test("^[0-9a-f]{64}$"))
+      and (.composeSha256 | type == "string" and test("^[0-9a-f]{64}$"))
+      and .project == "oxid-portal-consumer"
+      and (.startedAtEpoch | type == "number" and . >= 0)
+    ' "$STARTING_RECEIPT" >/dev/null
+}
+
+image_tag_for() {
+  case "$1" in
+    midnight-did-resolver-image) printf '%s\n' midnight-did-resolver:0.1.0 ;;
+    did-manager-image) printf '%s\n' laceid-did-manager:0.1.0 ;;
+    issuer-image) printf '%s\n' laceid-issuer:0.1.0 ;;
+    *) return 1 ;;
+  esac
+}
+
+image_key_for() {
+  case "$1" in
+    midnight-did-resolver-image) printf '%s\n' resolver ;;
+    did-manager-image) printf '%s\n' didManager ;;
+    issuer-image) printf '%s\n' issuer ;;
+    *) return 1 ;;
+  esac
+}
+
+prepared_image_valid() {
+  local prepared="$1" key="$2" tag="$3" prepared_directory output gc_root image_id digest current_id current_digest
+  prepared_directory="$(dirname -- "$prepared")"
+  [ -d "$prepared_directory" ] && [ ! -L "$prepared_directory" ] || return 1
+  prepared_directory="$(cd -- "$prepared_directory" && pwd -P)" || return 1
+  output="$(jq -r --arg key "$key" '.images[$key].outputPath // empty' "$prepared")"
+  gc_root="$(jq -r --arg key "$key" '.images[$key].gcRoot // empty' "$prepared")"
+  image_id="$(jq -r --arg key "$key" '.images[$key].id // empty' "$prepared")"
+  digest="$(jq -r --arg key "$key" '.images[$key].digest // empty' "$prepared")"
+  [[ "$output" = /nix/store/* ]] && [ -f "$output" ] || return 1
+  [ "$gc_root" = "$prepared_directory/nix-$key" ] && [ -L "$gc_root" ] || return 1
+  [ "$(readlink "$gc_root")" = "$output" ] || return 1
+  [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  current_digest="sha256:$(shasum -a 256 "$output" | awk '{print $1}')" || return 1
+  [ "$digest" = "$current_digest" ] || return 1
+  current_id="$(oxid_docker_read image inspect --format '{{.Id}}' "$tag" 2>/dev/null)" || return 1
+  [ "$current_id" = "$image_id" ]
+}
+
+prepared_receipt_metadata_valid() {
+  local prepared="$1" status="${2:-complete}" host_system
+  private_regular_file "$prepared" || return 1
+  host_system="$(nix eval --raw --impure --expr builtins.currentSystem 2>/dev/null)" || return 1
+  jq -e \
+    --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" --arg compatibility "$COMPATIBILITY_MANIFEST_SHA256" \
+    --arg status "$status" --arg host "$host_system" --arg schema "$PREPARED_RECEIPT_SCHEMA" '
+      .schema == $schema
+      and .source == {commit:$commit,tree:$tree}
+      and .compatibilityManifestSha256 == $compatibility
+      and .status == $status
+      and .hostSystem == $host
+      and (.startedAtEpoch | type == "number" and . >= 0)
+      and (.images | type == "object")
+      and ((.images | keys) - ["resolver","didManager","issuer"] | length == 0)
+      and ($status != "complete" or (
+        (.completedAtEpoch | type == "number")
+        and .completedAtEpoch >= .startedAtEpoch
+        and (.metrics.prepareDurationSeconds | type == "number" and . >= 0)
+      ))
+    ' "$prepared" >/dev/null || return 1
+}
+
+prepared_receipt_valid() {
+  local prepared="$1" status="${2:-complete}" key attribute tag
+  prepared_receipt_metadata_valid "$prepared" "$status" || return 1
+  [ "$status" = complete ] || return 0
+  [ "$(jq -r '.images | keys | sort | join(",")' "$prepared")" = didManager,issuer,resolver ] || return 1
+  for attribute in midnight-did-resolver-image did-manager-image issuer-image; do
+    key="$(image_key_for "$attribute")"; tag="$(image_tag_for "$attribute")"
+    if jq -e --arg key "$key" '.images[$key] != null' "$prepared" >/dev/null; then
+      prepared_image_valid "$prepared" "$key" "$tag" || return 1
+    else
+      return 1
+    fi
+  done
+  oxid_docker_read image inspect "$SMOCKER_IMAGE" >/dev/null 2>&1 || return 1
+}
+
+discard_legacy_prepared_state() {
+  local prepared
+  for prepared in "$PREPARED_RECEIPT" "$PREPARE_CHECKPOINT"; do
+    if private_regular_file "$prepared" \
+      && jq -e '.schema == "oxid-portal-consumer-prepared-v1"' "$prepared" >/dev/null 2>&1; then
+      rm -f -- "$prepared"
+    fi
+  done
 }
 
 tailnet_mock_state_valid() {
@@ -106,7 +372,7 @@ tailnet_mock_state_valid() {
 emit_status() {
   local state="$1"
   if [ "$state" = running ] && receipt_valid; then
-    jq -c '{schema:"oxid-portal-consumer-status-v1",state:"running",source:.source,images:.images}' "$RECEIPT"
+    jq -c '{schema:"oxid-portal-consumer-status-v1",state:"running",source:.source,compatibilityManifestSha256:.compatibilityManifestSha256,images:.images}' "$RECEIPT"
   else
     jq -cn --arg state "$state" --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
       '{schema:"oxid-portal-consumer-status-v1",state:$state,source:{commit:$commit,tree:$tree}}'
@@ -114,18 +380,24 @@ emit_status() {
 }
 
 build_image() {
-  local attribute="$1" variable="$2" output image_id
-  output="$(nix build --option access-tokens '' "$SOURCE#$attribute" --no-link --print-out-paths 2>>"$PRIVATE_LOG")" || return 1
-  [ -f "$output" ] || return 1
+  local attribute="$1" variable="$2" output_variable="${3:-}" key gc_root output image_id
+  key="$(image_key_for "$attribute")" || return 1
+  gc_root="$STATE/nix-$key"
+  output="$(nix build --option access-tokens '' "$SOURCE#$attribute" --out-link "$gc_root" --print-out-paths 2>>"$PRIVATE_LOG")" || return 1
+  [ "$(count_lines "$output")" -eq 1 ] && [[ "$output" = /nix/store/* ]] && [ -f "$output" ] || return 1
+  [ -L "$gc_root" ] && [ "$(readlink "$gc_root")" = "$output" ] || return 1
   docker load <"$output" >>"$PRIVATE_LOG" 2>&1 || return 1
   case "$attribute" in
-    midnight-did-resolver-image) image_id="$(docker image inspect --format '{{.Id}}' midnight-did-resolver:0.1.0 2>/dev/null)" ;;
-    did-manager-image) image_id="$(docker image inspect --format '{{.Id}}' laceid-did-manager:0.1.0 2>/dev/null)" ;;
-    issuer-image) image_id="$(docker image inspect --format '{{.Id}}' laceid-issuer:0.1.0 2>/dev/null)" ;;
+    midnight-did-resolver-image) image_id="$(oxid_docker_read image inspect --format '{{.Id}}' midnight-did-resolver:0.1.0 2>/dev/null)" ;;
+    did-manager-image) image_id="$(oxid_docker_read image inspect --format '{{.Id}}' laceid-did-manager:0.1.0 2>/dev/null)" ;;
+    issuer-image) image_id="$(oxid_docker_read image inspect --format '{{.Id}}' laceid-issuer:0.1.0 2>/dev/null)" ;;
     *) return 1 ;;
   esac
   [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
   printf -v "$variable" '%s' "$image_id"
+  if [ -n "$output_variable" ]; then
+    printf -v "$output_variable" '%s' "$output"
+  fi
 }
 
 run_prerequisite() {
@@ -133,17 +405,154 @@ run_prerequisite() {
   jq -cn '{schema:"oxid-portal-midnight-prerequisite-v1",state:"ready",project:"oxid-standalone"}'
 }
 
-run_up() {
+emit_prepared_status() {
+  jq -c '{
+      schema:"oxid-portal-consumer-prepare-status-v1",
+      state:"prepared",
+      source:.source,
+      compatibilityManifestSha256:.compatibilityManifestSha256,
+      metrics:.metrics,
+      images:(.images | with_entries(.value = {
+        id:.value.id,
+        digest:.value.digest,
+        durationSeconds:.value.durationSeconds,
+        localCacheHit:.value.localCacheHit
+      }))
+    }' "$PREPARED_RECEIPT"
+}
+
+run_prepare() {
+  local checkpoint_candidate started_at host_system attribute key tag prepared_image_id prepared_output prepared_digest
+  local phase_started phase_duration cache_hit prepare_duration
+  mkdir "$PREPARE_LOCK" 2>/dev/null || fail preparation-busy
+  prepare_lock_held=1
+  trap 'release_prepare_lock; release_lease' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   [ "$(count_lines "$(project_ids)")" -eq 0 ] || fail occupied-project
+  discard_legacy_prepared_state
+  if prepared_receipt_valid "$PREPARED_RECEIPT" complete; then
+    emit_prepared_status
+    release_prepare_lock
+    trap - EXIT INT TERM
+    return
+  fi
+  if [ -e "$PREPARED_RECEIPT" ] || [ -L "$PREPARED_RECEIPT" ]; then
+    prepared_receipt_metadata_valid "$PREPARED_RECEIPT" complete || fail stale-prepared-receipt
+    [ ! -e "$PREPARE_CHECKPOINT" ] && [ ! -L "$PREPARE_CHECKPOINT" ] || fail ambiguous-prepare-state
+    checkpoint_candidate="$(mktemp "$STATE/.prepare-checkpoint.XXXXXX")"
+    jq '.status="partial" | del(.completedAtEpoch,.metrics)' "$PREPARED_RECEIPT" >"$checkpoint_candidate"
+    chmod 600 "$checkpoint_candidate"
+    mv "$checkpoint_candidate" "$PREPARE_CHECKPOINT"
+    rm -f -- "$PREPARED_RECEIPT"
+  fi
+  : >"$PRIVATE_LOG"
+  chmod 600 "$PRIVATE_LOG"
+  docker pull "$SMOCKER_IMAGE" >>"$PRIVATE_LOG" 2>&1 || fail smocker
+
+  if [ -e "$PREPARE_CHECKPOINT" ] || [ -L "$PREPARE_CHECKPOINT" ]; then
+    prepared_receipt_valid "$PREPARE_CHECKPOINT" partial || fail prepare-checkpoint
+  else
+    started_at="$(date +%s)"
+    host_system="$(nix eval --raw --impure --expr builtins.currentSystem 2>>"$PRIVATE_LOG")" || fail nix-system
+    checkpoint_candidate="$(mktemp "$STATE/.prepare-checkpoint.XXXXXX")"
+    jq -cn \
+      --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
+      --arg host "$host_system" --argjson started "$started_at" \
+      --arg compatibility "$COMPATIBILITY_MANIFEST_SHA256" \
+      --arg schema "$PREPARED_RECEIPT_SCHEMA" \
+      '{schema:$schema,status:"partial",source:{commit:$commit,tree:$tree},compatibilityManifestSha256:$compatibility,hostSystem:$host,startedAtEpoch:$started,images:{}}' \
+      >"$checkpoint_candidate"
+    chmod 600 "$checkpoint_candidate"
+    mv "$checkpoint_candidate" "$PREPARE_CHECKPOINT"
+  fi
+
+  for attribute in midnight-did-resolver-image did-manager-image issuer-image; do
+    key="$(image_key_for "$attribute")"; tag="$(image_tag_for "$attribute")"
+    if jq -e --arg key "$key" '.images[$key] != null' "$PREPARE_CHECKPOINT" >/dev/null \
+      && prepared_image_valid "$PREPARE_CHECKPOINT" "$key" "$tag"; then
+      continue
+    fi
+    cache_hit=false
+    if nix path-info --option access-tokens '' "$SOURCE#$attribute" >/dev/null 2>&1; then
+      cache_hit=true
+    fi
+    phase_started="$(date +%s)"
+    build_image "$attribute" prepared_image_id prepared_output || fail "$key-image"
+    prepared_digest="sha256:$(shasum -a 256 "$prepared_output" | awk '{print $1}')" || fail "$key-digest"
+    phase_duration="$(( $(date +%s) - phase_started ))"
+    checkpoint_candidate="$(mktemp "$STATE/.prepare-checkpoint.XXXXXX")"
+    jq \
+      --arg key "$key" --arg attribute "$attribute" --arg output "$prepared_output" \
+      --arg root "$STATE/nix-$key" --arg id "$prepared_image_id" --arg digest "$prepared_digest" \
+      --argjson duration "$phase_duration" --argjson cacheHit "$cache_hit" \
+      '.images[$key] = {
+        attribute:$attribute,
+        outputPath:$output,
+        gcRoot:$root,
+        id:$id,
+        digest:$digest,
+        durationSeconds:$duration,
+        localCacheHit:$cacheHit,
+        downloadedBytes:null
+      }' "$PREPARE_CHECKPOINT" >"$checkpoint_candidate"
+    chmod 600 "$checkpoint_candidate"
+    mv "$checkpoint_candidate" "$PREPARE_CHECKPOINT"
+    prepared_receipt_valid "$PREPARE_CHECKPOINT" partial || fail prepare-checkpoint
+  done
+
+  prepared_receipt_valid "$PREPARE_CHECKPOINT" partial || fail prepare-checkpoint
+  prepare_duration="$(jq '[.images[].durationSeconds] | add // 0' "$PREPARE_CHECKPOINT")"
+  checkpoint_candidate="$(mktemp "$STATE/.prepared-receipt.XXXXXX")"
+  jq \
+    --argjson completed "$(date +%s)" --argjson duration "$prepare_duration" \
+    '.status="complete" | .completedAtEpoch=$completed | .metrics={prepareDurationSeconds:$duration}' \
+    "$PREPARE_CHECKPOINT" >"$checkpoint_candidate"
+  chmod 600 "$checkpoint_candidate"
+  mv "$checkpoint_candidate" "$PREPARED_RECEIPT"
+  prepared_receipt_valid "$PREPARED_RECEIPT" complete || fail prepared-receipt
+  rm -f -- "$PREPARE_CHECKPOINT"
+  emit_prepared_status
+  release_prepare_lock
+  trap - EXIT INT TERM
+}
+
+run_prepared_status() {
+  prepared_receipt_valid "$PREPARED_RECEIPT" complete || fail artifacts-not-prepared
+  emit_prepared_status
+}
+
+run_up() {
+  if [ "$lease_reused" -eq 1 ]; then
+    lease_release_allowed=0
+    fail stale-lease
+  fi
+  if [ "$(count_lines "$(project_ids)")" -ne 0 ]; then
+    lease_release_allowed=0
+    fail occupied-project
+  fi
   [ ! -e "$RECEIPT" ] && [ ! -L "$RECEIPT" ] || fail stale-receipt
+  [ ! -e "$STARTING_RECEIPT" ] && [ ! -L "$STARTING_RECEIPT" ] || fail stale-starting-receipt
   shared_midnight_ready || fail shared-midnight
   : >"$PRIVATE_LOG"
   chmod 600 "$PRIVATE_LOG"
   local resolver_image did_manager_image issuer_image wallet_seed env_candidate receipt_candidate mock_state
-  docker pull 'ghcr.io/smocker-dev/smocker@sha256:b4106c3aec1d58df09b6b94a89eba801298cbe5303f3c9236d105dbcaaaf4ab2' >>"$PRIVATE_LOG" 2>&1 || fail smocker
-  build_image midnight-did-resolver-image resolver_image || fail resolver-image
-  build_image did-manager-image did_manager_image || fail did-manager-image
-  build_image issuer-image issuer_image || fail issuer-image
+  if [ -n "$EXTERNAL_PREPARED_RECEIPT" ]; then
+    oxid_docker_read image inspect "$SMOCKER_IMAGE" >/dev/null 2>&1 || fail artifacts-not-prepared
+  else
+    docker pull "$SMOCKER_IMAGE" >>"$PRIVATE_LOG" 2>&1 || fail smocker
+  fi
+  if [ -n "$EXTERNAL_PREPARED_RECEIPT" ]; then
+    [[ "$EXTERNAL_PREPARED_RECEIPT" = /* ]] || fail prepared-receipt
+    prepared_receipt_valid "$EXTERNAL_PREPARED_RECEIPT" complete || fail artifacts-not-prepared
+    resolver_image="$(jq -r '.images.resolver.id' "$EXTERNAL_PREPARED_RECEIPT")"
+    did_manager_image="$(jq -r '.images.didManager.id' "$EXTERNAL_PREPARED_RECEIPT")"
+    issuer_image="$(jq -r '.images.issuer.id' "$EXTERNAL_PREPARED_RECEIPT")"
+  else
+    build_image midnight-did-resolver-image resolver_image || fail resolver-image
+    build_image did-manager-image did_manager_image || fail did-manager-image
+    build_image issuer-image issuer_image || fail issuer-image
+  fi
   wallet_seed="$(awk '$1 == "WALLET_SEED:" { gsub(/[\" ]/, "", $2); print $2 }' "$SOURCE/docker/docker-compose.yml")"
   [[ "$wallet_seed" =~ ^[0-9a-f]{64}$ ]] || fail wallet-input
   [[ "${PORTAL_ISSUER_URL:-}" =~ ^https?:// ]] || fail issuer-origin
@@ -167,11 +576,31 @@ run_up() {
   } >"$env_candidate"
   chmod 600 "$env_candidate"
   mv "$env_candidate" "$ENV_FILE"
+  receipt_candidate="$(mktemp "$STATE/.starting-receipt.XXXXXX")"
+  jq -cn \
+    --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
+    --arg compatibility "$COMPATIBILITY_MANIFEST_SHA256" \
+    --arg compose "$(shasum -a 256 "$COMPOSE_FILE" | awk '{print $1}')" \
+    --argjson started "$(date +%s)" \
+    '{schema:"oxid-portal-consumer-starting-v1",source:{commit:$commit,tree:$tree},compatibilityManifestSha256:$compatibility,composeSha256:$compose,project:"oxid-portal-consumer",startedAtEpoch:$started}' \
+    >"$receipt_candidate"
+  chmod 600 "$receipt_candidate"
+  mv "$receipt_candidate" "$STARTING_RECEIPT"
+  starting_receipt_valid || fail starting-receipt
+  up_cleanup_running=0
   cleanup_failed_up() {
-    compose down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || true
-    rm -f -- "$ENV_FILE" "$RECEIPT" "$PRIVATE_LOG"
+    if [ "$up_cleanup_running" -eq 1 ]; then return; fi
+    up_cleanup_running=1
+    starting_receipt_valid || return 1
+    force_remove_owned_project || true
+    [ -z "$(project_ids)" ] || return 1
+    lease_release_allowed=1
+    rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"
   }
-  trap cleanup_failed_up ERR INT TERM
+  trap cleanup_failed_up ERR
+  trap 'cleanup_failed_up; exit 130' INT
+  trap 'cleanup_failed_up; exit 143' TERM
+  lease_release_allowed=0
   compose up -d --wait --wait-timeout 600 >>"$PRIVATE_LOG" 2>&1
   curl --fail --silent --show-error --max-time 30 -H 'Content-Type: application/x-yaml' \
     --data-binary "@$mock_state" 'http://127.0.0.1:8081/mocks?reset=true' \
@@ -186,14 +615,17 @@ run_up() {
   receipt_candidate="$(mktemp "$STATE/.owner-receipt.XXXXXX")"
   jq -cn \
     --arg commit "$PORTAL_COMMIT" --arg tree "$PORTAL_TREE" \
+    --arg compatibility "$COMPATIBILITY_MANIFEST_SHA256" \
     --arg compose "$(shasum -a 256 "$COMPOSE_FILE" | awk '{print $1}')" \
     --arg resolver "$resolver_image" --arg didManager "$did_manager_image" --arg issuer "$issuer_image" \
     --argjson ids "$(printf '%s\n' "$ids" | jq -Rsc 'split("\n") | map(select(length > 0)) | sort')" \
-    '{schema:"oxid-portal-consumer-owner-v1",source:{commit:$commit,tree:$tree},composeSha256:$compose,project:"oxid-portal-consumer",containerIds:$ids,images:{resolver:$resolver,didManager:$didManager,issuer:$issuer}}' \
+    '{schema:"oxid-portal-consumer-owner-v1",source:{commit:$commit,tree:$tree},compatibilityManifestSha256:$compatibility,composeSha256:$compose,project:"oxid-portal-consumer",containerIds:$ids,images:{resolver:$resolver,didManager:$didManager,issuer:$issuer}}' \
     >"$receipt_candidate"
   chmod 600 "$receipt_candidate"
   mv "$receipt_candidate" "$RECEIPT"
+  rm -f -- "$STARTING_RECEIPT"
   trap - ERR INT TERM
+  lease_retained=1
   emit_status running
 }
 
@@ -201,35 +633,92 @@ run_status() {
   local ids running
   ids="$(project_ids)"; running="$(running_ids)"
   if [ -z "$ids" ]; then
+    [ "$lease_reused" -eq 0 ] || fail stale-lease
     [ ! -e "$RECEIPT" ] && [ ! -L "$RECEIPT" ] || fail stale-receipt
+    [ ! -e "$STARTING_RECEIPT" ] && [ ! -L "$STARTING_RECEIPT" ] || fail interrupted-startup
     emit_status stopped
     return
   fi
+  lease_release_allowed=0
   [ "$(count_lines "$ids")" -eq 5 ] && [ "$(count_lines "$running")" -eq 4 ] || fail project-shape
   receipt_valid || fail ownership
+  lease_retained=1
   emit_status running
+}
+
+run_services_status() {
+  local ids running state
+  ids="$(project_ids)"; running="$(running_ids)"
+  lease_release_allowed=0
+  [ "$(count_lines "$ids")" -eq 5 ] || fail project-shape
+  receipt_valid || fail ownership
+  case "$(count_lines "$running")" in
+    4) state=running ;;
+    0) state=stopped ;;
+    *) fail project-shape ;;
+  esac
+  jq -cn --arg state "$state" \
+    '{schema:"oxid-portal-consumer-services-status-v1",state:$state}'
+}
+
+run_services_up() {
+  receipt_valid || fail ownership
+  [ "$(count_lines "$(project_ids)")" -eq 5 ] || fail project-shape
+  compose up -d --wait --wait-timeout 600 smocker did-resolver did-manager issuer \
+    >>"$PRIVATE_LOG" 2>&1 || fail services-start
+  run_services_status
+}
+
+run_services_stop() {
+  receipt_valid || fail ownership
+  [ "$(count_lines "$(project_ids)")" -eq 5 ] || fail project-shape
+  compose_bounded stop --timeout 30 smocker did-resolver did-manager issuer >>"$PRIVATE_LOG" 2>&1 || fail services-stop
+  run_services_status
 }
 
 run_down() {
   local ids
   ids="$(project_ids)"
   if [ -z "$ids" ]; then
+    [ "$lease_reused" -eq 0 ] || fail stale-lease
     [ ! -e "$RECEIPT" ] && [ ! -L "$RECEIPT" ] || fail stale-receipt
-    rm -f -- "$ENV_FILE" "$PRIVATE_LOG"
+    if [ -e "$STARTING_RECEIPT" ] || [ -L "$STARTING_RECEIPT" ]; then
+      cleanup_starting_receipt_valid || fail ownership
+    fi
+    rm -f -- "$ENV_FILE" "$STARTING_RECEIPT" "$PRIVATE_LOG"
     emit_status stopped
     return
   fi
-  receipt_valid || fail ownership
+  lease_release_allowed=0
+  cleanup_receipt_valid || cleanup_starting_receipt_valid || fail ownership
   [ -f "$ENV_FILE" ] && [ ! -L "$ENV_FILE" ] || fail private-state
-  compose down --volumes --remove-orphans --timeout 30 >>"$PRIVATE_LOG" 2>&1 || fail cleanup
+  force_remove_owned_project || fail cleanup
   [ -z "$(project_ids)" ] || fail cleanup-incomplete
-  rm -f -- "$ENV_FILE" "$RECEIPT" "$PRIVATE_LOG"
+  lease_release_allowed=1
+  rm -f -- "$ENV_FILE" "$RECEIPT" "$STARTING_RECEIPT" "$PRIVATE_LOG"
   emit_status stopped
 }
 
+trap 'release_lease' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+acquire_lease
+initialize_state
+oxid_require_docker_engine >/dev/null || fail docker-engine
 case "$OPERATION" in
   prerequisite) run_prerequisite ;;
+  prepare) run_prepare ;;
+  prepared-status) run_prepared_status ;;
   up) run_up ;;
   status) run_status ;;
   down) run_down ;;
+  services-up) run_services_up; lease_retained=1 ;;
+  services-status) run_services_status; lease_retained=1 ;;
+  services-stop) run_services_stop; lease_retained=1 ;;
 esac
+if [ "$lease_retained" -eq 1 ]; then
+  trap - EXIT INT TERM
+else
+  release_lease
+  trap - EXIT INT TERM
+fi

@@ -57,16 +57,25 @@ test("Nix conformance command deliberately runs every ignored test", async () =>
   }
 });
 
-test("Rust tests cannot silently pass when an environment prerequisite is absent", async () => {
-  const silentPrerequisiteReturn = /#\[(?:[a-z_]+::)?test\][\s\S]{0,1600}?std::env::var_os\([^)]*\)[\s\S]{0,160}?else\s*\{\s*return\s*;\s*\}/gu;
+test("non-ignored Rust tests cannot silently pass when an environment prerequisite is absent", async () => {
+  // Explicit ignored conformance entrypoints are admitted only through the
+  // launcher checked above, which validates every external prerequisite
+  // before deliberately running them with `--ignored --exact`. Ordinary tests
+  // must still fail closed rather than silently returning.
+  const silentPrerequisiteReturn = /#\[(?:[a-z_]+::)?test\](?:(?!#\[(?:[a-z_]+::)?test\])[\s\S]){0,1600}?std::env::var_os\([^)]*\)[\s\S]{0,160}?else\s*\{\s*return\s*;\s*\}/gu;
+  const hasUnignoredSilentReturn = (source) => [...source.matchAll(silentPrerequisiteReturn)]
+    .some((match) => !/#\[ignore(?:\s*=\s*[^\]]+)?\]/u.test(match[0]));
+  const fixture = (attributes) => `#[test]\n${attributes}fn check() {\n  let Some(value) = std::env::var_os("FIXTURE") else { return; };\n}`;
+
+  assert.equal(hasUnignoredSilentReturn(fixture("")), true);
+  assert.equal(hasUnignoredSilentReturn(fixture("#[ignore = \"external fixture\"]\n")), false);
   const violations = [];
 
   for (const sourcePath of await rustSources(path.join(root, "crates"))) {
     const source = await readFile(sourcePath, "utf8");
-    if (silentPrerequisiteReturn.test(source)) {
+    if (hasUnignoredSilentReturn(source)) {
       violations.push(path.relative(root, sourcePath));
     }
-    silentPrerequisiteReturn.lastIndex = 0;
   }
 
   assert.deepEqual(violations, [], `silent environment-gated tests: ${violations.join(", ")}`);

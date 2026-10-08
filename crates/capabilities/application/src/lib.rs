@@ -303,11 +303,11 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
                 &["ed25519", "p256", "secp256k1-schnorr", "jubjub"],
             ),
         CapabilityView::new("wallet.key.list", "ready").text("mode", "development_only"),
-        CapabilityView::new("wallet.key.sign", "ready")
-            .text("mode", "development_only")
+        CapabilityView::new("wallet.key.sign", "unavailable")
+            .text("mode", "approval_unavailable")
             .boolean("confirmationRequired", true),
-        CapabilityView::new("wallet.key.delete", "ready")
-            .text("mode", "development_only")
+        CapabilityView::new("wallet.key.delete", "unavailable")
+            .text("mode", "approval_unavailable")
             .boolean("confirmationRequired", true),
         CapabilityView::new("wallet.network.list", "ready").text("mode", "standalone"),
         CapabilityView::new("wallet.network.select", "ready").text("mode", "standalone"),
@@ -353,6 +353,11 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
         CapabilityView::new("wallet.transaction.history", "ready")
             .text("mode", "standalone")
             .texts("sources", &["simulated", "live", "cached"]),
+        CapabilityView::new("wallet.receive_request.import", "ready")
+            .text("mode", "development_only")
+            .text("network", "active_undeployed")
+            .text("asset", "NIGHT")
+            .texts("formats", &["midnight-receive:v1", "raw_bech32m"]),
         CapabilityView::new("wallet.transaction.prepare_unshielded", "ready")
             .text("mode", "development_only")
             .boolean("submissionReady", false),
@@ -360,35 +365,35 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
             .text("mode", "standalone")
             .text("requires", "fresh_shielded_sync")
             .boolean("submissionReady", false),
-        CapabilityView::new("wallet.transaction.authorize_unshielded", "ready")
-            .text("mode", "development_only")
-            .boolean("submissionReady", true)
+        CapabilityView::new("wallet.transaction.authorize_unshielded", "unavailable")
+            .text("mode", "approval_unavailable")
+            .boolean("submissionReady", false)
             .boolean("confirmationRequired", true),
-        CapabilityView::new("wallet.transaction.authorize_shielded", "ready")
-            .text("mode", "standalone")
-            .boolean("submissionReady", true)
+        CapabilityView::new("wallet.transaction.authorize_shielded", "unavailable")
+            .text("mode", "approval_unavailable")
+            .boolean("submissionReady", false)
             .boolean("confirmationRequired", true),
         CapabilityView::new("wallet.transaction.draft", "ready")
             .text("mode", "development_only")
             .text("submissionReady", "state_dependent"),
-        CapabilityView::new("wallet.transaction.submit_unshielded", "ready")
-            .text("mode", "development_only")
+        CapabilityView::new("wallet.transaction.submit_unshielded", "unavailable")
+            .text("mode", "approval_unavailable")
             .texts("sources", &["simulated", "live"])
             .boolean("confirmationRequired", true),
-        CapabilityView::new("wallet.transaction.send_unshielded", "ready")
-            .text("mode", "development_only")
+        CapabilityView::new("wallet.transaction.send_unshielded", "unavailable")
+            .text("mode", "approval_unavailable")
             .text("aliasFor", "wallet.transaction.submit_unshielded")
             .boolean("confirmationRequired", true),
-        CapabilityView::new("wallet.transaction.submit_shielded", "ready")
-            .text("mode", "standalone")
+        CapabilityView::new("wallet.transaction.submit_shielded", "unavailable")
+            .text("mode", "approval_unavailable")
             .texts("sources", &["simulated", "live"])
             .boolean("confirmationRequired", true),
-        CapabilityView::new("wallet.transaction.send_shielded", "ready")
-            .text("mode", "standalone")
+        CapabilityView::new("wallet.transaction.send_shielded", "unavailable")
+            .text("mode", "approval_unavailable")
             .text("aliasFor", "wallet.transaction.submit_shielded")
             .boolean("confirmationRequired", true),
-        CapabilityView::new("wallet.transaction.start_submission", "ready")
-            .text("mode", "development_only")
+        CapabilityView::new("wallet.transaction.start_submission", "unavailable")
+            .text("mode", "approval_unavailable")
             .text("execution", "adapter_worker")
             .boolean("confirmationRequired", true),
         CapabilityView::new("wallet.transaction.submission_status", "ready")
@@ -427,16 +432,16 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
             .text("mode", "standalone")
             .text("source", "live_indexer_v4")
             .text("feeAuthority", "same_profile_generated_dust"),
-        CapabilityView::new("wallet.dust.registration.authorize", "ready")
-            .text("mode", "standalone")
+        CapabilityView::new("wallet.dust.registration.authorize", "unavailable")
+            .text("mode", "approval_unavailable")
             .text("custody", "protected_role_2")
             .boolean("confirmationRequired", true),
-        CapabilityView::new("wallet.dust.registration.submit", "ready")
-            .text("mode", "standalone")
+        CapabilityView::new("wallet.dust.registration.submit", "unavailable")
+            .text("mode", "approval_unavailable")
             .text("finality", "canonical_finalized_inclusion")
             .boolean("confirmationRequired", true),
-        CapabilityView::new("wallet.dust.registration.start_submission", "ready")
-            .text("mode", "standalone")
+        CapabilityView::new("wallet.dust.registration.start_submission", "unavailable")
+            .text("mode", "approval_unavailable")
             .text("execution", "adapter_worker")
             .boolean("confirmationRequired", true),
         CapabilityView::new("wallet.dust.registration.draft", "ready")
@@ -451,6 +456,22 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
         CapabilityView::new("wallet.dust.registration.reconcile_submission", "ready")
             .text("mode", "standalone")
             .text("scope", "finalized_chain"),
+        CapabilityView::new("wallet.dust.registration.settlement", "ready")
+            .text("mode", "shared_projection")
+            .text("policyOwner", "composition")
+            .text("material", "public_state_only"),
+        CapabilityView::new("wallet.dust.registration.settlement.refresh", "ready")
+            .text("mode", "shared_projection")
+            .text("policyOwner", "composition"),
+        CapabilityView::new(
+            "wallet.dust.registration.settlement.authorize",
+            "unavailable",
+        )
+        .text("mode", "approval_unavailable")
+        .text("policyOwner", "composition"),
+        CapabilityView::new("wallet.dust.registration.settlement.retry", "ready")
+            .text("mode", "policy_admitted")
+            .text("policyOwner", "composition"),
         CapabilityView::new("wallet.shielded.sync.status", "ready")
             .text("mode", "standalone")
             .texts("sources", &["simulated", "live", "cached", "unavailable"]),
@@ -679,6 +700,12 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
             .text("mode", "development_only")
             .texts("networks", &["undeployed"])
             .texts("initialMethods", &["ed25519", "p256", "jubjub"]),
+        CapabilityView::new("did.deploy", "composition_dependent")
+            .text("mode", "native_ledger")
+            .text("scope", "active_profile")
+            .boolean("durable", true)
+            .boolean("secretsExposed", false)
+            .boolean("indexedReceiptBarrier", true),
         CapabilityView::new("did.resolve", "ready")
             .text("mode", "standalone")
             .texts("sources", &["standalone", "live"]),
@@ -691,8 +718,8 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
         CapabilityView::new("did.forget", "ready")
             .text("mode", "standalone")
             .text("scope", "active_profile"),
-        CapabilityView::new("did.update", "ready")
-            .text("mode", "development_only")
+        CapabilityView::new("did.update", "unavailable")
+            .text("mode", "approval_unavailable")
             .texts(
                 "operations",
                 &[
@@ -708,14 +735,14 @@ pub fn capability_manifest(context: CapabilityManifestContext) -> Vec<Capability
                     "removeService",
                 ],
             )
-            .boolean("confirmationRequired", true),
-        CapabilityView::new("did.sign", "ready")
-            .text("mode", "development_only")
+            .boolean("trustedApprovalRequired", true),
+        CapabilityView::new("did.sign", "unavailable")
+            .text("mode", "approval_unavailable")
             .texts("algorithms", &["ed25519", "p256", "jubjub"])
-            .boolean("confirmationRequired", true),
-        CapabilityView::new("did.deactivate", "ready")
-            .text("mode", "development_only")
-            .boolean("confirmationRequired", true),
+            .boolean("trustedApprovalRequired", true),
+        CapabilityView::new("did.deactivate", "unavailable")
+            .text("mode", "approval_unavailable")
+            .boolean("trustedApprovalRequired", true),
         CapabilityView::new("diagnostics.snapshot", "superseded")
             .text("use", "system.diagnostics.snapshot"),
     ]
@@ -780,14 +807,24 @@ mod tests {
             "credential.delete",
             "credential.issuance.accept",
             "credential.presentation.accept",
-            "did.update",
-            "did.sign",
-            "did.deactivate",
         ] {
             assert!(
                 declared(method),
                 "{method} must declare confirmationRequired"
             );
+        }
+    }
+
+    #[test]
+    fn protected_did_methods_are_truthfully_unavailable_without_caller_confirmation() {
+        let manifest = test_manifest();
+        for method in ["did.update", "did.sign", "did.deactivate"] {
+            let capability = manifest
+                .iter()
+                .find(|entry| entry.method() == method)
+                .unwrap();
+            assert_eq!(capability.status(), "unavailable");
+            assert!(!capability.confirmation_required());
         }
     }
 

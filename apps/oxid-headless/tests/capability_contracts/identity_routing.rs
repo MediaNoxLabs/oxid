@@ -42,7 +42,8 @@ fn routes_scanned_identity_links_without_echoing_protocol_secrets() {
 
 #[test]
 fn authenticates_a_managed_did_once_without_exposing_protocol_secrets() {
-    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let wallet =
+        HeadlessWallet::new(oxid_composition::compose_in_memory_with_development_did_approval());
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"authentication-profile","method":"wallet.profile.create","params":{"displayName":"Authentication flow"}}"#,
@@ -144,4 +145,74 @@ fn authenticates_a_managed_did_once_without_exposing_protocol_secrets() {
     );
     assert!(!inventory[0].to_string().contains("nonce"));
     assert!(!inventory[0].to_string().contains("id_token"));
+}
+
+#[test]
+fn ordinary_composition_previews_authentication_but_rejects_unapproved_signing() {
+    const DID: &str =
+        "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let created = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"unapproved-auth-profile","method":"wallet.profile.create","params":{"displayName":"Unapproved authentication"}}"#,
+    );
+    let profile_id = created[0]["result"]["profile"]["id"]
+        .as_str()
+        .expect("profile");
+    let selected = execute_with_wallet(
+        &wallet,
+        &json!({"protocol": PROTOCOL_VERSION, "id": "unapproved-auth-select", "method": "wallet.profile.select", "params": {"profileId": profile_id}}).to_string(),
+    );
+    assert_eq!(selected[0]["ok"], true);
+
+    let prepared = execute_with_wallet(
+        &wallet,
+        &json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "unapproved-auth-prepare",
+            "method": "identity.authentication.prepare",
+            "params": {"request": standalone_self_issued_request()},
+        })
+        .to_string(),
+    );
+    let preview = &prepared[0]["result"]["authentication"];
+    assert_eq!(preview["state"], "awaiting_consent");
+    let authentication_id = preview["id"].as_str().expect("authentication id");
+
+    let rejected = execute_with_wallet(
+        &wallet,
+        &json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "unapproved-auth-accept",
+            "method": "identity.authentication.accept",
+            "params": {
+                "authenticationId": authentication_id,
+                "holderDid": DID,
+                "methodId": format!("{DID}#auth-1"),
+                "confirmed": true,
+                "intent": "ACCEPT_SELF_ISSUED_AUTHENTICATION",
+            },
+        })
+        .to_string(),
+    );
+    assert_eq!(rejected[0]["error"]["code"], "approval_unavailable");
+
+    let retained = execute_with_wallet(
+        &wallet,
+        &json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "unapproved-auth-get",
+            "method": "identity.authentication.get",
+            "params": {"authenticationId": authentication_id},
+        })
+        .to_string(),
+    );
+    assert_eq!(
+        retained[0]["result"]["authentication"]["state"],
+        "awaiting_consent"
+    );
+    assert_eq!(
+        retained[0]["result"]["authentication"]["failureCode"],
+        serde_json::Value::Null
+    );
 }

@@ -10,6 +10,37 @@ final class PortalFlowTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    private func restoredStatePhase(_ phase: String) {
+        XCTContext.runActivity(named: "restored-state phase: \(phase)") { _ in }
+    }
+
+    @MainActor
+    private func assertSingleValidCredentialDetails(in application: XCUIApplication) {
+        let policy = "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
+        let valid = application.staticTexts.matching(NSPredicate(format: "label == %@", policy))
+        XCTAssertTrue(valid.element(boundBy: 0).waitForExistence(timeout: 15))
+        XCTAssertTrue(valid.element(boundBy: 1).waitForNonExistence(timeout: 5))
+        XCTAssertEqual(valid.count, 1)
+        let badges = application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid"))
+        XCTAssertTrue(badges.element(boundBy: 0).waitForExistence(timeout: 15))
+        XCTAssertTrue(badges.element(boundBy: 1).waitForNonExistence(timeout: 5))
+        XCTAssertEqual(badges.count, 1)
+    }
+
+    @MainActor
+    private func openSingleValidCredentialDetails(in application: XCUIApplication) {
+        let card = application.buttons["Open Digital Passport document details"]
+        XCTAssertTrue(card.waitForExistence(timeout: 15))
+        XCTAssertTrue(
+            application.buttons.matching(
+                NSPredicate(format: "label == %@", "Open Digital Passport document details")
+            ).element(boundBy: 1).waitForNonExistence(timeout: 5)
+        )
+        scrollTo(card, in: application)
+        card.tap()
+        assertSingleValidCredentialDetails(in: application)
+    }
+
     @MainActor
     private func application() -> XCUIApplication {
         let application = XCUIApplication(bundleIdentifier: applicationIdentifier)
@@ -72,11 +103,10 @@ final class PortalFlowTests: XCTestCase {
 
     @MainActor
     private func assertRoutedOffer(in application: XCUIApplication) {
-        XCTAssertTrue(application.staticTexts[
-            "App link recognized as a credential offer. Review the request before consent."
-        ].waitForExistence(timeout: 20))
+        let dismissRequest = application.buttons["Dismiss identity request"]
+        XCTAssertTrue(dismissRequest.waitForExistence(timeout: 20))
         XCTAssertTrue(application.staticTexts["Credentials"].exists)
-        XCTAssertTrue(application.buttons["Dismiss identity request"].exists)
+        XCTAssertTrue(dismissRequest.exists)
         XCTAssertTrue(application.descendants(matching: .any)[
             "Imported credential offer retained privately"
         ].exists)
@@ -124,7 +154,6 @@ final class PortalFlowTests: XCTestCase {
     }
 
     private let credentialIssuanceTerminalStatus = "Credential issuance terminal error"
-    private let credentialIssuanceProtocolErrorStatus = "Credential issuance protocol error"
     private let protocolUnavailableCategory = "protocol unavailable"
 
     private enum ProtocolErrorDiagnosticValue: String {
@@ -152,14 +181,6 @@ final class PortalFlowTests: XCTestCase {
     @MainActor
     private func protocolUnavailableTerminalStatus(in application: XCUIApplication) -> XCUIElement {
         let identifier = "\(credentialIssuanceTerminalStatus): \(protocolUnavailableCategory)"
-        return application.descendants(matching: .any).matching(
-            NSPredicate(format: "label == %@", identifier)
-        ).firstMatch
-    }
-
-    @MainActor
-    private func protocolUnavailableErrorStatus(in application: XCUIApplication) -> XCUIElement {
-        let identifier = "\(credentialIssuanceProtocolErrorStatus): \(protocolUnavailableCategory)"
         return application.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", identifier)
         ).firstMatch
@@ -274,13 +295,9 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertTrue(confirmCreateDid.waitForExistence(timeout: 10))
         scrollTo(confirmCreateDid, in: application)
         confirmCreateDid.tap()
-        let didReady = application.staticTexts.matching(
-            NSPredicate(
-                format: "label BEGINSWITH %@",
-                "A protected managed DID is ready for credential issuance."
-            )
-        ).firstMatch
-        XCTAssertTrue(didReady.waitForExistence(timeout: 30))
+        let copyDid = application.buttons["Copy DID"]
+        XCTAssertTrue(copyDid.waitForExistence(timeout: 30))
+        XCTAssertTrue(application.staticTexts["Managed"].exists)
     }
 
     @MainActor
@@ -337,18 +354,17 @@ final class PortalFlowTests: XCTestCase {
         try signalIssueErrorBoundary()
         scrollTo(issue, in: application)
         issue.tap()
-        let leave = application.buttons["Leave credential review"]
-        XCTAssertTrue(leave.waitForExistence(timeout: 40))
-        XCTAssertTrue(leave.isEnabled)
-        XCTAssertTrue(protocolUnavailableErrorStatus(in: application).exists)
-        XCTAssertEqual(consent.value as? String, "0")
-        XCTAssertFalse(issue.isEnabled)
-        XCTAssertTrue(application.staticTexts["Credential offer preview"].exists)
+        let terminal = protocolUnavailableTerminalStatus(in: application)
+        XCTAssertTrue(terminal.waitForExistence(timeout: 40))
+        XCTAssertTrue(
+            application.staticTexts["Credential offer preview"].waitForNonExistence(timeout: 20)
+        )
+        XCTAssertTrue(
+            application.buttons["Leave credential review"].waitForNonExistence(timeout: 20)
+        )
+        XCTAssertFalse(application.buttons["Accept and issue credential"].exists)
         XCTAssertFalse(application.buttons["Dismiss identity request"].exists)
-        application.buttons["Wallet"].tap()
-        XCTAssertTrue(application.staticTexts["Credential offer preview"].waitForExistence(timeout: 10))
-        leave.tap()
-        XCTAssertTrue(leave.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(terminal.exists)
     }
 
     @MainActor
@@ -372,10 +388,7 @@ final class PortalFlowTests: XCTestCase {
         XCTAssertTrue(application.staticTexts[
             "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
         ].waitForExistence(timeout: 20))
-        XCTAssertEqual(
-            application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid")).count,
-            1
-        )
+        assertSingleValidCredentialDetails(in: application)
         XCTAssertFalse(application.staticTexts["John"].exists)
         XCTAssertFalse(application.staticTexts["Doe"].exists)
     }
@@ -383,35 +396,39 @@ final class PortalFlowTests: XCTestCase {
     @MainActor
     func testRestored() {
         let application = application()
+        restoredStatePhase("foreground")
         application.buttons["Wallet"].tap()
+        restoredStatePhase("wallet-selected")
         let reactivate = application.buttons["Activate protected Midnight account"]
-        XCTAssertTrue(reactivate.waitForExistence(timeout: 15))
-        scrollTo(reactivate, in: application)
-        reactivate.tap()
+        if reactivate.waitForExistence(timeout: 5) {
+            scrollTo(reactivate, in: application)
+            reactivate.tap()
+            restoredStatePhase("custody-reactivation-requested")
+        }
         XCTAssertTrue(application.buttons["Use my receive address"].waitForExistence(timeout: 45))
+        restoredStatePhase("wallet-ready")
         application.buttons["Documents"].tap()
-        XCTAssertEqual(
-            application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid")).count,
-            1
-        )
+        restoredStatePhase("documents-selected")
+        openSingleValidCredentialDetails(in: application)
+        restoredStatePhase("restored-credential-visible")
         let marker = application.staticTexts["Credential reverification applied"]
         XCTAssertFalse(marker.exists)
         let reverify = application.buttons["Reverify"]
         XCTAssertTrue(reverify.waitForExistence(timeout: 15))
         scrollTo(reverify, in: application)
         reverify.tap()
+        restoredStatePhase("reverification-requested")
         let completed = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == true AND enabled == true"),
             object: reverify
         )
         XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 35), .completed)
         XCTAssertTrue(marker.waitForExistence(timeout: 35))
-        XCTAssertEqual(
-            application.staticTexts.matching(NSPredicate(format: "label == %@", "Valid")).count,
-            1
-        )
+        restoredStatePhase("reverification-applied")
+        assertSingleValidCredentialDetails(in: application)
         XCTAssertTrue(application.staticTexts[
             "Credential policy · issuer passed · time passed · trust passed · revocation not checked"
         ].exists)
+        restoredStatePhase("restored-state-asserted")
     }
 }

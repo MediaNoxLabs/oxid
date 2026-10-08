@@ -20,6 +20,7 @@ required-features = ["proving-bench"]
 bech32.workspace = true
 hex.workspace = true
 oxid-adapter-store-atomic.workspace = true
+oxid-adapter-platform-system.workspace = true
 oxid-foundation.workspace = true
 oxid-diagnostics-application.workspace = true
 oxid-platform-ports.workspace = true
@@ -48,6 +49,7 @@ rustls.workspace = true
 subxt.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
+url.workspace = true
 zeroize.workspace = true
 
 [lints]

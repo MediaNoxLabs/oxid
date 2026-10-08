@@ -14,6 +14,7 @@ use std::{
 
 use bech32::{Bech32m, primitives::decode::CheckedHrpstring};
 use futures::{SinkExt, StreamExt, channel::oneshot, future::BoxFuture};
+use oxid_adapter_platform_system::websocket_connector_for;
 use oxid_foundation::UnixTimestampMillis;
 use oxid_platform_ports::ClockPort;
 use oxid_wallet_application::{
@@ -30,10 +31,10 @@ use oxid_wallet_domain::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::time::timeout;
-use tokio_tungstenite::{
-    connect_async_with_config,
-    tungstenite::{Message, client::IntoClientRequest, protocol::WebSocketConfig},
+use tokio_tungstenite::tungstenite::{
+    Message, client::IntoClientRequest, protocol::WebSocketConfig,
 };
+use url::Url;
 
 use super::{
     MidnightAccountSource, MidnightWalletAdapter, ProtectedMidnightAccountDeriver, SPECKS_PER_DUST,
@@ -421,7 +422,7 @@ impl<C> LiveMidnightAccountSource<C> {
                     derived.addresses().to_vec(),
                 )
             })
-            .map_or_else(|| Err(WalletAccountPortError::Unavailable), Ok)
+            .map_or_else(|| Err(WalletAccountPortError::NotFound), Ok)
     }
 
     fn replace_sync_status(
@@ -877,9 +878,12 @@ async fn indexer_snapshot(
     let mut config = WebSocketConfig::default();
     config.max_message_size = Some(MAX_MESSAGE_BYTES);
     config.max_frame_size = Some(MAX_FRAME_BYTES);
+    let endpoint_url = Url::parse(endpoint).map_err(|_| IndexerTransportError::Connect)?;
+    let connector =
+        websocket_connector_for(&endpoint_url).map_err(|_| IndexerTransportError::Connect)?;
     let (mut socket, response) = timeout(
         CONNECT_TIMEOUT,
-        connect_async_with_config(request, Some(config), false),
+        tokio_tungstenite::connect_async_tls_with_config(request, Some(config), false, connector),
     )
     .await
     .map_err(|_| IndexerTransportError::Timeout)?
@@ -2279,7 +2283,7 @@ mod tests {
     }
 
     #[test]
-    fn live_source_rejects_an_unbound_configuration_address() {
+    fn live_source_reports_an_unbound_profile_as_not_found() {
         let source = LiveMidnightAccountSource::with_transport(
             network().id().clone(),
             address(),
@@ -2293,11 +2297,11 @@ mod tests {
 
         assert_eq!(
             source.account(&profile(), &network()),
-            Err(WalletAccountPortError::Unavailable)
+            Err(WalletAccountPortError::NotFound)
         );
         assert_eq!(
             resolve(source.sync(&profile(), &network())),
-            Err(WalletAccountPortError::Unavailable)
+            Err(WalletAccountPortError::NotFound)
         );
     }
 

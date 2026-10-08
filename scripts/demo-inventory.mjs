@@ -16,10 +16,21 @@ const commandStatuses = new Set(["unsupported", "manual", "delegated"]);
 const targetStatuses = new Set(["supported", "unsupported"]);
 const targetSupport = new Set(["development-only", "manual-acceptance", "diagnostic-only", "unsupported"]);
 const dependencyKinds = new Set(["device", "simulator", "service", "network", "tool"]);
+const approvedJourneyUseCaseIds = new Set([
+  "fresh-wallet-onboarding", "wallet-recovery", "profile-and-realm-switching",
+  "automatic-account-reconciliation", "receive-and-fund-night", "send-night",
+  "did-inventory-and-creation", "did-details-and-maintenance", "oid4vci-issuance",
+  "credential-inventory-and-details", "oid4vp-presentation", "siopv2-authentication",
+  "activity-and-transaction-detail", "security-and-backup-settings",
+  "passport-vault-journey", "developer-diagnostics",
+]);
 const environmentValues = new Map([
   ["OXID_MOBILE_CUSTODY", new Set(["development", "native"])],
   ["OXID_UI_PROFILE", new Set(["user", "dev", "demo"])],
   ["OXID_STANDALONE_NETWORK_PROFILE", new Set(["simulated", "local", "tailnet"])],
+  ["OXID_ENABLE_LIVE_STANDALONE_FAUCET_E2E", new Set(["1"])],
+  ["OXID_ENABLE_OWNER_TAILNET_FAUCET_ACCEPTANCE", new Set(["1"])],
+  ["OXID_FAUCET_RECIPIENT_ADDRESS", new Set(["<operator-private-undeployed-address>"])],
 ]);
 
 function fail(message) { throw new Error(message); }
@@ -81,8 +92,11 @@ function validateSchema(value, schema, root, label = "inventory") {
   if (rule.type === "array" && !Array.isArray(value)) fail(`${label} violates schema type array`);
   if (rule.type === "string" && typeof value !== "string") fail(`${label} violates schema type string`);
   if (rule.type === "boolean" && typeof value !== "boolean") fail(`${label} violates schema type boolean`);
+  if (rule.type === "integer" && !Number.isInteger(value)) fail(`${label} violates schema type integer`);
   if (rule.const !== undefined && !sameValue(value, rule.const)) fail(`${label} violates schema const`);
   if (rule.enum && !rule.enum.some((candidate) => sameValue(value, candidate))) fail(`${label} violates schema enum`);
+  if (rule.minimum !== undefined && value < rule.minimum) fail(`${label} violates schema minimum`);
+  if (rule.maximum !== undefined && value > rule.maximum) fail(`${label} violates schema maximum`);
   if (rule.minLength !== undefined && value.length < rule.minLength) fail(`${label} violates schema minLength`);
   if (rule.pattern && !new RegExp(rule.pattern, "u").test(value)) fail(`${label} violates schema pattern`);
   if (Array.isArray(value)) {
@@ -119,6 +133,31 @@ export function validateInventory(inventory, schema = JSON.parse(readFileSync(in
   const useCases = idMap(inventory.useCases, "useCases");
   const scenarios = idMap(inventory.scenarios, "scenarios");
   const demos = idMap(inventory.demos, "demos");
+
+  const trustReadiness = inventory.transportTrustReadiness;
+  const expectedServices = ["indexer", "node", "prover"];
+  if (!sameValue(trustReadiness.services, expectedServices)) fail("transport trust readiness must use the closed indexer, node, and prover service set");
+  const trustEnvironments = idMap(trustReadiness.environments, "transport trust readiness environments");
+  const expectedPolicies = new Map([
+    ["standalone", "development-loopback"],
+    ["tailnet", "bundled-public-roots"],
+    ["preprod", "platform-trust"],
+  ]);
+  if (!sameValue([...trustEnvironments.keys()], [...expectedPolicies.keys()])) fail("transport trust readiness must record standalone, tailnet, and preprod in order");
+  const expectedTrustTargets = ["android-emulator", "ios-simulator", "android-physical", "ios-physical"];
+  for (const [environmentId, policy] of expectedPolicies) {
+    const environment = trustEnvironments.get(environmentId);
+    if (environment.policy !== policy) fail(`transport trust readiness environment '${environmentId}' has the wrong policy`);
+    if (!sameValue(environment.serviceIds, expectedServices)) fail(`transport trust readiness environment '${environmentId}' has an incomplete service set`);
+    const evidenceTargets = environment.targetEvidence.map(({ targetId }) => targetId);
+    for (const { targetId } of environment.targetEvidence) if (!targets.has(targetId)) fail(`transport trust readiness references unknown target '${targetId}'`);
+    if (!sameValue(evidenceTargets, expectedTrustTargets)) fail(`transport trust readiness environment '${environmentId}' must classify every native target in order`);
+  }
+  safeRelativePath(trustReadiness.verifierDependency.auditReference, "transport trust readiness verifier audit reference");
+  const trustEvidence = JSON.stringify(trustReadiness);
+  if (/(?:https?|wss?):\/\//iu.test(trustEvidence) || /(?:\d{1,3}\.){3}\d{1,3}/u.test(trustEvidence) || /[a-z0-9-]+\.ts\.net/iu.test(trustEvidence)) {
+    fail("transport trust readiness must not retain service, Tailnet, or device coordinates");
+  }
 
   for (const command of commands.values()) {
     if (!commandPhases.has(command.phase)) fail(`command '${command.id}' has invalid phase`);
@@ -161,6 +200,15 @@ export function validateInventory(inventory, schema = JSON.parse(readFileSync(in
     text(useCase.outcome, `use case '${useCase.id}' outcome`);
     for (const reference of array(useCase.sourceReferences, `use case '${useCase.id}' sourceReferences`)) safeRelativePath(reference, `use case '${useCase.id}' source reference`);
     references(useCase.scenarioIds, scenarios, `use case '${useCase.id}' scenarioIds`);
+    if (approvedJourneyUseCaseIds.has(useCase.id) && !useCase.interactionBudget) {
+      fail(`approved use case '${useCase.id}' is missing an interaction budget`);
+    }
+    if (useCase.id === "passport-vault-journey" && useCase.interactionBudget?.status !== "deferred") {
+      fail("deferred Passport Vault use case cannot claim an active interaction budget");
+    }
+    if (approvedJourneyUseCaseIds.has(useCase.id) && useCase.id !== "passport-vault-journey" && useCase.interactionBudget?.status !== "active") {
+      fail(`approved use case '${useCase.id}' requires an active interaction budget`);
+    }
   }
   for (const scenario of scenarios.values()) {
     if (!products.has(scenario.productId)) fail(`scenario '${scenario.id}' references unknown product '${scenario.productId}'`);
@@ -185,7 +233,9 @@ export function validateInventory(inventory, schema = JSON.parse(readFileSync(in
       for (const checkId of plan.healthCheckIds) if (!plan.dependencyIds.includes(healthChecks.get(checkId).dependencyId)) fail(`scenario '${scenario.id}' health check '${checkId}' is outside the target dependency boundary`);
       text(plan.note, `scenario '${scenario.id}' target '${plan.targetId}' note`);
     }
-    if (targetPlans.get(scenario.defaultTargetId).status !== "supported") fail(`scenario '${scenario.id}' default target must be supported`);
+    const defaultPlan = targetPlans.get(scenario.defaultTargetId);
+    if (defaultPlan.status !== "supported" && scenario.evidenceClass !== "planned") fail(`scenario '${scenario.id}' default target must be supported`);
+    if (scenario.evidenceClass === "planned" && defaultPlan.evidenceClass !== "planned") fail(`scenario '${scenario.id}' planned default target must use planned evidence`);
     if (!evidenceClasses.has(scenario.evidenceClass)) fail(`scenario '${scenario.id}' has invalid evidence class`);
     if (!cadences.has(scenario.cadence)) fail(`scenario '${scenario.id}' has invalid cadence`);
     if (!scenario.testMapping || typeof scenario.testMapping !== "object") fail(`scenario '${scenario.id}' is missing a test mapping`);
@@ -244,7 +294,14 @@ export function renderShow(inventory, id, kind = "scenario") {
   const collection = kind === "use-case" ? inventory.useCases : inventory.scenarios;
   const item = collection.find((entry) => entry.id === id);
   if (!item) fail(`unknown ${kind} '${id}'`);
-  return `${kind}: ${item.id}\n${JSON.stringify(item, null, 2)}`;
+  let budget = "";
+  if (kind === "use-case" && item.interactionBudget?.status === "active") {
+    const value = item.interactionBudget;
+    budget = `\nInteraction budget: entry ≤${value.entryTapsMax} taps; decisions ≤${value.decisionScreensMax} screens; app authorization prompts ≤${value.authorizationPromptsMax}; routine manual sync actions ${value.routineManualSyncActionsMax}.`;
+  } else if (kind === "use-case" && item.interactionBudget?.status === "deferred") {
+    budget = "\nInteraction budget: deferred; no current product claim.";
+  }
+  return `${kind}: ${item.id}${budget}\n${JSON.stringify(item, null, 2)}`;
 }
 export function renderPreparationBrief(inventory, id, requestedTargetId) {
   const scenario = inventory.scenarios.find((entry) => entry.id === id);

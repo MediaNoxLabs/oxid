@@ -38,10 +38,12 @@ interactive shells, and public packages need no credentials.
 
 ## Landing a change
 
-Open a draft pull request from `<type>/issue-<number>` against the exact target
-recorded on the issue: a `milestone-<x.y.z>` train for product work, or
-`develop` for eligible factory work. Let the path- and risk-relevant CI gate
-run, then classify review findings. Correctness and invariant failures stay in
+After the signed exact-head local gate passes, open a review-ready pull request
+from `<type>/issue-<number>` against the exact target recorded on the issue: a
+`milestone-<x.y.z>` train for product work, or `develop` for eligible factory
+work. Do not use a draft-to-ready transition for the unchanged head because it
+admits duplicate hosted CI. Let the path- and risk-relevant CI gate run, then
+classify review findings. Correctness and invariant failures stay in
 the PR; bounded non-critical debt needs a linked follow-up issue. Merges are
 squash merges. An authorized factory worker may use the exact-head guard only
 for milestone delivery. Merges to `develop` and `main` remain human-only.

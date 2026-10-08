@@ -17,6 +17,10 @@ on:
         description: Extra hosted targets (comma-separated)
         required: false
         type: string
+      comparison_base:
+        description: Ancestor commit for an on-demand branch comparison
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -53,7 +57,7 @@ jobs:
       - name: Select profile and target lanes
         id: plan
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/develop' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.comparison_base || github.event.before || 'origin/develop' }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           EVENT_NAME: ${{ github.event_name }}
           PR_DRAFT: ${{ github.event.pull_request.draft || 'false' }}
@@ -62,7 +66,12 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           REQUESTED_PROFILE: ${{ inputs.profile || 'auto' }}
           EXTRA_TARGETS: ${{ inputs.targets || '' }}
+          COMPARISON_BASE_INPUT: ${{ inputs.comparison_base || '' }}
         run: |
+          if [[ -n "$COMPARISON_BASE_INPUT" && ! "$COMPARISON_BASE_INPUT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'comparison_base must be a 40-character commit SHA' >&2
+            exit 1
+          fi
           node scripts/ci/target-plan.mjs \
             --base "$BASE_SHA" \
             --head "$HEAD_SHA" \
@@ -96,6 +105,12 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Install repository gate tools
+        if: needs.plan.outputs.rust_changed != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes ripgrep
       - name: Run policy and harness contracts
         if: needs.plan.outputs.rust_changed != 'true'
         run: ./run.sh repository --strict
@@ -132,8 +147,9 @@ jobs:
     runs-on: ubuntu-24.04
     # Keep the unit command bounded while reserving enough time for cold Nix
     # setup, sccache metrics, and GitHub post-job cleanup. A green command on a
-    # cold runner can otherwise be cancelled at the old 12-minute boundary.
-    timeout-minutes: 14
+    # cold runner can otherwise be cancelled after the test suite passes but
+    # before bounded cache/stat cleanup completes.
+    timeout-minutes: 18
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -272,7 +288,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.coverage_linux == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 27
+    timeout-minutes: 42
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -299,10 +315,12 @@ jobs:
             core.exportVariable('SCCACHE_GHA_VERSION', 'oxid-v1');
             core.exportVariable('SCCACHE_GHA_RW_MODE', 'READ_ONLY');
       - name: Measure the non-UI workspace once
-        timeout-minutes: 25
+        timeout-minutes: 40
         env:
-          OXID_COVERAGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/develop' }}
+          OXID_COVERAGE_BASE: ${{ github.event.pull_request.base.sha || inputs.comparison_base || github.event.before || 'origin/develop' }}
         run: nix develop .#ci-coverage --command ./scripts/ci/run-with-sccache-stats.sh ./run.sh coverage --strict
+      - name: Verify exact-checkout enforced coverage verdict
+        run: node scripts/coverage/verify-manifest.mjs
       - name: Upload immutable coverage-policy evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

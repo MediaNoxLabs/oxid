@@ -8,8 +8,12 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+development-approval = []
+
 [dependencies]
 oxid-foundation.workspace = true
+oxid-platform-ports.workspace = true
 oxid-identity-domain.workspace = true
 
 [lints]

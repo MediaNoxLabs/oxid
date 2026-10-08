@@ -1,0 +1,32 @@
+{
+  "schema": "oxid-maestro-inventory-v1",
+  "privacy": {
+    "composition": ["demo", "dev"],
+    "network": "simulated-undeployed-or-offchain-only",
+    "selectorPolicy": "static-privacy-safe-accessibility-labels-only",
+    "publicCaptures": ["canonical-holder-evidence", "developer-profile-banner"],
+    "failureArtifacts": "private-and-deleted"
+  },
+  "scenarios": [
+    {"id":"canonical-holder-evidence","composition":"demo","authority":"maestro","platforms":["ios"],"flow":"flows/canonical-holder-evidence.yaml","coverage":"canonical public visual evidence set"},
+    {"id":"onboarding-safe-boundary","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/onboarding-safe-boundary.yaml","coverage":"onboarding and safe recovery boundary"},
+    {"id":"onboarding-restore-boundary","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/onboarding-restore-boundary.yaml","coverage":"wallet restore entry and safe cancellation boundary"},
+    {"id":"profile-realm-switching","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/profile-realm-switching.yaml","coverage":"profile and realm switching"},
+    {"id":"home-receive-send-blocked","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/home-receive-send-blocked.yaml","coverage":"Home, Receive, Send entry and blocked states"},
+    {"id":"wallet-sync-status","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/wallet-sync-status.yaml","coverage":"wallet synchronization and status"},
+    {"id":"documents-empty-state","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/documents-empty-state.yaml","coverage":"Documents reachability and empty state"},
+    {"id":"did-inventory-empty-state","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/did-inventory-empty-state.yaml","coverage":"DID inventory reachability and empty state"},
+    {"id":"did-inventory-copy","composition":"demo","authority":"maestro","platforms":["ios"],"flow":"flows/did-inventory-copy.yaml","coverage":"DID creation, inventory detail, and exact public DID copy feedback"},
+    {"id":"credential-offer-refusal","composition":"demo","authority":"maestro","platforms":["ios"],"flow":"flows/credential-offer-refusal.yaml","coverage":"credential-offer review consent boundary and refusal"},
+    {"id":"credential-presentation-refusal","composition":"demo","authority":"maestro","platforms":["ios"],"flow":"flows/credential-presentation-refusal.yaml","coverage":"credential-presentation review consent boundary and refusal before proof generation"},
+    {"id":"activity-fixture-history","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/activity-fixture-history.yaml","coverage":"Activity and fixture transaction detail"},
+    {"id":"passport-vault-entry","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/passport-vault-entry.yaml","coverage":"Passport Vault review entry"},
+    {"id":"settings-security-backup-entry","composition":"demo","authority":"maestro","platforms":["ios","android"],"flow":"flows/settings-security-backup-entry.yaml","coverage":"Settings, security, and backup entry"},
+    {"id":"credential-detail","composition":"dev","authority":"lower-authoritative-layer","platforms":[],"flow":null,"coverage":"credential detail","reason":"Credential fixtures can expose holder data; Rust, CDP, and XCTest remain authoritative."},
+    {"id":"did-create-resolve-detail","composition":"dev","authority":"lower-authoritative-layer","platforms":[],"flow":null,"coverage":"DID create, resolve, and detail","reason":"DID operations create protected state; native and headless contracts own outcomes."},
+    {"id":"presentation-proof-siopv2","composition":"dev","authority":"lower-authoritative-layer","platforms":[],"flow":null,"coverage":"presentation proof/finality and SIOPv2 accept/refuse/outcome review","reason":"Protected proof generation, verifier finality, and SIOPv2 remain authoritative in CDP, XCTest, and Rust."},
+    {"id":"passport-vault-terminal-outcomes","composition":"dev","authority":"lower-authoritative-layer","platforms":[],"flow":null,"coverage":"Passport Vault terminal outcomes","reason":"Vault calls require protected proof evidence and are not a Maestro finality claim."},
+    {"id":"dev-diagnostics-benchmark","composition":"dev","authority":"manual-local","platforms":["ios"],"flow":null,"coverage":"development capabilities, diagnostics, event log, and benchmark entry","reason":"The development composition has no secret-free clean-state profile bootstrap; #798 owns its final local evidence."},
+    {"id":"developer-profile-banner","composition":"dev","authority":"maestro","platforms":["ios","android"],"flow":"flows/developer-profile-banner.yaml","coverage":"developer profile banner open and closed"}
+  ]
+}

@@ -148,7 +148,9 @@ workflow:
   # Permit a small task to stay synchronous. Requiring async start for every
   # change created extra sessions even when no useful parallel work existed.
   asyncStartMode: allowed
-  requireDraftFirst: true
+  # The exact-head local gate precedes PR creation, so production delivery can
+  # open review-ready and admit one hosted CI run for that head.
+  requireDraftFirst: false
   # The repository requires a deterministic, no-model closeout comment and
   # private metric record on the final head. Model-driven retrospectives stay
   # conditional on incidents, SLO misses, high-risk work, or owner request.

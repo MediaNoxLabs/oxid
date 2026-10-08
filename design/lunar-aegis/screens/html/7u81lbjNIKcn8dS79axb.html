@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Oxid - Ready</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Space+Grotesk:wght@700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'oxid-bg': '#07090E',
+                        'oxid-surface': '#0F172A',
+                        'oxid-border': '#1E293B',
+                        'oxid-primary': '#06B6D4',
+                        'oxid-highlight': '#38BDF8',
+                        'oxid-identity': '#8B5CF6',
+                        'oxid-text': '#F8FAFC',
+                        'oxid-muted': '#94A3B8',
+                    },
+                    fontFamily: {
+                        sans: ['Plus Jakarta Sans', 'sans-serif'],
+                        heading: ['Space Grotesk', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-oxid-bg text-oxid-text font-sans overflow-hidden">
+    <div class="relative h-[800px] w-full flex flex-col" id="ready-screen">
+        <!-- Content -->
+        <main class="flex-1 flex flex-col items-center justify-center px-6 text-center">
+            <div class="relative mb-8">
+                <!-- Success State Illustration -->
+                <div class="w-32 h-32 bg-oxid-primary/5 border border-oxid-primary/20 rounded-full flex items-center justify-center">
+                    <div class="w-24 h-24 bg-oxid-primary/10 rounded-full flex items-center justify-center animate-pulse">
+                        <div class="w-16 h-16 bg-oxid-primary rounded-full flex items-center justify-center shadow-lg shadow-oxid-primary/20">
+                            <i class="fa-solid fa-check text-oxid-bg text-3xl font-bold"></i>
+                        </div>
+                    </div>
+                </div>
+                <!-- Lunar Aegis Branded Icons (Floating) -->
+                <div class="absolute -top-4 -right-4 w-12 h-12 bg-oxid-surface border border-oxid-border rounded-2xl flex items-center justify-center rotate-12 shadow-2xl">
+                    <i class="fa-solid fa-shield-halved text-oxid-primary"></i>
+                </div>
+                <div class="absolute -bottom-2 -left-6 w-10 h-10 bg-oxid-surface border border-oxid-border rounded-xl flex items-center justify-center -rotate-12 shadow-2xl text-xs text-oxid-muted">
+                    <i class="fa-solid fa-fingerprint"></i>
+                </div>
+            </div>
+
+            <h2 class="text-4xl font-heading font-bold tracking-tight mb-4 text-white">You're all set!</h2>
+            <p class="text-oxid-muted text-lg leading-relaxed max-w-xs mx-auto mb-10">
+                Your local profile is ready. Check device protection and backup status before relying on it.
+            </p>
+
+            <div class="w-full space-y-4">
+                <div class="p-5 rounded-[24px] bg-oxid-surface border border-oxid-border flex items-center gap-4 text-left">
+                    <div class="w-11 h-11 rounded-xl bg-oxid-bg border border-oxid-border flex items-center justify-center text-oxid-muted">
+                        <i class="fa-solid fa-cloud-arrow-up"></i>
+                    </div>
+                    <div>
+                        <h4 class="font-bold text-[14px] uppercase tracking-wide text-white">Backup Status</h4>
+                        <p class="text-[11px] font-bold text-oxid-muted uppercase tracking-tighter italic">Not connected yet (optional)</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Action & Navigation Handoff -->
+        <div class="p-6 pb-4">
+            <button class="w-full bg-oxid-primary hover:bg-oxid-highlight text-oxid-bg font-bold py-5 rounded-[20px] transition-all active:scale-[0.98] text-[15px] uppercase tracking-widest shadow-lg shadow-oxid-primary/10 mb-8">
+                Go to Home
+            </button>
+
+            <!-- Navigation Bar -->
+            <nav aria-label="Primary navigation" class="grid grid-cols-5 items-center px-1 py-2 bg-oxid-surface border border-oxid-border rounded-[2rem]"><button type="button" aria-label="Home" aria-current="page" style="min-height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#06B6D4;font:600 10px/1 system-ui,sans-serif"><span style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:0px;background:transparent;color:inherit"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></span><span>Home</span></button><button type="button" aria-label="Wallet" style="min-height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#a1a1aa;font:600 10px/1 system-ui,sans-serif"><span style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:0px;background:transparent;color:inherit"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></svg></span><span>Wallet</span></button><button type="button" aria-label="Scan" style="min-height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#a1a1aa;font:600 10px/1 system-ui,sans-serif"><span style="display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,#38BDF8,#06B6D4);color:#07131d"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg></span><span>Scan</span></button><button type="button" aria-label="Documents" style="min-height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#a1a1aa;font:600 10px/1 system-ui,sans-serif"><span style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:0px;background:transparent;color:inherit"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></svg></span><span>Documents</span></button><button type="button" aria-label="Activity" style="min-height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#a1a1aa;font:600 10px/1 system-ui,sans-serif"><span style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:0px;background:transparent;color:inherit"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.5.5 0 0 1-.96 0L9.24 2.18a.5.5 0 0 0-.96 0l-2.35 8.36A2 2 0 0 1 4 12H2"/></svg></span><span>Activity</span></button></nav>
+        </div>
+
+        <!-- Decorative background glow -->
+        <div class="absolute bottom-0 left-1/2 -translate-x-1/2 w-[400px] h-[300px] bg-oxid-primary/5 blur-[100px] pointer-events-none -z-10"></div>
+    </div>
+</body>
+</html>

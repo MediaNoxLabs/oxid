@@ -2,8 +2,10 @@
 
 use std::{
     collections::HashMap as StdHashMap,
+    future::Future,
     io::Cursor,
     ops::Deref,
+    pin::Pin,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -110,6 +112,13 @@ impl MidnightContractCallFundingRequest {
             transaction,
         }
     }
+
+    /// Transfers the opaque transaction only to a funding adapter. Incoming
+    /// application surfaces never receive this value.
+    #[must_use]
+    pub fn into_transaction(self) -> Zeroizing<Vec<u8>> {
+        self.transaction
+    }
 }
 
 /// A funded unproven transaction retained by the Passport Vault adapter. Only
@@ -132,6 +141,19 @@ impl std::fmt::Debug for FundedMidnightContractCall {
 }
 
 impl FundedMidnightContractCall {
+    #[must_use]
+    pub fn new(
+        transaction: Zeroizing<Vec<u8>>,
+        funded_night_atomic_units: u128,
+        funding_input_count: u16,
+    ) -> Self {
+        Self {
+            transaction,
+            funded_night_atomic_units,
+            funding_input_count,
+        }
+    }
+
     #[must_use]
     pub fn into_transaction(self) -> Zeroizing<Vec<u8>> {
         self.transaction
@@ -549,11 +571,26 @@ pub(crate) enum MidnightSubmissionReconciliation {
     Unresolved,
 }
 
+pub(crate) type MidnightSubmissionReconciliationFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<MidnightSubmissionReconciliation, WalletTransactionPortError>>
+            + Send
+            + 'a,
+    >,
+>;
+
 pub(crate) trait MidnightSubmissionReconciler: Send + Sync {
     fn reconcile(
         &self,
         entry: &StoredSubmissionJournalEntry,
     ) -> Result<MidnightSubmissionReconciliation, WalletTransactionPortError>;
+
+    fn reconcile_async<'a>(
+        &'a self,
+        entry: &'a StoredSubmissionJournalEntry,
+    ) -> MidnightSubmissionReconciliationFuture<'a> {
+        Box::pin(async move { self.reconcile(entry) })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -583,11 +620,17 @@ pub(crate) struct MidnightRegistrationContext {
     pub(crate) parameters: LedgerParameters,
 }
 
+pub(crate) type MidnightRegistrationContextFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<MidnightRegistrationContext, WalletTransactionPortError>>
+            + Send
+            + 'a,
+    >,
+>;
+
 pub(crate) trait MidnightTransactionCompleter: Send + Sync {
-    fn registration_context(
-        &self,
-    ) -> Result<MidnightRegistrationContext, WalletTransactionPortError> {
-        Err(WalletTransactionPortError::Unavailable)
+    fn registration_context(&self) -> MidnightRegistrationContextFuture<'_> {
+        Box::pin(async { Err(WalletTransactionPortError::Unavailable) })
     }
 
     fn complete(
@@ -601,10 +644,8 @@ pub(crate) trait MidnightTransactionCompleter: Send + Sync {
 pub(crate) struct UnavailableMidnightTransactionCompleter;
 
 impl MidnightTransactionCompleter for UnavailableMidnightTransactionCompleter {
-    fn registration_context(
-        &self,
-    ) -> Result<MidnightRegistrationContext, WalletTransactionPortError> {
-        Err(WalletTransactionPortError::Unavailable)
+    fn registration_context(&self) -> MidnightRegistrationContextFuture<'_> {
+        Box::pin(async { Err(WalletTransactionPortError::Unavailable) })
     }
 
     fn complete(
@@ -620,15 +661,15 @@ impl MidnightTransactionCompleter for UnavailableMidnightTransactionCompleter {
 pub(crate) struct SimulatedMidnightTransactionCompleter;
 
 impl MidnightTransactionCompleter for SimulatedMidnightTransactionCompleter {
-    fn registration_context(
-        &self,
-    ) -> Result<MidnightRegistrationContext, WalletTransactionPortError> {
-        Ok(MidnightRegistrationContext {
-            // More than the reviewed one-week generation window after the
-            // simulated NIGHT UTXO ctime, so the deterministic profile can
-            // exercise registration without pretending it starts with DUST.
-            timestamp: Timestamp::from_secs(1_700_700_000),
-            parameters: INITIAL_PARAMETERS,
+    fn registration_context(&self) -> MidnightRegistrationContextFuture<'_> {
+        Box::pin(async {
+            Ok(MidnightRegistrationContext {
+                // More than the reviewed one-week generation window after the
+                // simulated NIGHT UTXO ctime, so the deterministic profile can
+                // exercise registration without pretending it starts with DUST.
+                timestamp: Timestamp::from_secs(1_700_700_000),
+                parameters: INITIAL_PARAMETERS,
+            })
         })
     }
 
@@ -2259,40 +2300,31 @@ where
                 return Ok(status);
             }
 
-            let reconciler = Arc::clone(&self.submission_reconciler);
-            let journal = Arc::clone(&self.submission_journal);
-            let drafts = Arc::clone(&self.drafts);
-            let (sender, receiver) = futures::channel::oneshot::channel();
-            thread::Builder::new()
-                .name("oxid-midnight-reconcile".to_owned())
-                .spawn(move || {
-                    let result = reconciler.reconcile(&entry).and_then(|outcome| {
-                        persist_reconciliation(journal.as_ref(), drafts.as_ref(), entry, outcome)
-                    });
-                    let _ = sender.send(result);
-                })
-                .map_err(|_| WalletTransactionPortError::Unavailable)?;
-            receiver
-                .await
-                .unwrap_or(Err(WalletTransactionPortError::Unavailable))
+            let outcome = self.submission_reconciler.reconcile_async(&entry).await?;
+            persist_reconciliation(
+                self.submission_journal.as_ref(),
+                self.drafts.as_ref(),
+                entry,
+                outcome,
+            )
         })
     }
 }
 
-struct CancelSubmissionOnDrop {
+pub(crate) struct CancelSubmissionOnDrop {
     control: Arc<MidnightSubmissionControl>,
     armed: bool,
 }
 
 impl CancelSubmissionOnDrop {
-    fn new(control: Arc<MidnightSubmissionControl>) -> Self {
+    pub(crate) fn new(control: Arc<MidnightSubmissionControl>) -> Self {
         Self {
             control,
             armed: true,
         }
     }
 
-    fn disarm(&mut self) {
+    pub(crate) fn disarm(&mut self) {
         self.armed = false;
     }
 }
@@ -2934,7 +2966,8 @@ mod tests {
     use oxid_foundation::UnixTimestampMillis;
     use oxid_wallet_application::WalletTransactionPort;
     use oxid_wallet_domain::{
-        ChainAccountId, ChainAddressKind, PublicKeyEncoding, WalletKeyReference, WalletPublicKey,
+        AssetBalance, AssetSymbol, ChainAccountId, ChainAddress, ChainAddressKind, ChainAsset,
+        ChainAssetId, ChainNetworkId, PublicKeyEncoding, WalletKeyReference, WalletPublicKey,
     };
 
     use super::*;
@@ -3752,6 +3785,34 @@ mod tests {
         assert_eq!(entry.block_height, None);
     }
 
+    #[test]
+    fn dropping_submission_waiter_requests_cooperative_pre_broadcast_cancellation() {
+        let journal =
+            Arc::new(crate::submission_journal::MemoryMidnightSubmissionJournalStore::default());
+        let control = Arc::new(MidnightSubmissionControl::new(
+            MidnightSubmissionAttempt {
+                profile_id: profile(),
+                network_id: network_id("undeployed").expect("network is valid"),
+                draft_id: WalletTransactionDraftId::parse("drop_cancellation")
+                    .expect("draft identifier is valid"),
+                planning_fingerprint: [7; 32],
+                expires_at: UnixTimestampMillis::new(2_000),
+                updated_at: UnixTimestampMillis::new(1_000),
+            },
+            journal,
+        ));
+
+        {
+            let _cancel_on_drop = CancelSubmissionOnDrop::new(Arc::clone(&control));
+        }
+
+        assert!(control.cancellation.load(Ordering::Acquire));
+        assert_eq!(
+            *control.phase.lock().expect("phase is available"),
+            MidnightSubmissionPhase::CancellationRequested
+        );
+    }
+
     fn request(expires_at: u64) -> PrepareWalletTransferRequest {
         let recipient = fixture_addresses(&network_id("undeployed").expect("network is valid"))
             .expect("fixture addresses encode")
@@ -3761,6 +3822,53 @@ mod tests {
             recipient,
             amount_atomic_units: 1_500_000,
             expires_at: UnixTimestampMillis::new(expires_at),
+        }
+    }
+
+    #[derive(Clone)]
+    struct AuthorizationPreviewFields {
+        network_id: ChainNetworkId,
+        account_id: ChainAccountId,
+        recipient: ChainAddress,
+        amount: AssetBalance,
+        change: AssetBalance,
+        fee: Option<AssetBalance>,
+        fee_state: WalletTransactionFeeState,
+        input_count: u16,
+        expires_at: UnixTimestampMillis,
+    }
+
+    impl AuthorizationPreviewFields {
+        fn from_preview(preview: &WalletTransferPreview) -> Self {
+            Self {
+                network_id: preview.network_id().clone(),
+                account_id: preview.account_id().clone(),
+                recipient: preview.recipient().clone(),
+                amount: preview.amount().clone(),
+                change: preview.change().clone(),
+                fee: preview.fee().cloned(),
+                fee_state: preview.fee_state(),
+                input_count: preview.input_count(),
+                expires_at: preview.expires_at(),
+            }
+        }
+
+        fn build(self, baseline: &WalletTransferPreview) -> WalletTransferPreview {
+            WalletTransferPreview::new(
+                baseline.draft_id().clone(),
+                baseline.authorization_challenge().clone(),
+                self.network_id,
+                self.account_id,
+                self.recipient,
+                self.amount,
+                self.change,
+                self.fee,
+                self.fee_state,
+                self.input_count,
+                self.expires_at,
+                baseline.state(),
+            )
+            .expect("mutation preserves preview invariants")
         }
     }
 
@@ -3789,16 +3897,159 @@ mod tests {
         let prepared = adapter
             .prepare(&profile(), request(2_000))
             .expect("transfer prepares");
-        let changed_fee = prepared.with_final_fee(AssetBalance::new(
+        let prepared_with_fee = prepared.with_final_fee(AssetBalance::new(
             midnight_asset("midnight:dust", "DUST", SPECKS_PER_DUST).expect("asset is valid"),
             1,
         ));
-        assert_ne!(
-            authorization_challenge(prepared.draft_id(), b"same signing payload", &prepared,)
-                .expect("challenge encodes preview"),
-            authorization_challenge(prepared.draft_id(), b"same signing payload", &changed_fee,)
-                .expect("changed preview encodes differently")
+        let baseline = AuthorizationPreviewFields::from_preview(&prepared_with_fee);
+        let amount_asset = prepared_with_fee.amount().asset();
+        let fee_asset = prepared_with_fee.fee().expect("baseline fee").asset();
+        let mut cases = Vec::new();
+        let mut add = |name, fields: AuthorizationPreviewFields| {
+            cases.push((
+                name,
+                fields.build(&prepared_with_fee),
+                b"same signing payload".as_slice(),
+            ));
+        };
+
+        let mut fields = baseline.clone();
+        fields.recipient = fixture_addresses(&network_id("preprod").expect("network is valid"))
+            .expect("fixture addresses encode")
+            .remove(0);
+        add("recipient-value", fields);
+
+        let mut fields = baseline.clone();
+        fields.recipient = fixture_addresses(prepared_with_fee.network_id())
+            .expect("fixture addresses encode")
+            .remove(1);
+        add("recipient-kind", fields);
+
+        let mut fields = baseline.clone();
+        fields.network_id = network_id("preprod").expect("network is valid");
+        add("network", fields);
+
+        let mut fields = baseline.clone();
+        fields.account_id =
+            ChainAccountId::parse("midnight_account_0_1").expect("account id is valid");
+        add("account", fields);
+
+        let mut fields = baseline.clone();
+        let asset = ChainAsset::new(
+            ChainAssetId::parse("midnight:night-alternate").expect("asset id is valid"),
+            amount_asset.symbol().clone(),
+            amount_asset.decimals(),
         );
+        fields.amount = AssetBalance::new(asset.clone(), prepared_with_fee.amount().atomic_units());
+        fields.change = AssetBalance::new(asset, prepared_with_fee.change().atomic_units());
+        add("amount-and-change-asset-id", fields);
+
+        let mut fields = baseline.clone();
+        let asset = ChainAsset::new(
+            amount_asset.id().clone(),
+            AssetSymbol::parse("NIGHT-ALT").expect("asset symbol is valid"),
+            amount_asset.decimals(),
+        );
+        fields.amount = AssetBalance::new(asset.clone(), prepared_with_fee.amount().atomic_units());
+        fields.change = AssetBalance::new(asset, prepared_with_fee.change().atomic_units());
+        add("amount-and-change-asset-symbol", fields);
+
+        let mut fields = baseline.clone();
+        let asset = ChainAsset::new(
+            amount_asset.id().clone(),
+            amount_asset.symbol().clone(),
+            amount_asset.decimals() + 1,
+        );
+        fields.amount = AssetBalance::new(asset.clone(), prepared_with_fee.amount().atomic_units());
+        fields.change = AssetBalance::new(asset, prepared_with_fee.change().atomic_units());
+        add("amount-and-change-decimals", fields);
+
+        let mut fields = baseline.clone();
+        fields.amount = AssetBalance::new(
+            amount_asset.clone(),
+            prepared_with_fee.amount().atomic_units() + 1,
+        );
+        add("amount-value", fields);
+
+        let mut fields = baseline.clone();
+        fields.change = AssetBalance::new(
+            amount_asset.clone(),
+            prepared_with_fee.change().atomic_units() + 1,
+        );
+        add("change-value", fields);
+
+        let mut fields = baseline.clone();
+        fields.fee = None;
+        fields.fee_state = WalletTransactionFeeState::RequiresBalancing;
+        add("fee-presence", fields);
+
+        let mut fields = baseline.clone();
+        fields.fee = Some(AssetBalance::new(
+            ChainAsset::new(
+                ChainAssetId::parse("midnight:dust-alternate").expect("asset id is valid"),
+                fee_asset.symbol().clone(),
+                fee_asset.decimals(),
+            ),
+            prepared_with_fee
+                .fee()
+                .expect("baseline fee")
+                .atomic_units(),
+        ));
+        add("fee-asset", fields);
+
+        let mut fields = baseline.clone();
+        fields.fee = Some(AssetBalance::new(
+            ChainAsset::new(
+                fee_asset.id().clone(),
+                fee_asset.symbol().clone(),
+                fee_asset.decimals() + 1,
+            ),
+            prepared_with_fee
+                .fee()
+                .expect("baseline fee")
+                .atomic_units(),
+        ));
+        add("fee-decimals", fields);
+
+        let mut fields = baseline.clone();
+        fields.fee = Some(AssetBalance::new(
+            fee_asset.clone(),
+            prepared_with_fee
+                .fee()
+                .expect("baseline fee")
+                .atomic_units()
+                + 1,
+        ));
+        add("fee-value", fields);
+
+        let mut fields = baseline.clone();
+        fields.fee_state = WalletTransactionFeeState::Estimated;
+        add("fee-state", fields);
+
+        let mut fields = baseline.clone();
+        fields.input_count += 1;
+        add("input-count", fields);
+
+        let mut fields = baseline.clone();
+        fields.expires_at = UnixTimestampMillis::new(prepared_with_fee.expires_at().value() + 1);
+        add("expiry", fields);
+
+        cases.push((
+            "payload",
+            prepared_with_fee.clone(),
+            b"different signing payload",
+        ));
+        let baseline_challenge = authorization_challenge(
+            prepared_with_fee.draft_id(),
+            b"same signing payload",
+            &prepared_with_fee,
+        )
+        .expect("baseline challenge encodes");
+        for (name, preview, payload) in cases {
+            let changed = authorization_challenge(preview.draft_id(), payload, &preview)
+                .expect("changed challenge encodes");
+            assert!(baseline_challenge != changed, "{name}");
+        }
 
         let request = AuthorizeWalletTransferRequest {
             draft_id: prepared.draft_id().clone(),

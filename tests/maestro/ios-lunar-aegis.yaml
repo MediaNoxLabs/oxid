@@ -1,0 +1,82 @@
+# Local-only Maestro pilot. Run through scripts/run-maestro-ios.sh.
+appId: io.medianox.oxid
+name: Lunar Aegis iOS simulated holder journey
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Create private wallet"
+- takeScreenshot: lunar-aegis-ios-01-first-run
+- tapOn: "Create private wallet"
+- scrollUntilVisible:
+    element:
+      text: "Create and continue"
+    direction: DOWN
+- tapOn: "Create and continue"
+- assertVisible: "Device protection is required.*"
+- takeScreenshot: lunar-aegis-ios-02-device-protection
+# Stop at the safe explanation boundary. Relaunch cleanly rather than entering
+# native authorization or the recovery ceremony.
+- launchApp:
+    clearState: true
+- assertVisible: "Create private wallet"
+# Maestro records a screenshot automatically after a failed step. Never enter
+# the recovery ceremony here: a later failure could otherwise retain a phrase.
+# The demo drawer creates only a profile and process-local protection. The
+# simulated profile is already synchronized, so stop at Send entry and never
+# enter a recipient, amount, or transfer action.
+- tapOn: "Open standalone demo setup"
+- tapOn: "Run demo action: Create or select demo profile"
+- extendedWaitUntil:
+    visible: "Standalone public profile selected."
+    timeout: 60000
+- tapOn: "Run demo action: Initialize or unlock wallet"
+- extendedWaitUntil:
+    visible: "(Initialized process-local standalone custody.|Wallet session was already unlocked; no key was regenerated.)"
+    timeout: 60000
+- tapOn: "Close standalone demo setup"
+- tapOn: "Home"
+- assertVisible: "Current realm"
+- takeScreenshot: lunar-aegis-ios-03-home-empty
+- tapOn: "Receive"
+- assertVisible: "Receive assets"
+- takeScreenshot: lunar-aegis-ios-04-receive
+- tapOn: "Close Receive"
+- tapOn: "Send"
+- assertVisible: "SEND NIGHT"
+- takeScreenshot: lunar-aegis-ios-05-send-entry
+- tapOn: "Go back"
+- assertVisible: "Current realm"
+# Canonical 375-point route-transition evidence: navigate from scrolled
+# Documents through Activity to Settings and retain visible destination titles.
+- tapOn: "Documents"
+- assertVisible: "Documents"
+- takeScreenshot: lunar-aegis-ios-06-documents-empty
+- scrollUntilVisible:
+    element:
+      text: "No documents yet"
+    direction: DOWN
+- extendedWaitUntil:
+    visible: "No documents yet"
+    timeout: 60000
+- tapOn: "Activity"
+- extendedWaitUntil:
+    visible: "Sent"
+    timeout: 60000
+- assertVisible: "Activity"
+- takeScreenshot: lunar-aegis-ios-07-activity-history
+- scrollUntilVisible:
+    element:
+      text: "Received"
+    direction: DOWN
+- assertVisible: "Received"
+- scrollUntilVisible:
+    element:
+      text: "Open global application menu"
+    direction: UP
+- tapOn: "Open global application menu"
+- tapOn: "Settings"
+- assertVisible: "Settings"
+# Activity remains a legitimate bottom-navigation label. The Rust semantic
+# contract proves it no longer carries aria-current while Settings is open;
+# the screenshot qualifies the visible state and safe-area placement.
+- takeScreenshot: lunar-aegis-ios-08-settings

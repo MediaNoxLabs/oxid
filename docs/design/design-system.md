@@ -13,6 +13,9 @@ future reviewed mapping and do not activate an unshipped light theme.
 
 **Layer 1 — brand tokens** (supplied per brand, white-label.md):
 palette primitives, type family, radius personality, logo/mascot assets.
+The default pack's fingerprint-crescent geometry and platform icon treatments
+are specified in [brand-identity.md](brand-identity.md). The inline logo uses
+the semantic accent; gradients are confined to exported brand artwork.
 
 **Layer 2 — semantic tokens** (fixed vocabulary, consumed by components;
 brands may only re-point them at their primitives):
@@ -40,6 +43,40 @@ semantic-state colors (`--positive/--warning/--critical`) are **fixed across
 all brands** — a brand can restyle joy, never danger. Dark is the default
 scheme (current `color-scheme: dark` stays); a first-class light palette is
 part of the token schema from day one so brands must define both.
+
+## Lunar Aegis crosswalk (0.2.0 foundation)
+
+The published Lunar Aegis V1 design system is represented by a closed brand
+pack rather than copied screen markup. `brands/oxid/tokens.json` supplies the
+brand layer; `crates/brand-build` validates and emits the semantic layer used
+by Dioxus. Dark is shipped; the complete light primitive set remains available
+without selecting a light application mode.
+
+| Lunar Aegis role | Brand primitive | Semantic consumer | Foundation seam |
+| --- | --- | --- | --- |
+| Midnight Obsidian | `#07090E` | `--surface-0` | app background |
+| Deep Slate Navy | `#0F172A` | `--surface-raised` | cards and elevated surfaces |
+| structural line | `#1E293B` | `--line` | controls, cards, sheets |
+| Celestial Cyan | `#06B6D4` | `--accent`, `--family-assets` | primary action and active navigation |
+| highlight cyan | `#38BDF8` | `--highlight` | focus treatment |
+| Phantom Violet | `#8B5CF6` | `--accent-alt`, `--family-identity` | identity emphasis |
+| Pure Titanium / Slate Steel | `#F8FAFC` / `#94A3B8` | `--text-strong` / `--text-muted` | headings and supporting copy |
+
+Positive, warning, critical, and info remain fixed semantic colors emitted by
+`crates/brand-build`; branding cannot redefine their truth. The app bundles
+Space Grotesk for headings, Plus Jakarta Sans for body/controls, JetBrains Mono
+for addresses/DIDs/hashes, and Noto Sans for Ukrainian fallback. Font files,
+OFL texts, and provenance live in `apps/oxid/assets/fonts/`; no remote request
+is needed.
+
+The reusable Dioxus foundation is the shared CSS and component vocabulary:
+`bottom-nav` (five labelled slots with stable `nav-*` IDs), primary/secondary
+buttons, card surfaces, field controls, status pills, bottom sheets, and
+empty/error/loading states. Every surface keeps the existing truthful state
+rules: unavailable addresses cannot be copied, pending/unknown outcomes are
+not success, and consent/custody/capability decisions remain bound to their
+existing typed flows. This crosswalk deliberately does not introduce the
+screen-specific work assigned to the 0.2.0 flow slices.
 
 ## Visual language
 

@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use super::WalletDustSettlementCapability;
+
 use oxid_adapter_midnight::MidnightPublicCallContextSource;
 #[cfg(not(target_arch = "wasm32"))]
 use oxid_adapter_midnight::{MidnightContractCallFundingPort, MidnightContractCallSubmissionPort};
@@ -18,58 +20,61 @@ use oxid_diagnostics_application::{
     ClearDiagnosticsUseCase, DiagnosticEventSinkPort, GetDiagnosticSnapshotUseCase,
 };
 use oxid_identity_application::{
-    CreateDidUseCase, DeactivateDidUseCase, ForgetDidUseCase, GetDidRecordUseCase,
-    ListDidRecordsUseCase, PublishDidUseCase, ResolveDidUseCase, SignDidPayloadUseCase,
-    UpdateDidUseCase,
+    CreateDidUseCase, DeactivateDidUseCase, DeployDidUseCase, ForgetDidUseCase,
+    GetDidRecordUseCase, ListDidRecordsUseCase, PublishDidUseCase, ResolveDidUseCase,
+    SignDidPayloadUseCase, UpdateDidUseCase,
 };
 use oxid_passport_vault_application::{
     AuthorizePassportVaultCallUseCase, CancelPassportVaultCallSubmissionUseCase,
     ClaimPassportVaultLockUseCase, CreatePassportVaultLockUseCase,
     DecodePassportVaultContractStateUseCase, DepositPassportVaultLockUseCase,
     GetPassportVaultCallSubmissionStatusUseCase, GetPassportVaultCallUseCase,
-    ListPassportVaultCallSubmissionsUseCase, ListPassportVaultLocksUseCase,
-    PreparePassportVaultCallUseCase, ReadPassportVaultContractStateUseCase,
-    ReconcilePassportVaultCallSubmissionUseCase, SubmitPassportVaultCallUseCase,
-    WithdrawPassportVaultLockUseCase,
+    ListPassportVaultActivityUseCase, ListPassportVaultCallSubmissionsUseCase,
+    ListPassportVaultLocksUseCase, PassportVaultActivityStore, PreparePassportVaultCallUseCase,
+    ReadPassportVaultContractStateUseCase, ReconcilePassportVaultCallSubmissionUseCase,
+    SubmitPassportVaultCallUseCase, WithdrawPassportVaultLockUseCase,
 };
 use oxid_platform_ports::{
     IdentityLinkIngressPort, PublicTextExportPort, QrScannerPort, ScreenPrivacyPort,
 };
 use oxid_presentation_application::{
     AcceptCredentialPresentationUseCase, CancelCredentialPresentationUseCase,
-    GetCredentialPresentationUseCase, ListCredentialPresentationsUseCase,
-    PrepareCredentialPresentationUseCase, RefuseCredentialPresentationUseCase,
-    SetCredentialPresentationForegroundUseCase,
+    GetCredentialPresentationUseCase, ListCredentialPresentationActivityUseCase,
+    ListCredentialPresentationsUseCase, PrepareCredentialPresentationUseCase,
+    RefuseCredentialPresentationUseCase, SetCredentialPresentationForegroundUseCase,
 };
 use oxid_protocol_application::{
     AcceptCredentialIssuanceUseCase, AcceptSelfIssuedAuthenticationUseCase,
     GetCredentialIssuanceUseCase, GetSelfIssuedAuthenticationUseCase,
-    ListCredentialIssuancesUseCase, ListSelfIssuedAuthenticationsUseCase,
-    PrepareCredentialIssuanceUseCase, PrepareSelfIssuedAuthenticationUseCase,
-    RefuseCredentialIssuanceUseCase, RefuseSelfIssuedAuthenticationUseCase,
-    RouteIdentityRequestUseCase,
+    ListCredentialIssuanceActivityUseCase, ListCredentialIssuancesUseCase,
+    ListSelfIssuedAuthenticationsUseCase, PrepareCredentialIssuanceUseCase,
+    PrepareSelfIssuedAuthenticationUseCase, RefuseCredentialIssuanceUseCase,
+    RefuseSelfIssuedAuthenticationUseCase, RouteIdentityRequestUseCase,
 };
 use oxid_wallet_application::{
-    AuthorizeWalletDustRegistrationUseCase, AuthorizeWalletTransferUseCase,
-    CancelSelectedWalletRealmSyncUseCase, CancelWalletDustRegistrationSubmissionUseCase,
-    CancelWalletDustSyncUseCase, CancelWalletOnboardingUseCase, CancelWalletShieldedSyncUseCase,
+    AuthorizeDevelopmentWalletTransferUseCase, AuthorizeWalletDustRegistrationUseCase,
+    AuthorizeWalletTransferUseCase, CancelSelectedWalletRealmSyncUseCase,
+    CancelWalletDustRegistrationSubmissionUseCase, CancelWalletDustSyncUseCase,
+    CancelWalletOnboardingUseCase, CancelWalletShieldedSyncUseCase,
     CancelWalletTransferSubmissionUseCase, CompleteWalletOnboardingUseCase,
     CreateWalletProfileUseCase, DeleteWalletKeyUseCase, DeriveWalletAccountUseCase,
     ExportCompleteWalletBackupUseCase, ExportPortableWalletBackupUseCase, GenerateWalletKeyUseCase,
     GetActiveWalletProfileUseCase, GetSelectedWalletRealmSyncUseCase, GetWalletAccountUseCase,
     GetWalletBackupReceiptUseCase, GetWalletDustRegistrationStatusUseCase,
     GetWalletDustRegistrationUseCase, GetWalletDustSyncStatusUseCase,
-    GetWalletSecurityStatusUseCase, GetWalletShieldedSyncStatusUseCase,
-    GetWalletTransferDraftUseCase, GetWalletTransferSubmissionStatusUseCase,
-    InitializeWalletSecurityUseCase, ListWalletKeysUseCase, ListWalletNetworksUseCase,
-    ListWalletProfilesUseCase, ListWalletTransferSubmissionsUseCase, LockWalletUseCase,
+    GetWalletOperationTimelineUseCase, GetWalletSecurityStatusUseCase,
+    GetWalletShieldedSyncStatusUseCase, GetWalletTransferDraftUseCase,
+    GetWalletTransferSubmissionStatusUseCase, InitializeWalletSecurityUseCase,
+    ListWalletKeysUseCase, ListWalletNetworksUseCase, ListWalletProfilesUseCase,
+    ListWalletTransferSubmissionsUseCase, LockWalletUseCase, ManageWalletActionWatchUseCase,
     PortableWalletBackupDocumentPort, PrepareShieldedWalletTransferUseCase,
     PrepareWalletDustRegistrationUseCase, PrepareWalletOnboardingUseCase,
     PrepareWalletTransferUseCase, ReconcileWalletDustRegistrationSubmissionUseCase,
-    ReconcileWalletTransferSubmissionUseCase, RecordWalletBackupReceiptUseCase,
-    RecoverCompleteWalletBackupUseCase, RecoverPortableWalletBackupUseCase,
-    RecoverWalletRootUseCase, SelectWalletNetworkUseCase, SelectWalletProfileUseCase,
-    SignWalletDataUseCase, StartWalletDustSyncUseCase, StartWalletShieldedSyncUseCase,
+    ReconcileWalletRealmLifecycleUseCase, ReconcileWalletTransferSubmissionUseCase,
+    RecordWalletBackupReceiptUseCase, RecoverCompleteWalletBackupUseCase,
+    RecoverPortableWalletBackupUseCase, RecoverWalletRootUseCase, SelectWalletNetworkUseCase,
+    SelectWalletProfileUseCase, SignWalletDataUseCase, StartWalletDustSyncUseCase,
+    StartWalletShieldedSyncUseCase, SubmitDevelopmentWalletTransferUseCase,
     SubmitWalletDustRegistrationUseCase, SubmitWalletTransferUseCase,
     SyncSelectedWalletRealmUseCase, SyncWalletAccountUseCase, UnlockWalletUseCase,
 };
@@ -122,7 +127,10 @@ pub struct ApplicationServices {
     pub(super) sync_wallet_account: Arc<dyn SyncWalletAccountUseCase>,
     pub(super) sync_selected_wallet_realm: Arc<dyn SyncSelectedWalletRealmUseCase>,
     pub(super) get_selected_wallet_realm_sync: Arc<dyn GetSelectedWalletRealmSyncUseCase>,
+    pub(super) reconcile_wallet_realm_lifecycle: Arc<dyn ReconcileWalletRealmLifecycleUseCase>,
+    pub(super) manage_wallet_action_watch: Arc<dyn ManageWalletActionWatchUseCase>,
     pub(super) cancel_selected_wallet_realm_sync: Arc<dyn CancelSelectedWalletRealmSyncUseCase>,
+    pub(super) get_wallet_operation_timeline: Arc<dyn GetWalletOperationTimelineUseCase>,
     pub(super) get_wallet_dust_sync_status: Arc<dyn GetWalletDustSyncStatusUseCase>,
     pub(super) start_wallet_dust_sync: Arc<dyn StartWalletDustSyncUseCase>,
     pub(super) cancel_wallet_dust_sync: Arc<dyn CancelWalletDustSyncUseCase>,
@@ -138,10 +146,14 @@ pub struct ApplicationServices {
         Arc<dyn CancelWalletDustRegistrationSubmissionUseCase>,
     pub(super) reconcile_wallet_dust_registration_submission:
         Arc<dyn ReconcileWalletDustRegistrationSubmissionUseCase>,
+    pub(super) wallet_dust_settlement: Arc<WalletDustSettlementCapability>,
     pub(super) prepare_shielded_wallet_transfer: Arc<dyn PrepareShieldedWalletTransferUseCase>,
     pub(super) prepare_wallet_transfer: Arc<dyn PrepareWalletTransferUseCase>,
     pub(super) authorize_wallet_transfer: Arc<dyn AuthorizeWalletTransferUseCase>,
     pub(super) submit_wallet_transfer: Arc<dyn SubmitWalletTransferUseCase>,
+    pub(super) authorize_development_wallet_transfer:
+        Arc<dyn AuthorizeDevelopmentWalletTransferUseCase>,
+    pub(super) submit_development_wallet_transfer: Arc<dyn SubmitDevelopmentWalletTransferUseCase>,
     pub(super) get_wallet_transfer_draft: Arc<dyn GetWalletTransferDraftUseCase>,
     pub(super) get_wallet_transfer_submission_status:
         Arc<dyn GetWalletTransferSubmissionStatusUseCase>,
@@ -149,6 +161,8 @@ pub struct ApplicationServices {
     pub(super) list_wallet_transfer_submissions: Arc<dyn ListWalletTransferSubmissionsUseCase>,
     pub(super) reconcile_wallet_transfer_submission:
         Arc<dyn ReconcileWalletTransferSubmissionUseCase>,
+    pub(super) deploy_did: Arc<dyn DeployDidUseCase>,
+    pub(super) did_resolution_port: Arc<dyn oxid_identity_application::DidResolutionPort>,
     pub(super) create_did: Arc<dyn CreateDidUseCase>,
     pub(super) resolve_did: Arc<dyn ResolveDidUseCase>,
     pub(super) list_did_records: Arc<dyn ListDidRecordsUseCase>,
@@ -171,6 +185,7 @@ pub struct ApplicationServices {
     pub(super) refuse_credential_issuance: Arc<dyn RefuseCredentialIssuanceUseCase>,
     pub(super) get_credential_issuance: Arc<dyn GetCredentialIssuanceUseCase>,
     pub(super) list_credential_issuances: Arc<dyn ListCredentialIssuancesUseCase>,
+    pub(super) list_credential_issuance_activity: Arc<dyn ListCredentialIssuanceActivityUseCase>,
     pub(super) prepare_self_issued_authentication: Arc<dyn PrepareSelfIssuedAuthenticationUseCase>,
     pub(super) accept_self_issued_authentication: Arc<dyn AcceptSelfIssuedAuthenticationUseCase>,
     pub(super) refuse_self_issued_authentication: Arc<dyn RefuseSelfIssuedAuthenticationUseCase>,
@@ -184,7 +199,10 @@ pub struct ApplicationServices {
     pub(super) refuse_credential_presentation: Arc<dyn RefuseCredentialPresentationUseCase>,
     pub(super) get_credential_presentation: Arc<dyn GetCredentialPresentationUseCase>,
     pub(super) list_credential_presentations: Arc<dyn ListCredentialPresentationsUseCase>,
+    pub(super) list_credential_presentation_activity:
+        Arc<dyn ListCredentialPresentationActivityUseCase>,
     pub(super) list_passport_vault_locks: Arc<dyn ListPassportVaultLocksUseCase>,
+    pub(super) passport_vault_activity: Arc<PassportVaultActivityStore>,
     pub(super) decode_passport_vault_contract_state:
         Arc<dyn DecodePassportVaultContractStateUseCase>,
     pub(super) read_passport_vault_contract_state: Arc<dyn ReadPassportVaultContractStateUseCase>,
@@ -508,10 +526,27 @@ impl ApplicationServices {
     }
 
     #[must_use]
+    pub fn reconcile_wallet_realm_lifecycle(
+        &self,
+    ) -> Arc<dyn ReconcileWalletRealmLifecycleUseCase> {
+        Arc::clone(&self.reconcile_wallet_realm_lifecycle)
+    }
+
+    #[must_use]
+    pub fn manage_wallet_action_watch(&self) -> Arc<dyn ManageWalletActionWatchUseCase> {
+        Arc::clone(&self.manage_wallet_action_watch)
+    }
+
+    #[must_use]
     pub fn cancel_selected_wallet_realm_sync(
         &self,
     ) -> Arc<dyn CancelSelectedWalletRealmSyncUseCase> {
         Arc::clone(&self.cancel_selected_wallet_realm_sync)
+    }
+
+    #[must_use]
+    pub fn get_wallet_operation_timeline(&self) -> Arc<dyn GetWalletOperationTimelineUseCase> {
+        Arc::clone(&self.get_wallet_operation_timeline)
     }
 
     #[must_use]
@@ -590,6 +625,11 @@ impl ApplicationServices {
     }
 
     #[must_use]
+    pub fn wallet_dust_settlement(&self) -> Arc<WalletDustSettlementCapability> {
+        Arc::clone(&self.wallet_dust_settlement)
+    }
+
+    #[must_use]
     pub fn prepare_wallet_transfer(&self) -> Arc<dyn PrepareWalletTransferUseCase> {
         Arc::clone(&self.prepare_wallet_transfer)
     }
@@ -609,6 +649,22 @@ impl ApplicationServices {
     #[must_use]
     pub fn submit_wallet_transfer(&self) -> Arc<dyn SubmitWalletTransferUseCase> {
         Arc::clone(&self.submit_wallet_transfer)
+    }
+
+    /// Narrow undeployed-realm authority for dedicated development composition.
+    #[must_use]
+    pub fn authorize_development_wallet_transfer(
+        &self,
+    ) -> Arc<dyn AuthorizeDevelopmentWalletTransferUseCase> {
+        Arc::clone(&self.authorize_development_wallet_transfer)
+    }
+
+    /// Narrow undeployed-realm submission for dedicated development composition.
+    #[must_use]
+    pub fn submit_development_wallet_transfer(
+        &self,
+    ) -> Arc<dyn SubmitDevelopmentWalletTransferUseCase> {
+        Arc::clone(&self.submit_development_wallet_transfer)
     }
 
     #[must_use]
@@ -642,6 +698,11 @@ impl ApplicationServices {
         &self,
     ) -> Arc<dyn ReconcileWalletTransferSubmissionUseCase> {
         Arc::clone(&self.reconcile_wallet_transfer_submission)
+    }
+
+    #[must_use]
+    pub fn deploy_did(&self) -> Arc<dyn DeployDidUseCase> {
+        Arc::clone(&self.deploy_did)
     }
 
     #[must_use]
@@ -755,6 +816,13 @@ impl ApplicationServices {
     }
 
     #[must_use]
+    pub fn list_credential_issuance_activity(
+        &self,
+    ) -> Arc<dyn ListCredentialIssuanceActivityUseCase> {
+        Arc::clone(&self.list_credential_issuance_activity)
+    }
+
+    #[must_use]
     pub fn prepare_self_issued_authentication(
         &self,
     ) -> Arc<dyn PrepareSelfIssuedAuthenticationUseCase> {
@@ -825,8 +893,20 @@ impl ApplicationServices {
     }
 
     #[must_use]
+    pub fn list_credential_presentation_activity(
+        &self,
+    ) -> Arc<dyn ListCredentialPresentationActivityUseCase> {
+        Arc::clone(&self.list_credential_presentation_activity)
+    }
+
+    #[must_use]
     pub fn list_passport_vault_locks(&self) -> Arc<dyn ListPassportVaultLocksUseCase> {
         Arc::clone(&self.list_passport_vault_locks)
+    }
+
+    #[must_use]
+    pub fn list_passport_vault_activity(&self) -> Arc<dyn ListPassportVaultActivityUseCase> {
+        self.passport_vault_activity.clone()
     }
 
     #[must_use]

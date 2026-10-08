@@ -53,11 +53,16 @@ impl fmt::Display for WalletOnboardingAuthorizationError {
 impl Error for WalletOnboardingAuthorizationError {}
 const MAX_PENDING_WALLET_ONBOARDINGS: usize = 8;
 
-/// Recovery text crossing only the authenticated onboarding boundary.
-/// Debug output is always redacted and dropping the value clears its buffer.
-pub struct WalletRecoveryPhrase(Vec<u8>);
+/// Human-recoverable mnemonic crossing only the authenticated onboarding
+/// boundary.
+///
+/// A mnemonic and a wallet seed are deliberately different nominal types.
+/// The mnemonic may derive a [`WalletRootSeed`] through [`WalletMnemonicPort`],
+/// but the application exposes no inverse seed-to-mnemonic operation. Debug
+/// output is always redacted and dropping the value clears its buffer.
+pub struct WalletMnemonic(Vec<u8>);
 
-impl WalletRecoveryPhrase {
+impl WalletMnemonic {
     #[must_use]
     pub fn new(phrase: String) -> Self {
         Self(phrase.into_bytes())
@@ -71,23 +76,27 @@ impl WalletRecoveryPhrase {
     }
 }
 
-impl Drop for WalletRecoveryPhrase {
+impl Drop for WalletMnemonic {
     fn drop(&mut self) {
         self.0.fill(0);
         std::hint::black_box(&mut self.0);
     }
 }
 
-impl fmt::Debug for WalletRecoveryPhrase {
+impl fmt::Debug for WalletMnemonic {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("WalletRecoveryPhrase([REDACTED])")
+        formatter.write_str("WalletMnemonic([REDACTED])")
     }
 }
+
+/// Compatibility name retained while incoming adapters migrate to the
+/// resource-oriented vocabulary.
+pub type WalletRecoveryPhrase = WalletMnemonic;
 
 pub enum WalletOnboardingMode {
     CreateNew,
     RestoreMnemonic {
-        phrase: WalletRecoveryPhrase,
+        phrase: WalletMnemonic,
     },
     #[cfg(feature = "development-wallet-root")]
     RestoreRawSeed {
@@ -114,22 +123,21 @@ impl fmt::Display for WalletMnemonicPortError {
 
 impl Error for WalletMnemonicPortError {}
 
-pub struct CreatedWalletMnemonic {
-    pub phrase: WalletRecoveryPhrase,
-    pub root: WalletRootSeed,
-}
-
-/// Adapter boundary for BIP-39 vocabulary, checksum, normalization, and seed
-/// conversion. Application policy never depends on the external codec.
+/// Adapter boundary for BIP-39 vocabulary, checksum, normalization, and the
+/// one-way mnemonic-to-seed derivation. Application policy never depends on
+/// the external codec.
 pub trait WalletMnemonicPort: Send + Sync {
-    fn create_from_entropy(
+    /// Generates a mnemonic resource from fresh application-owned entropy.
+    fn generate_mnemonic(
         &self,
         entropy: &[u8; WALLET_ONBOARDING_ENTROPY_BYTES],
-    ) -> Result<CreatedWalletMnemonic, WalletMnemonicPortError>;
+    ) -> Result<WalletMnemonic, WalletMnemonicPortError>;
 
-    fn restore_phrase(
+    /// Validates a mnemonic and derives the complete BIP-39 wallet seed.
+    /// There is intentionally no inverse seed-to-mnemonic operation.
+    fn derive_seed(
         &self,
-        phrase: &WalletRecoveryPhrase,
+        mnemonic: &WalletMnemonic,
     ) -> Result<WalletRootSeed, WalletMnemonicPortError>;
 }
 
@@ -161,7 +169,7 @@ impl fmt::Debug for PrepareWalletOnboardingCommand {
 
 pub struct PreparedWalletOnboarding {
     pub ceremony_id: String,
-    pub created_recovery_phrase: Option<WalletRecoveryPhrase>,
+    pub created_recovery_phrase: Option<WalletMnemonic>,
     pub backup_acknowledgement_required: bool,
 }
 
@@ -330,16 +338,20 @@ where
                 self.random
                     .fill_bytes(&mut entropy.0)
                     .map_err(WalletOnboardingError::Randomness)?;
-                let created = self
+                let mnemonic = self
                     .mnemonics
-                    .create_from_entropy(&entropy.0)
+                    .generate_mnemonic(&entropy.0)
                     .map_err(map_mnemonic_error)?;
-                (created.root, Some(created.phrase))
+                let root = self
+                    .mnemonics
+                    .derive_seed(&mnemonic)
+                    .map_err(map_mnemonic_error)?;
+                (root, Some(mnemonic))
             }
             WalletOnboardingMode::RestoreMnemonic { phrase } => {
                 let root = self
                     .mnemonics
-                    .restore_phrase(&phrase)
+                    .derive_seed(&phrase)
                     .map_err(map_mnemonic_error)?;
                 (root, None)
             }
@@ -532,19 +544,16 @@ mod tests {
     struct TestMnemonic;
 
     impl WalletMnemonicPort for TestMnemonic {
-        fn create_from_entropy(
+        fn generate_mnemonic(
             &self,
-            entropy: &[u8; WALLET_ONBOARDING_ENTROPY_BYTES],
-        ) -> Result<CreatedWalletMnemonic, WalletMnemonicPortError> {
-            Ok(CreatedWalletMnemonic {
-                phrase: WalletRecoveryPhrase::new(PUBLIC_ZERO_ENTROPY_PHRASE.to_owned()),
-                root: WalletRootSeed::from_bip39_seed([entropy[0]; BIP39_WALLET_SEED_BYTES]),
-            })
+            _: &[u8; WALLET_ONBOARDING_ENTROPY_BYTES],
+        ) -> Result<WalletMnemonic, WalletMnemonicPortError> {
+            Ok(WalletMnemonic::new(PUBLIC_ZERO_ENTROPY_PHRASE.to_owned()))
         }
 
-        fn restore_phrase(
+        fn derive_seed(
             &self,
-            phrase: &WalletRecoveryPhrase,
+            phrase: &WalletMnemonic,
         ) -> Result<WalletRootSeed, WalletMnemonicPortError> {
             let value = phrase.expose_for_onboarding();
             if value.split(' ').count() != 24 {
@@ -660,7 +669,7 @@ mod tests {
             .as_ref()
             .expect("created phrase");
         assert_eq!(phrase.expose_for_onboarding(), PUBLIC_ZERO_ENTROPY_PHRASE);
-        assert_eq!(format!("{phrase:?}"), "WalletRecoveryPhrase([REDACTED])");
+        assert_eq!(format!("{phrase:?}"), "WalletMnemonic([REDACTED])");
         let view = CompleteWalletOnboardingUseCase::execute(
             &service,
             CompleteWalletOnboardingCommand {
@@ -677,7 +686,7 @@ mod tests {
         let roots = recovery.roots.lock().expect("roots");
         assert_eq!(roots.len(), 1);
         assert_eq!(roots[0].0, WalletRootSeedKind::Bip39);
-        assert_eq!(roots[0].1, [0; BIP39_WALLET_SEED_BYTES]);
+        assert_eq!(roots[0].1, [0x42; BIP39_WALLET_SEED_BYTES]);
     }
 
     #[test]

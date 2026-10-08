@@ -13,6 +13,7 @@ members = [
   "crates/adapters/siopv2",
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
+  "crates/adapters/diagnostics-encrypted",
   "crates/adapters/diagnostics-memory",
   "crates/adapters/deployment-profile",
   "crates/adapters/identity-ingress",
@@ -60,6 +61,7 @@ default-members = [
   "crates/adapters/siopv2",
   "crates/adapters/vc-midnight",
   "crates/adapters/did-midnight",
+  "crates/adapters/diagnostics-encrypted",
   "crates/adapters/diagnostics-memory",
   "crates/adapters/deployment-profile",
   "crates/adapters/identity-ingress",
@@ -96,7 +98,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
@@ -108,6 +110,8 @@ anyhow = { version = "=1.0.104" }
 argon2 = { version = "=0.5.3", default-features = false, features = ["alloc", "zeroize"] }
 base64 = { version = "=0.22.1" }
 bech32 = { version = "=0.11.1" }
+blake2 = { version = "=0.10.6" }
+bytes = { version = "=1.12.1" }
 chacha20poly1305 = { version = "=0.11.0", features = ["zeroize"] }
 ciborium = { version = "=0.2.2" }
 bip32 = { version = "=0.5.3", default-features = false, features = ["secp256k1", "std"] }
@@ -120,25 +124,29 @@ futures = { version = "=0.3.34", default-features = false, features = ["executor
 futures-timer = { version = "=3.0.4" }
 getrandom = { version = "=0.3.4", features = ["wasm_js"] }
 hex = { version = "=0.4.3" }
+hkdf = { version = "=0.12.4" }
+hmac = { version = "=0.12.1" }
 jni = { version = "=0.21.1" }
 jni-022 = { package = "jni", version = "=0.22.4" }
 manganis = { version = "=0.7.10" }
 k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
-midnight-base-crypto = { version = "=1.0.0", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-base-crypto" }
-midnight-coin-structure = { version = "=2.0.1", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-coin-structure" }
-midnight-ledger = { version = "=8.2.0-rc.1", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", default-features = false }
-midnight-onchain-runtime = { version = "=3.1.0", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-onchain-runtime" }
-midnight-serialize = { version = "=1.1.0", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-serialize" }
-midnight-storage = { version = "=2.0.2", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-storage" }
-midnight-transient-crypto = { version = "=2.1.0", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-transient-crypto" }
-midnight-zkir = { version = "=2.1.0", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-zkir", default-features = false }
-midnight-zswap = { version = "=8.2.0-rc.1", git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", package = "midnight-zswap", default-features = false }
+midnight-base-crypto = { version = "=1.0.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-base-crypto" }
+midnight-coin-structure = { version = "=2.0.2", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-coin-structure" }
+midnight-ledger = { version = "=8.2.0-rc.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", default-features = false }
+midnight-onchain-state = { version = "=3.0.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-onchain-state", features = ["public-internal-structure"] }
+midnight-onchain-runtime = { version = "=3.1.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-onchain-runtime" }
+midnight-serialize = { version = "=1.1.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-serialize" }
+midnight-storage = { version = "=2.0.3", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-storage" }
+midnight-transient-crypto = { version = "=2.1.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-transient-crypto" }
+midnight-zkir = { version = "=2.1.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-zkir", default-features = false }
+midnight-zswap = { version = "=8.2.0-rc.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", package = "midnight-zswap", default-features = false }
 ndk-context = { version = "=0.1.1" }
 p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa"] }
 proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
 qrcode = { version = "=0.14.1", default-features = false, features = ["svg"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_arrays = { version = "=0.2.0" }
+serde_bytes = { version = "=0.11.19" }
 serde_json = { version = "=1.0.151" }
 sha2 = { version = "=0.10.9", default-features = false }
 subtle = { version = "=2.6.1" }
@@ -148,6 +156,7 @@ rustls-platform-verifier-05 = { package = "rustls-platform-verifier", version = 
 rustls-platform-verifier-07 = { package = "rustls-platform-verifier", version = "=0.7.0" }
 rand = { version = "=0.8.8" }
 reqwest = { version = "=0.13.5", default-features = false, features = ["json", "rustls"] }
+rcgen = { version = "=0.14.10", default-features = false, features = ["ring"] }
 subxt = { version = "=0.44.3" }
 tokio = { version = "=1.53.1", default-features = false, features = ["net", "rt", "time"] }
 tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
@@ -155,48 +164,57 @@ url = { version = "=2.5.8" }
 webpki-root-certs = "=1.0.9"
 zeroize = { version = "=1.9.0" }
 
-oxid-adapter-midnight = { version = "=0.1.0", path = "crates/adapters/midnight" }
-oxid-adapter-openid4vci = { version = "=0.1.0", path = "crates/adapters/openid4vci" }
-oxid-adapter-openid4vp = { version = "=0.1.0", path = "crates/adapters/openid4vp" }
-oxid-adapter-passport-vault = { version = "=0.1.0", path = "crates/adapters/passport-vault" }
-oxid-adapter-siopv2 = { version = "=0.1.0", path = "crates/adapters/siopv2" }
-oxid-adapter-vc-midnight = { version = "=0.1.0", path = "crates/adapters/vc-midnight" }
-oxid-adapter-did-midnight = { version = "=0.1.0", path = "crates/adapters/did-midnight" }
-oxid-adapter-diagnostics-memory = { version = "=0.1.0", path = "crates/adapters/diagnostics-memory" }
-oxid-adapter-deployment-profile = { version = "=0.1.0", path = "crates/adapters/deployment-profile" }
-oxid-adapter-identity-ingress = { version = "=0.1.0", path = "crates/adapters/identity-ingress" }
-oxid-adapter-custody-software = { version = "=0.1.0", path = "crates/adapters/custody-software" }
-oxid-adapter-backup-portable = { version = "=0.1.0", path = "crates/adapters/backup-portable" }
-oxid-adapter-backup-complete = { version = "=0.1.0", path = "crates/adapters/backup-complete" }
-oxid-adapter-backup-document-mobile = { version = "=0.1.0", path = "crates/adapters/backup-document-mobile" }
-oxid-adapter-mobile-native = { version = "=0.1.0", path = "crates/adapters/mobile-native-plugin" }
-oxid-adapter-store-atomic = { version = "=0.1.0", path = "crates/adapters/store-atomic" }
-oxid-adapter-storage-credential-json = { version = "=0.1.0", path = "crates/adapters/storage-credential-json" }
-oxid-adapter-storage-identity-json = { version = "=0.1.0", path = "crates/adapters/storage-identity-json" }
-oxid-adapter-platform-system = { version = "=0.1.0", path = "crates/adapters/platform-system" }
-oxid-adapter-storage-json = { version = "=0.1.0", path = "crates/adapters/storage-json" }
-oxid-adapter-storage-memory = { version = "=0.1.0", path = "crates/adapters/storage-memory" }
-oxid-adapter-storage-mobile = { version = "=0.1.0", path = "crates/adapters/storage-mobile" }
-oxid-adapter-storage-dev = { version = "=0.1.0", path = "crates/adapters/storage-dev" }
-oxid-composition = { version = "=0.1.0", path = "crates/composition" }
-oxid-capabilities-application = { version = "=0.1.0", path = "crates/capabilities/application" }
-oxid-brand-build = { version = "=0.1.0", path = "crates/brand-build" }
-oxid-credential-application = { version = "=0.1.0", path = "crates/credential/application" }
-oxid-credential-domain = { version = "=0.1.0", path = "crates/credential/domain" }
-oxid-diagnostics-application = { version = "=0.1.0", path = "crates/diagnostics/application" }
-oxid-foundation = { version = "=0.1.0", path = "crates/foundation" }
-oxid-identity-application = { version = "=0.1.0", path = "crates/identity/application" }
-oxid-identity-domain = { version = "=0.1.0", path = "crates/identity/domain" }
-oxid-platform-ports = { version = "=0.1.0", path = "crates/platform/ports" }
-oxid-presentation-application = { version = "=0.1.0", path = "crates/presentation/application" }
-oxid-presentation-domain = { version = "=0.1.0", path = "crates/presentation/domain" }
-oxid-passport-vault-application = { version = "=0.1.0", path = "crates/passport-vault/application" }
-oxid-passport-vault-domain = { version = "=0.1.0", path = "crates/passport-vault/domain" }
-oxid-protocol-application = { version = "=0.1.0", path = "crates/protocol/application" }
-oxid-protocol-domain = { version = "=0.1.0", path = "crates/protocol/domain" }
-oxid-ui-dioxus = { version = "=0.1.0", path = "crates/ui-dioxus" }
-oxid-wallet-application = { version = "=0.1.0", path = "crates/wallet/application" }
-oxid-wallet-domain = { version = "=0.1.0", path = "crates/wallet/domain" }
+oxid-adapter-midnight = { version = "=0.2.0", path = "crates/adapters/midnight" }
+oxid-adapter-openid4vci = { version = "=0.2.0", path = "crates/adapters/openid4vci" }
+oxid-adapter-openid4vp = { version = "=0.2.0", path = "crates/adapters/openid4vp" }
+oxid-adapter-passport-vault = { version = "=0.2.0", path = "crates/adapters/passport-vault" }
+oxid-adapter-siopv2 = { version = "=0.2.0", path = "crates/adapters/siopv2" }
+oxid-adapter-vc-midnight = { version = "=0.2.0", path = "crates/adapters/vc-midnight" }
+oxid-adapter-did-midnight = { version = "=0.2.0", path = "crates/adapters/did-midnight" }
+oxid-adapter-diagnostics-encrypted = { version = "=0.2.0", path = "crates/adapters/diagnostics-encrypted" }
+oxid-adapter-diagnostics-memory = { version = "=0.2.0", path = "crates/adapters/diagnostics-memory" }
+oxid-adapter-deployment-profile = { version = "=0.2.0", path = "crates/adapters/deployment-profile" }
+oxid-adapter-identity-ingress = { version = "=0.2.0", path = "crates/adapters/identity-ingress" }
+oxid-adapter-custody-software = { version = "=0.2.0", path = "crates/adapters/custody-software" }
+oxid-adapter-backup-portable = { version = "=0.2.0", path = "crates/adapters/backup-portable" }
+oxid-adapter-backup-complete = { version = "=0.2.0", path = "crates/adapters/backup-complete" }
+oxid-adapter-backup-document-mobile = { version = "=0.2.0", path = "crates/adapters/backup-document-mobile" }
+oxid-adapter-mobile-native = { version = "=0.2.0", path = "crates/adapters/mobile-native-plugin" }
+oxid-adapter-store-atomic = { version = "=0.2.0", path = "crates/adapters/store-atomic" }
+oxid-adapter-storage-credential-json = { version = "=0.2.0", path = "crates/adapters/storage-credential-json" }
+oxid-adapter-storage-identity-json = { version = "=0.2.0", path = "crates/adapters/storage-identity-json" }
+oxid-adapter-platform-system = { version = "=0.2.0", path = "crates/adapters/platform-system" }
+oxid-adapter-storage-json = { version = "=0.2.0", path = "crates/adapters/storage-json" }
+oxid-adapter-storage-memory = { version = "=0.2.0", path = "crates/adapters/storage-memory" }
+oxid-adapter-storage-mobile = { version = "=0.2.0", path = "crates/adapters/storage-mobile" }
+oxid-adapter-storage-dev = { version = "=0.2.0", path = "crates/adapters/storage-dev" }
+oxid-composition = { version = "=0.2.0", path = "crates/composition" }
+oxid-capabilities-application = { version = "=0.2.0", path = "crates/capabilities/application" }
+oxid-brand-build = { version = "=0.2.0", path = "crates/brand-build" }
+oxid-credential-application = { version = "=0.2.0", path = "crates/credential/application" }
+oxid-credential-domain = { version = "=0.2.0", path = "crates/credential/domain" }
+oxid-diagnostics-application = { version = "=0.2.0", path = "crates/diagnostics/application" }
+oxid-foundation = { version = "=0.2.0", path = "crates/foundation" }
+oxid-identity-application = { version = "=0.2.0", path = "crates/identity/application" }
+oxid-identity-domain = { version = "=0.2.0", path = "crates/identity/domain" }
+oxid-platform-ports = { version = "=0.2.0", path = "crates/platform/ports" }
+oxid-presentation-application = { version = "=0.2.0", path = "crates/presentation/application" }
+oxid-presentation-domain = { version = "=0.2.0", path = "crates/presentation/domain" }
+oxid-passport-vault-application = { version = "=0.2.0", path = "crates/passport-vault/application" }
+oxid-passport-vault-domain = { version = "=0.2.0", path = "crates/passport-vault/domain" }
+oxid-protocol-application = { version = "=0.2.0", path = "crates/protocol/application" }
+oxid-protocol-domain = { version = "=0.2.0", path = "crates/protocol/domain" }
+oxid-ui-dioxus = { version = "=0.2.0", path = "crates/ui-dioxus" }
+oxid-wallet-application = { version = "=0.2.0", path = "crates/wallet/application" }
+oxid-wallet-domain = { version = "=0.2.0", path = "crates/wallet/domain" }
+
+[patch.crates-io]
+# This is the exact patch declared by the selected Ledger8 workspace at
+# b85f5d8e503fd1d7a1b128bbc1d7156baf823a65. Cargo does not propagate a Git
+# dependency's root patch table to consumers, so repeat that immutable source
+# here to preserve the upstream graph and its required native `disk-spill`
+# feature without a local path or mutable source override.
+midnight-proofs = { git = "https://github.com/MediaNoxLabs/midnight-zk", rev = "083c82824dc5979fd7d509229e6f6b362d5b1ebf" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
@@ -209,9 +227,29 @@ codegen-units = 1
 lto = "thin"
 strip = "symbols"
 
+# Dioxus selects this profile automatically for non-release Android builds.
+# Keep incremental compilation and development assertions from `dev`, while
+# bounding the native library enough for Android's Bionic loader. Full debug
+# objects made libmain.so approach 1 GiB and produced an unusable hash table on
+# the reviewed 16 KiB emulator image.
+[profile.android-dev]
+inherits = "dev"
+debug = 1
+opt-level = 1
+strip = "debuginfo"
+
 # Live PreProd acceptance exercises the production cryptographic replay path.
 # Keep it optimized while retaining symbols for bounded failure diagnosis.
 [profile.preprod-live]
 inherits = "release"
 debug = 1
+strip = "none"
+
+# The live desktop demo spends most of its time in Midnight cryptography. Keep
+# that replay optimized while retaining bounded symbols and avoiding release LTO.
+[profile.desktop-live]
+inherits = "release"
+opt-level = 3
+debug = 1
+lto = false
 strip = "none"

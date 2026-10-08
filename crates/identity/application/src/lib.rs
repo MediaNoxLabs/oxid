@@ -5,13 +5,25 @@
 use std::{error::Error, fmt, future::Future, pin::Pin, sync::Arc};
 
 use oxid_foundation::OpaqueIdError;
-use oxid_identity_domain::{
-    DidDocument, DidRecord, DidResolution, IdentityProfileId, MidnightDid, MidnightDidError,
+pub use oxid_identity_domain::{
+    DidDocument, DidPublicationState, DidRecord, DidResolution, DidResolutionSource,
+    IdentityProfileId, JwkCurve, MidnightDid, MidnightDidError, MidnightNetwork,
+    VerificationRelationship,
 };
 
+mod approval;
+mod credential_issuance;
+mod credential_presentation;
+mod deployment;
 mod lifecycle;
+mod self_issued_authentication;
 
+pub use approval::*;
+pub use credential_issuance::*;
+pub use credential_presentation::*;
+pub use deployment::*;
 pub use lifecycle::*;
+pub use self_issued_authentication::*;
 
 pub type DidResolutionPortFuture<'a> =
     Pin<Box<dyn Future<Output = Result<DidResolution, DidResolutionPortError>> + Send + 'a>>;
@@ -20,6 +32,19 @@ pub type DidResolutionPortFuture<'a> =
 /// deliberately narrow standalone fixture, but never receive a profile scope.
 pub trait DidResolutionPort: Send + Sync {
     fn resolve<'a>(&'a self, did: &'a MidnightDid) -> DidResolutionPortFuture<'a>;
+
+    fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+        DidRefreshAvailability::Unavailable
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DidRefreshAvailability {
+    Available,
+    NotApplicable,
+    LocalUnpublished,
+    Unavailable,
+    Unknown,
 }
 
 pub type DidPublicationPortFuture<'a> =
@@ -184,6 +209,11 @@ pub enum DidOperationError {
     PayloadTooLarge,
     ConfirmationRequired,
     InvalidConfirmation,
+    Approval(DidApprovalError),
+    CredentialIssuance(CredentialIssuanceFlowError),
+    CredentialPresentation(CredentialPresentationFlowError),
+    SelfIssuedAuthentication(SelfIssuedAuthenticationFlowError),
+    RetainedRecordChanged,
     SubjectMismatch,
 }
 
@@ -203,6 +233,11 @@ impl fmt::Display for DidOperationError {
             }
             Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
             Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
+            Self::Approval(error) => write!(formatter, "{error}"),
+            Self::CredentialIssuance(error) => write!(formatter, "{error}"),
+            Self::CredentialPresentation(error) => write!(formatter, "{error}"),
+            Self::SelfIssuedAuthentication(error) => write!(formatter, "{error}"),
+            Self::RetainedRecordChanged => formatter.write_str("retained DID record changed"),
             Self::SubjectMismatch => {
                 formatter.write_str("resolved DID document subject does not match the request")
             }
@@ -326,6 +361,7 @@ pub struct DidDocumentMetadataView {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DidRecordView {
     pub document: DidDocumentView,
+    pub refresh_availability: DidRefreshAvailability,
     pub document_metadata: DidDocumentMetadataView,
     pub content_type: Option<String>,
     pub source: String,
@@ -337,6 +373,7 @@ impl From<&DidResolution> for DidRecordView {
         let metadata = resolution.document_metadata();
         Self {
             document: DidDocumentView::from(resolution.document()),
+            refresh_availability: DidRefreshAvailability::Unavailable,
             document_metadata: DidDocumentMetadataView {
                 created: metadata.created.clone(),
                 updated: metadata.updated.clone(),
@@ -354,10 +391,29 @@ impl From<&DidResolution> for DidRecordView {
     }
 }
 
+struct CredentialPresentationAuthority {
+    flow: Arc<CredentialPresentationFlowService>,
+    hash: Arc<dyn oxid_platform_ports::Sha256Port>,
+    challenge_signing: Arc<dyn DidJubjubChallengeSigningPort>,
+}
+
 pub struct DidService {
     repository: Arc<dyn DidRecordRepository>,
     resolver: Arc<dyn DidResolutionPort>,
     lifecycle: Arc<dyn DidLifecyclePort>,
+    approvals: Option<(
+        Arc<DidApprovalService>,
+        Arc<dyn oxid_platform_ports::Sha256Port>,
+    )>,
+    credential_issuance: Option<(
+        Arc<CredentialIssuanceFlowService>,
+        Arc<dyn oxid_platform_ports::Sha256Port>,
+    )>,
+    self_issued_authentication: Option<(
+        Arc<SelfIssuedAuthenticationFlowService>,
+        Arc<dyn oxid_platform_ports::Sha256Port>,
+    )>,
+    credential_presentation: Option<CredentialPresentationAuthority>,
 }
 
 pub struct DidPublicationService {
@@ -378,16 +434,27 @@ impl DidPublicationService {
     }
 }
 
-fn record_view(
-    service: &DidService,
-    profile_id: &IdentityProfileId,
-    resolution: &DidResolution,
-) -> DidRecordView {
+fn record_view(service: &DidService, record: &DidRecord) -> DidRecordView {
+    let resolution = record.resolution();
     let mut view = DidRecordView::from(resolution);
     view.managed_method_ids = service
         .lifecycle
-        .managed_method_ids(profile_id, resolution)
+        .managed_method_ids(record.profile_id(), resolution)
         .unwrap_or_default();
+    view.refresh_availability = match record.publication_state() {
+        DidPublicationState::Unpublished => DidRefreshAvailability::LocalUnpublished,
+        DidPublicationState::Unknown => DidRefreshAvailability::Unknown,
+        DidPublicationState::Published => match service
+            .resolver
+            .refresh_availability(resolution.document().id())
+        {
+            DidRefreshAvailability::Available => DidRefreshAvailability::Available,
+            DidRefreshAvailability::NotApplicable
+            | DidRefreshAvailability::LocalUnpublished
+            | DidRefreshAvailability::Unavailable
+            | DidRefreshAvailability::Unknown => DidRefreshAvailability::Unavailable,
+        },
+    };
     view
 }
 
@@ -402,6 +469,10 @@ impl DidService {
             repository,
             resolver,
             lifecycle: Arc::new(UnavailableDidLifecycle),
+            approvals: None,
+            credential_issuance: None,
+            self_issued_authentication: None,
+            credential_presentation: None,
         }
     }
 
@@ -415,7 +486,60 @@ impl DidService {
             repository,
             resolver,
             lifecycle,
+            approvals: None,
+            credential_issuance: None,
+            self_issued_authentication: None,
+            credential_presentation: None,
         }
+    }
+
+    /// Composition-only injection. Ordinary services cannot approve protected operations.
+    #[must_use]
+    pub fn with_approvals(
+        mut self,
+        approvals: Arc<DidApprovalService>,
+        hash: Arc<dyn oxid_platform_ports::Sha256Port>,
+    ) -> Self {
+        self.approvals = Some((approvals, hash));
+        self
+    }
+
+    /// Composition-only injection for accepted protocol-stage issuance signing.
+    #[must_use]
+    pub fn with_credential_issuance_authority(
+        mut self,
+        authority: Arc<CredentialIssuanceFlowService>,
+        hash: Arc<dyn oxid_platform_ports::Sha256Port>,
+    ) -> Self {
+        self.credential_issuance = Some((authority, hash));
+        self
+    }
+
+    /// Composition-only injection for accepted SIOPv2 ID-token signing.
+    #[must_use]
+    pub fn with_self_issued_authentication_authority(
+        mut self,
+        authority: Arc<SelfIssuedAuthenticationFlowService>,
+        hash: Arc<dyn oxid_platform_ports::Sha256Port>,
+    ) -> Self {
+        self.self_issued_authentication = Some((authority, hash));
+        self
+    }
+
+    /// Composition-only injection for accepted presentation signing bundles.
+    #[must_use]
+    pub fn with_credential_presentation_authority(
+        mut self,
+        authority: Arc<CredentialPresentationFlowService>,
+        hash: Arc<dyn oxid_platform_ports::Sha256Port>,
+        challenge_signing: Arc<dyn DidJubjubChallengeSigningPort>,
+    ) -> Self {
+        self.credential_presentation = Some(CredentialPresentationAuthority {
+            flow: authority,
+            hash,
+            challenge_signing,
+        });
+        self
     }
 }
 
@@ -440,10 +564,12 @@ impl ResolveDidUseCase for DidService {
             if resolution.document().id() != &did {
                 return Err(DidOperationError::SubjectMismatch);
             }
+            let record = DidRecord::new(profile_id, resolution)
+                .with_publication_state(DidPublicationState::Published);
             self.repository
-                .upsert(DidRecord::new(profile_id.clone(), resolution.clone()))
+                .upsert(record.clone())
                 .map_err(DidOperationError::Persistence)?;
-            Ok(record_view(self, &profile_id, &resolution))
+            Ok(record_view(self, &record))
         })
     }
 }
@@ -463,7 +589,7 @@ impl ListDidRecordsUseCase for DidService {
         });
         Ok(records
             .iter()
-            .map(|record| record_view(self, &profile_id, record.resolution()))
+            .map(|record| record_view(self, record))
             .collect())
     }
 }
@@ -476,7 +602,7 @@ impl GetDidRecordUseCase for DidService {
             .repository
             .get(&profile_id, &did)
             .map_err(DidOperationError::Persistence)?;
-        Ok(record_view(self, &profile_id, record.resolution()))
+        Ok(record_view(self, &record))
     }
 }
 
@@ -513,7 +639,10 @@ impl PublishDidUseCase for DidPublicationService {
             self.publisher
                 .publish(record.resolution().clone())
                 .await
-                .map_err(DidOperationError::Publication)
+                .map_err(DidOperationError::Publication)?;
+            self.repository
+                .upsert(record.with_publication_state(DidPublicationState::Published))
+                .map_err(DidOperationError::Persistence)
         })
     }
 }
@@ -525,6 +654,10 @@ pub struct UnavailableDidResolver;
 impl DidResolutionPort for UnavailableDidResolver {
     fn resolve<'a>(&'a self, _: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
         Box::pin(async { Err(DidResolutionPortError::Unavailable) })
+    }
+
+    fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+        DidRefreshAvailability::Unavailable
     }
 }
 
@@ -566,9 +699,15 @@ mod tests {
 
     const DID: &str =
         "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const OTHER_DID: &str =
+        "did:midnight:undeployed:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 
     fn resolution() -> DidResolution {
-        let did = MidnightDid::parse(DID).expect("DID");
+        resolution_for(DID, None)
+    }
+
+    fn resolution_for(did: &str, updated: Option<&str>) -> DidResolution {
+        let did = MidnightDid::parse(did).expect("DID");
         DidResolution::new(
             DidDocument::new(DidDocumentParts {
                 contexts: vec![DID_CONTEXT.to_owned(), JWK_CONTEXT.to_owned()],
@@ -580,7 +719,10 @@ mod tests {
                 services: Vec::new(),
             })
             .expect("document"),
-            DidDocumentMetadata::default(),
+            DidDocumentMetadata {
+                updated: updated.map(str::to_owned),
+                ..DidDocumentMetadata::default()
+            },
             DidResolutionMetadata::default(),
             DidResolutionSource::Standalone,
         )
@@ -638,10 +780,100 @@ mod tests {
             }
         }
     }
+
+    struct RejectingUpsertRepository(Mutex<Vec<DidRecord>>);
+    impl DidRecordRepository for RejectingUpsertRepository {
+        fn upsert(&self, _: DidRecord) -> Result<(), DidRecordRepositoryError> {
+            Err(DidRecordRepositoryError::Integrity)
+        }
+
+        fn list(
+            &self,
+            profile: &IdentityProfileId,
+        ) -> Result<Vec<DidRecord>, DidRecordRepositoryError> {
+            Ok(self
+                .0
+                .lock()
+                .expect("lock")
+                .iter()
+                .filter(|record| record.profile_id() == profile)
+                .cloned()
+                .collect())
+        }
+
+        fn get(
+            &self,
+            profile: &IdentityProfileId,
+            did: &MidnightDid,
+        ) -> Result<DidRecord, DidRecordRepositoryError> {
+            self.list(profile)?
+                .into_iter()
+                .find(|record| record.resolution().document().id() == did)
+                .ok_or(DidRecordRepositoryError::NotFound)
+        }
+
+        fn remove(
+            &self,
+            _: &IdentityProfileId,
+            _: &MidnightDid,
+        ) -> Result<(), DidRecordRepositoryError> {
+            Err(DidRecordRepositoryError::Unavailable)
+        }
+    }
+
     struct FixedResolver;
     impl DidResolutionPort for FixedResolver {
         fn resolve<'a>(&'a self, _: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
             Box::pin(async { Ok(resolution()) })
+        }
+
+        fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+            DidRefreshAvailability::Available
+        }
+    }
+
+    struct UpdatedResolver;
+    impl DidResolutionPort for UpdatedResolver {
+        fn resolve<'a>(&'a self, _: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
+            Box::pin(async { Ok(resolution_for(DID, Some("2026-09-25T00:00:00Z"))) })
+        }
+
+        fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+            DidRefreshAvailability::Available
+        }
+    }
+
+    struct ErrorResolver(DidResolutionPortError);
+    impl DidResolutionPort for ErrorResolver {
+        fn resolve<'a>(&'a self, _: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
+            let error = self.0;
+            Box::pin(async move { Err(error) })
+        }
+
+        fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+            DidRefreshAvailability::Available
+        }
+    }
+
+    struct NotApplicableResolver;
+    impl DidResolutionPort for NotApplicableResolver {
+        fn resolve<'a>(&'a self, _: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
+            Box::pin(async { Err(DidResolutionPortError::NotFound) })
+        }
+
+        fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+            DidRefreshAvailability::NotApplicable
+        }
+    }
+
+    struct MismatchedResolver;
+    impl DidResolutionPort for MismatchedResolver {
+        fn resolve<'a>(&'a self, _: &'a MidnightDid) -> DidResolutionPortFuture<'a> {
+            Box::pin(async { Ok(resolution_for(OTHER_DID, Some("2026-09-25T00:00:00Z"))) })
+        }
+
+        fn refresh_availability(&self, _: &MidnightDid) -> DidRefreshAvailability {
+            DidRefreshAvailability::Available
         }
     }
 
@@ -662,6 +894,14 @@ mod tests {
 
     struct FixedLifecycle;
     impl DidLifecyclePort for FixedLifecycle {
+        fn managed_method_ids(
+            &self,
+            _: &IdentityProfileId,
+            _: &DidResolution,
+        ) -> Result<Vec<String>, DidLifecyclePortError> {
+            Ok(vec![format!("{DID}#auth-1")])
+        }
+
         fn create(
             &self,
             _: &IdentityProfileId,
@@ -714,14 +954,6 @@ mod tests {
         }
     }
 
-    fn confirmation(confirmed: bool) -> DidOperationConfirmation {
-        DidOperationConfirmation {
-            title: "Authorize DID operation".to_owned(),
-            summary: "Exercise the application lifecycle boundary".to_owned(),
-            confirmed,
-        }
-    }
-
     #[test]
     fn resolves_persists_lists_gets_and_forgets_by_profile() {
         let service = DidService::new(
@@ -771,6 +1003,208 @@ mod tests {
     }
 
     #[test]
+    fn successful_refresh_replaces_the_saved_document_after_subject_validation() {
+        let repository = Arc::new(MemoryRepository::default());
+        let profile = IdentityProfileId::parse("profile_test").expect("profile");
+        let did = MidnightDid::parse(DID).expect("DID");
+        repository
+            .upsert(DidRecord::new(profile.clone(), resolution()))
+            .expect("seed record");
+        let service = DidService::new(repository.clone(), Arc::new(UpdatedResolver));
+
+        let refreshed = futures_for_test::block_on(ResolveDidUseCase::execute(
+            &service,
+            ResolveDidCommand {
+                profile_id: profile.as_str().to_owned(),
+                did: did.as_str().to_owned(),
+            },
+        ))
+        .expect("refresh");
+
+        assert_eq!(
+            refreshed.document_metadata.updated.as_deref(),
+            Some("2026-09-25T00:00:00Z")
+        );
+        assert_eq!(
+            repository
+                .get(&profile, &did)
+                .expect("saved record")
+                .resolution()
+                .document_metadata()
+                .updated
+                .as_deref(),
+            Some("2026-09-25T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn failed_remote_refreshes_retain_the_last_saved_document() {
+        for error in [
+            DidResolutionPortError::NotFound,
+            DidResolutionPortError::Unavailable,
+            DidResolutionPortError::InvalidResponse,
+        ] {
+            let repository = Arc::new(MemoryRepository::default());
+            let profile = IdentityProfileId::parse("profile_test").expect("profile");
+            let did = MidnightDid::parse(DID).expect("DID");
+            repository
+                .upsert(DidRecord::new(profile.clone(), resolution()))
+                .expect("seed record");
+            let service = DidService::new(repository.clone(), Arc::new(ErrorResolver(error)));
+
+            assert_eq!(
+                futures_for_test::block_on(ResolveDidUseCase::execute(
+                    &service,
+                    ResolveDidCommand {
+                        profile_id: profile.as_str().to_owned(),
+                        did: did.as_str().to_owned(),
+                    },
+                )),
+                Err(DidOperationError::Resolution(error))
+            );
+            assert_eq!(
+                repository
+                    .get(&profile, &did)
+                    .expect("last saved record")
+                    .resolution()
+                    .document_metadata()
+                    .updated,
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn subject_mismatch_and_persistence_failure_retain_the_last_saved_document() {
+        let profile = IdentityProfileId::parse("profile_test").expect("profile");
+        let did = MidnightDid::parse(DID).expect("DID");
+        let mismatch_repository = Arc::new(MemoryRepository::default());
+        mismatch_repository
+            .upsert(DidRecord::new(profile.clone(), resolution()))
+            .expect("seed record");
+        let mismatch_service =
+            DidService::new(mismatch_repository.clone(), Arc::new(MismatchedResolver));
+        assert_eq!(
+            futures_for_test::block_on(ResolveDidUseCase::execute(
+                &mismatch_service,
+                ResolveDidCommand {
+                    profile_id: profile.as_str().to_owned(),
+                    did: did.as_str().to_owned(),
+                },
+            )),
+            Err(DidOperationError::SubjectMismatch)
+        );
+        assert_eq!(
+            mismatch_repository
+                .get(&profile, &did)
+                .expect("last saved record")
+                .resolution()
+                .document_metadata()
+                .updated,
+            None
+        );
+
+        let rejecting_repository =
+            Arc::new(RejectingUpsertRepository(Mutex::new(vec![DidRecord::new(
+                profile.clone(),
+                resolution(),
+            )])));
+        let persistence_service =
+            DidService::new(rejecting_repository.clone(), Arc::new(UpdatedResolver));
+        assert_eq!(
+            futures_for_test::block_on(ResolveDidUseCase::execute(
+                &persistence_service,
+                ResolveDidCommand {
+                    profile_id: profile.as_str().to_owned(),
+                    did: did.as_str().to_owned(),
+                },
+            )),
+            Err(DidOperationError::Persistence(
+                DidRecordRepositoryError::Integrity
+            ))
+        );
+        assert_eq!(
+            rejecting_repository
+                .get(&profile, &did)
+                .expect("last saved record")
+                .resolution()
+                .document_metadata()
+                .updated,
+            None
+        );
+    }
+
+    #[test]
+    fn record_view_distinguishes_publication_state_from_custody_and_resolver_reachability() {
+        let repository = Arc::new(MemoryRepository::default());
+        let profile = IdentityProfileId::parse("profile_test").expect("profile");
+        repository
+            .upsert(
+                DidRecord::new(profile.clone(), resolution())
+                    .with_publication_state(DidPublicationState::Unpublished),
+            )
+            .expect("seed unpublished record");
+        let managed_service = DidService::from_ports(
+            repository.clone(),
+            Arc::new(NotApplicableResolver),
+            Arc::new(FixedLifecycle),
+        );
+        assert_eq!(
+            GetDidRecordUseCase::execute(
+                &managed_service,
+                DidRecordQuery {
+                    profile_id: profile.as_str().to_owned(),
+                    did: DID.to_owned(),
+                },
+            )
+            .expect("managed record")
+            .refresh_availability,
+            DidRefreshAvailability::LocalUnpublished
+        );
+
+        repository
+            .upsert(
+                DidRecord::new(profile.clone(), resolution())
+                    .with_publication_state(DidPublicationState::Published),
+            )
+            .expect("seed published record");
+        let unavailable_managed_service = DidService::from_ports(
+            repository.clone(),
+            Arc::new(UnavailableDidResolver),
+            Arc::new(FixedLifecycle),
+        );
+        assert_eq!(
+            GetDidRecordUseCase::execute(
+                &unavailable_managed_service,
+                DidRecordQuery {
+                    profile_id: profile.as_str().to_owned(),
+                    did: DID.to_owned(),
+                },
+            )
+            .expect("managed record without resolver")
+            .refresh_availability,
+            DidRefreshAvailability::Unavailable
+        );
+
+        repository
+            .upsert(DidRecord::new(profile.clone(), resolution()))
+            .expect("seed legacy unknown record");
+        let observed_service = DidService::new(repository, Arc::new(UnavailableDidResolver));
+        assert_eq!(
+            GetDidRecordUseCase::execute(
+                &observed_service,
+                DidRecordQuery {
+                    profile_id: profile.as_str().to_owned(),
+                    did: DID.to_owned(),
+                },
+            )
+            .expect("unknown record")
+            .refresh_availability,
+            DidRefreshAvailability::Unknown
+        );
+    }
+
+    #[test]
     fn publication_requires_exact_explicit_intent_and_shares_the_stored_public_resolution() {
         let repository = Arc::new(MemoryRepository::default());
         repository
@@ -780,7 +1214,7 @@ mod tests {
             ))
             .expect("record");
         let publisher = Arc::new(RecordingPublisher::default());
-        let service = DidPublicationService::new(repository, publisher.clone());
+        let service = DidPublicationService::new(repository.clone(), publisher.clone());
 
         let denied = futures_for_test::block_on(PublishDidUseCase::execute(
             &service,
@@ -805,10 +1239,20 @@ mod tests {
         ))
         .expect("publication");
         assert_eq!(publisher.0.lock().expect("lock").as_slice(), [DID]);
+        assert_eq!(
+            repository
+                .get(
+                    &IdentityProfileId::parse("profile_test").expect("profile"),
+                    &MidnightDid::parse(DID).expect("DID"),
+                )
+                .expect("published record")
+                .publication_state(),
+            DidPublicationState::Published
+        );
     }
 
     #[test]
-    fn creates_updates_signs_and_deactivates_with_confirmation() {
+    fn creates_updates_signs_and_deactivates_with_approval() {
         let service = DidService::from_ports(
             Arc::new(MemoryRepository::default()),
             Arc::new(FixedResolver),
@@ -823,6 +1267,10 @@ mod tests {
         )
         .expect("create");
         assert_eq!(created.document.id, DID);
+        assert_eq!(
+            created.refresh_availability,
+            DidRefreshAvailability::LocalUnpublished
+        );
 
         let denied = UpdateDidUseCase::execute(
             &service,
@@ -832,10 +1280,16 @@ mod tests {
                 operation: DidUpdate::AddAlsoKnownAs {
                     value: "https://example.test/denied".to_owned(),
                 },
-                confirmation: confirmation(false),
             },
         );
-        assert_eq!(denied, Err(DidOperationError::ConfirmationRequired));
+        assert_eq!(
+            denied,
+            Err(DidOperationError::Approval(DidApprovalError::Unavailable))
+        );
+        let service = service.with_approvals(
+            Arc::new(crate::approval::tests::service().0),
+            Arc::new(crate::lifecycle::tests::TestHash::default()),
+        );
 
         UpdateDidUseCase::execute(
             &service,
@@ -845,7 +1299,6 @@ mod tests {
                 operation: DidUpdate::AddAlsoKnownAs {
                     value: "https://example.test/accepted".to_owned(),
                 },
-                confirmation: confirmation(true),
             },
         )
         .expect("update");
@@ -857,8 +1310,7 @@ mod tests {
                     profile_id: "profile_test".to_owned(),
                     did: DID.to_owned(),
                     method_id: "#auth-1".to_owned(),
-                    payload: b"challenge".to_vec(),
-                    confirmation: confirmation(true),
+                    payload: b"challenge",
                 }
             )
             .expect("sign")
@@ -873,8 +1325,7 @@ mod tests {
                     profile_id: "profile_test".to_owned(),
                     did: DID.to_owned(),
                     method_id: "#auth-1".to_owned(),
-                    payload: Vec::new(),
-                    confirmation: confirmation(true),
+                    payload: &[],
                 }
             ),
             Err(DidOperationError::EmptyPayload)
@@ -885,7 +1336,6 @@ mod tests {
             DeactivateDidCommand {
                 profile_id: "profile_test".to_owned(),
                 did: DID.to_owned(),
-                confirmation: confirmation(true),
             },
         )
         .expect("deactivate");

@@ -25,6 +25,8 @@ futures.workspace = true
 hex.workspace = true
 oxid-credential-domain.workspace = true
 oxid-foundation.workspace = true
+oxid-identity-application.workspace = true
+oxid-identity-domain.workspace = true
 
 [lints]
 workspace = true

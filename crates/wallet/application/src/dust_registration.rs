@@ -12,7 +12,10 @@ use oxid_wallet_domain::{
     WalletTransactionFeeState, WalletTransactionSubmissionState, WalletTransferSubmissionMode,
 };
 
-use crate::{SensitiveOperationConfirmation, SensitiveWalletOperationError, validate_confirmation};
+use crate::{
+    SensitiveOperationConfirmation, SensitiveWalletOperationError, WalletApprovalError,
+    WalletApprovalOperation, WalletApprovalRequest, WalletApprovalService, validate_confirmation,
+};
 
 /// Lifetime of a prepared DUST registration before its retained material expires.
 pub const WALLET_DUST_REGISTRATION_DRAFT_TTL_MILLIS: u64 = 60 * 60 * 1_000;
@@ -120,6 +123,16 @@ pub type WalletDustRegistrationPortFuture<'a> = Pin<
     >,
 >;
 
+/// Cancellable asynchronous result returned by registration preparation,
+/// authorization, and retained-preview reads.
+pub type WalletDustRegistrationPreviewPortFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError>>
+            + Send
+            + 'a,
+    >,
+>;
+
 /// Asynchronous result returned by registration reconciliation.
 pub type WalletDustRegistrationStatusPortFuture<'a> = Pin<
     Box<
@@ -135,17 +148,17 @@ pub type WalletDustRegistrationStatusPortFuture<'a> = Pin<
 
 /// Focused outgoing port retaining every chain-specific registration artifact.
 pub trait WalletDustRegistrationPort: Send + Sync {
-    fn prepare(
-        &self,
-        profile_id: &WalletProfileId,
+    fn prepare<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
         request: PrepareWalletDustRegistrationRequest,
-    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError>;
+    ) -> WalletDustRegistrationPreviewPortFuture<'a>;
 
-    fn authorize(
-        &self,
-        profile_id: &WalletProfileId,
+    fn authorize<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
         request: AuthorizeWalletDustRegistrationRequest,
-    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError>;
+    ) -> WalletDustRegistrationPreviewPortFuture<'a>;
 
     fn submit<'a>(
         &'a self,
@@ -153,27 +166,27 @@ pub trait WalletDustRegistrationPort: Send + Sync {
         request: SubmitWalletDustRegistrationRequest,
     ) -> WalletDustRegistrationPortFuture<'a>;
 
-    fn get(
-        &self,
-        profile_id: &WalletProfileId,
-        draft_id: &WalletTransactionDraftId,
+    fn get<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
+        draft_id: &'a WalletTransactionDraftId,
         now: UnixTimestampMillis,
-    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError>;
+    ) -> WalletDustRegistrationPreviewPortFuture<'a>;
 
     /// Reads the adapter's durable public registration state without asserting
     /// DUST spendability.
-    fn status(
-        &self,
-        profile_id: &WalletProfileId,
-        draft_id: &WalletTransactionDraftId,
-    ) -> Result<WalletDustRegistrationSubmissionStatus, WalletDustRegistrationPortError>;
+    fn status<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
+        draft_id: &'a WalletTransactionDraftId,
+    ) -> WalletDustRegistrationStatusPortFuture<'a>;
 
     /// Signals safe pre-broadcast cancellation and returns the bounded state.
-    fn cancel_submission(
-        &self,
-        profile_id: &WalletProfileId,
-        draft_id: &WalletTransactionDraftId,
-    ) -> Result<WalletDustRegistrationSubmissionStatus, WalletDustRegistrationPortError>;
+    fn cancel_submission<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
+        draft_id: &'a WalletTransactionDraftId,
+    ) -> WalletDustRegistrationStatusPortFuture<'a>;
 
     /// Reconciles one durable post-broadcast registration against finality.
     fn reconcile_submission<'a>(
@@ -189,20 +202,20 @@ pub trait WalletDustRegistrationPort: Send + Sync {
 pub struct UnavailableWalletDustRegistrationPort;
 
 impl WalletDustRegistrationPort for UnavailableWalletDustRegistrationPort {
-    fn prepare(
-        &self,
-        _: &WalletProfileId,
+    fn prepare<'a>(
+        &'a self,
+        _: &'a WalletProfileId,
         _: PrepareWalletDustRegistrationRequest,
-    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError> {
-        Err(WalletDustRegistrationPortError::Unavailable)
+    ) -> WalletDustRegistrationPreviewPortFuture<'a> {
+        Box::pin(async { Err(WalletDustRegistrationPortError::Unavailable) })
     }
 
-    fn authorize(
-        &self,
-        _: &WalletProfileId,
+    fn authorize<'a>(
+        &'a self,
+        _: &'a WalletProfileId,
         _: AuthorizeWalletDustRegistrationRequest,
-    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError> {
-        Err(WalletDustRegistrationPortError::Unavailable)
+    ) -> WalletDustRegistrationPreviewPortFuture<'a> {
+        Box::pin(async { Err(WalletDustRegistrationPortError::Unavailable) })
     }
 
     fn submit<'a>(
@@ -213,29 +226,29 @@ impl WalletDustRegistrationPort for UnavailableWalletDustRegistrationPort {
         Box::pin(async { Err(WalletDustRegistrationPortError::Unavailable) })
     }
 
-    fn get(
-        &self,
-        _: &WalletProfileId,
-        _: &WalletTransactionDraftId,
+    fn get<'a>(
+        &'a self,
+        _: &'a WalletProfileId,
+        _: &'a WalletTransactionDraftId,
         _: UnixTimestampMillis,
-    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError> {
-        Err(WalletDustRegistrationPortError::Unavailable)
+    ) -> WalletDustRegistrationPreviewPortFuture<'a> {
+        Box::pin(async { Err(WalletDustRegistrationPortError::Unavailable) })
     }
 
-    fn status(
-        &self,
-        _: &WalletProfileId,
-        _: &WalletTransactionDraftId,
-    ) -> Result<WalletDustRegistrationSubmissionStatus, WalletDustRegistrationPortError> {
-        Err(WalletDustRegistrationPortError::Unavailable)
+    fn status<'a>(
+        &'a self,
+        _: &'a WalletProfileId,
+        _: &'a WalletTransactionDraftId,
+    ) -> WalletDustRegistrationStatusPortFuture<'a> {
+        Box::pin(async { Err(WalletDustRegistrationPortError::Unavailable) })
     }
 
-    fn cancel_submission(
-        &self,
-        _: &WalletProfileId,
-        _: &WalletTransactionDraftId,
-    ) -> Result<WalletDustRegistrationSubmissionStatus, WalletDustRegistrationPortError> {
-        Err(WalletDustRegistrationPortError::Unavailable)
+    fn cancel_submission<'a>(
+        &'a self,
+        _: &'a WalletProfileId,
+        _: &'a WalletTransactionDraftId,
+    ) -> WalletDustRegistrationStatusPortFuture<'a> {
+        Box::pin(async { Err(WalletDustRegistrationPortError::Unavailable) })
     }
 
     fn reconcile_submission<'a>(
@@ -262,12 +275,29 @@ pub struct AuthorizeWalletDustRegistrationCommand {
     pub confirmation: SensitiveOperationConfirmation,
 }
 
+/// Composition-only request to authorize the exact retained registration for
+/// the local development realm without an incoming consent surface.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorizeDevelopmentWalletDustRegistrationCommand {
+    pub profile_id: String,
+    pub draft_id: String,
+    pub authorization_challenge: String,
+}
+
 /// Incoming request to prove and submit an authorized registration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubmitWalletDustRegistrationCommand {
     pub profile_id: String,
     pub draft_id: String,
     pub confirmation: SensitiveOperationConfirmation,
+}
+
+/// Composition-only request to submit an already authorized local-development
+/// registration. This does not carry or mint general wallet approval.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubmitDevelopmentWalletDustRegistrationCommand {
+    pub profile_id: String,
+    pub draft_id: String,
 }
 
 /// Incoming query for one safe retained registration preview.
@@ -417,18 +447,26 @@ impl From<&WalletDustRegistrationSubmissionStatus> for WalletDustRegistrationSub
 
 /// Incoming use case for preparing one retained DUST registration.
 pub trait PrepareWalletDustRegistrationUseCase: Send + Sync {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         command: PrepareWalletDustRegistrationCommand,
-    ) -> Result<WalletDustRegistrationPreviewView, WalletDustRegistrationError>;
+    ) -> WalletDustRegistrationPreviewViewFuture<'a>;
 }
 
 /// Incoming use case for authorizing the exact registration preview.
 pub trait AuthorizeWalletDustRegistrationUseCase: Send + Sync {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         command: AuthorizeWalletDustRegistrationCommand,
-    ) -> Result<WalletDustRegistrationPreviewView, WalletDustRegistrationError>;
+    ) -> WalletDustRegistrationPreviewViewFuture<'a>;
+}
+
+/// Closed automatic authority for the exact local-development DUST operation.
+pub trait AuthorizeDevelopmentWalletDustRegistrationUseCase: Send + Sync {
+    fn execute<'a>(
+        &'a self,
+        command: AuthorizeDevelopmentWalletDustRegistrationCommand,
+    ) -> WalletDustRegistrationPreviewViewFuture<'a>;
 }
 
 /// Incoming use case for proving and submitting an authorized registration.
@@ -439,28 +477,36 @@ pub trait SubmitWalletDustRegistrationUseCase: Send + Sync {
     ) -> WalletDustRegistrationSubmissionViewFuture<'a>;
 }
 
+/// Closed automatic submission authority paired with development authorization.
+pub trait SubmitDevelopmentWalletDustRegistrationUseCase: Send + Sync {
+    fn execute<'a>(
+        &'a self,
+        command: SubmitDevelopmentWalletDustRegistrationCommand,
+    ) -> WalletDustRegistrationSubmissionViewFuture<'a>;
+}
+
 /// Incoming use case for reading a retained registration preview.
 pub trait GetWalletDustRegistrationUseCase: Send + Sync {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         command: GetWalletDustRegistrationCommand,
-    ) -> Result<WalletDustRegistrationPreviewView, WalletDustRegistrationError>;
+    ) -> WalletDustRegistrationPreviewViewFuture<'a>;
 }
 
 /// Incoming use case for reading registration-specific submission status.
 pub trait GetWalletDustRegistrationStatusUseCase: Send + Sync {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         command: GetWalletDustRegistrationStatusCommand,
-    ) -> Result<WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationError>;
+    ) -> WalletDustRegistrationStatusViewFuture<'a>;
 }
 
 /// Incoming use case for requesting cooperative pre-broadcast cancellation.
 pub trait CancelWalletDustRegistrationSubmissionUseCase: Send + Sync {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         command: CancelWalletDustRegistrationSubmissionCommand,
-    ) -> Result<WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationError>;
+    ) -> WalletDustRegistrationStatusViewFuture<'a>;
 }
 
 /// Incoming use case for reconciling a durable registration submission.
@@ -477,6 +523,15 @@ pub type WalletDustRegistrationSubmissionViewFuture<'a> = Pin<
         dyn Future<
                 Output = Result<WalletDustRegistrationSubmissionView, WalletDustRegistrationError>,
             > + Send
+            + 'a,
+    >,
+>;
+
+/// Asynchronous public registration preview returned to incoming adapters.
+pub type WalletDustRegistrationPreviewViewFuture<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<WalletDustRegistrationPreviewView, WalletDustRegistrationError>>
+            + Send
             + 'a,
     >,
 >;
@@ -502,6 +557,8 @@ pub enum WalletDustRegistrationError {
     InvalidAuthorizationChallenge(OpaqueIdError),
     ConfirmationRequired,
     InvalidConfirmation,
+    DevelopmentAuthorityUnavailable,
+    Approval(WalletApprovalError),
     Clock(PlatformError),
     Operation(WalletDustRegistrationPortError),
 }
@@ -514,6 +571,10 @@ impl fmt::Display for WalletDustRegistrationError {
             | Self::InvalidAuthorizationChallenge(error) => error.fmt(formatter),
             Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
             Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
+            Self::DevelopmentAuthorityUnavailable => {
+                formatter.write_str("automatic DUST authority is unavailable for this realm")
+            }
+            Self::Approval(error) => error.fmt(formatter),
             Self::Clock(error) => error.fmt(formatter),
             Self::Operation(error) => error.fmt(formatter),
         }
@@ -526,14 +587,30 @@ impl Error for WalletDustRegistrationError {}
 pub struct WalletDustRegistrationService<T, C> {
     registrations: Arc<T>,
     clock: Arc<C>,
+    approvals: Arc<WalletApprovalService>,
 }
 
 impl<T, C> WalletDustRegistrationService<T, C> {
     #[must_use]
-    pub const fn new(registrations: Arc<T>, clock: Arc<C>) -> Self {
+    pub fn new(registrations: Arc<T>, clock: Arc<C>) -> Self
+    where
+        C: ClockPort + 'static,
+    {
+        let approvals = Arc::new(WalletApprovalService::new(clock.clone()));
+        Self::with_approvals(registrations, clock, approvals)
+    }
+
+    /// The composition shares this service with profile/protection invalidation.
+    #[must_use]
+    pub const fn with_approvals(
+        registrations: Arc<T>,
+        clock: Arc<C>,
+        approvals: Arc<WalletApprovalService>,
+    ) -> Self {
         Self {
             registrations,
             clock,
+            approvals,
         }
     }
 
@@ -545,33 +622,96 @@ impl<T, C> WalletDustRegistrationService<T, C> {
     }
 }
 
+impl<T: WalletDustRegistrationPort, C: ClockPort> WalletDustRegistrationService<T, C> {
+    async fn approval_preview(
+        &self,
+        profile: &WalletProfileId,
+        draft: &WalletTransactionDraftId,
+        challenge: Option<&WalletTransactionAuthorizationChallenge>,
+        state: WalletTransactionDraftState,
+    ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationError> {
+        let preview = self
+            .registrations
+            .get(profile, draft, self.now()?)
+            .await
+            .map_err(WalletDustRegistrationError::Operation)?;
+        if preview.draft_id() != draft
+            || challenge.is_some_and(|value| value != preview.authorization_challenge())
+        {
+            return Err(WalletDustRegistrationError::Approval(
+                WalletApprovalError::IntentMismatch,
+            ));
+        }
+        if preview.expires_at() <= self.now()? {
+            return Err(WalletDustRegistrationError::Approval(
+                WalletApprovalError::Expired,
+            ));
+        }
+        if preview.state() != state {
+            return Err(WalletDustRegistrationError::Operation(
+                WalletDustRegistrationPortError::DraftConflict,
+            ));
+        }
+        Ok(preview)
+    }
+
+    async fn approve_transition<O: WalletApprovalOperation>(
+        &self,
+        profile: &WalletProfileId,
+        draft: &WalletTransactionDraftId,
+        challenge: Option<&WalletTransactionAuthorizationChallenge>,
+        state: WalletTransactionDraftState,
+        request: fn(WalletProfileId, WalletDustRegistrationPreview) -> WalletApprovalRequest<O>,
+    ) -> Result<UnixTimestampMillis, WalletDustRegistrationError> {
+        let preview = self
+            .approval_preview(profile, draft, challenge, state)
+            .await?;
+        let capability = self
+            .approvals
+            .request(&request(profile.clone(), preview))
+            .map_err(WalletDustRegistrationError::Approval)?;
+        let current = self
+            .approval_preview(profile, draft, challenge, state)
+            .await?;
+        let expected = request(profile.clone(), current);
+        let now = self.now()?;
+        self.approvals
+            .consume(&capability, &expected)
+            .map_err(WalletDustRegistrationError::Approval)?;
+        Ok(now)
+    }
+}
+
 impl<T, C> PrepareWalletDustRegistrationUseCase for WalletDustRegistrationService<T, C>
 where
     T: WalletDustRegistrationPort + 'static,
     C: ClockPort + 'static,
 {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         command: PrepareWalletDustRegistrationCommand,
-    ) -> Result<WalletDustRegistrationPreviewView, WalletDustRegistrationError> {
-        let profile_id = WalletProfileId::parse(command.profile_id)
-            .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
-        let expires_at = self
-            .now()?
-            .value()
-            .checked_add(WALLET_DUST_REGISTRATION_DRAFT_TTL_MILLIS)
-            .map(UnixTimestampMillis::new)
-            .ok_or(WalletDustRegistrationError::Clock(
-                PlatformError::ClockUnavailable,
-            ))?;
-        let preview = self
-            .registrations
-            .prepare(
-                &profile_id,
-                PrepareWalletDustRegistrationRequest { expires_at },
-            )
-            .map_err(WalletDustRegistrationError::Operation)?;
-        Ok(WalletDustRegistrationPreviewView::from(&preview))
+    ) -> WalletDustRegistrationPreviewViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = WalletProfileId::parse(command.profile_id)
+                .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
+            let expires_at = self
+                .now()?
+                .value()
+                .checked_add(WALLET_DUST_REGISTRATION_DRAFT_TTL_MILLIS)
+                .map(UnixTimestampMillis::new)
+                .ok_or(WalletDustRegistrationError::Clock(
+                    PlatformError::ClockUnavailable,
+                ))?;
+            let preview = self
+                .registrations
+                .prepare(
+                    &profile_id,
+                    PrepareWalletDustRegistrationRequest { expires_at },
+                )
+                .await
+                .map_err(WalletDustRegistrationError::Operation)?;
+            Ok(WalletDustRegistrationPreviewView::from(&preview))
+        })
     }
 }
 
@@ -580,30 +720,89 @@ where
     T: WalletDustRegistrationPort + 'static,
     C: ClockPort + 'static,
 {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         command: AuthorizeWalletDustRegistrationCommand,
-    ) -> Result<WalletDustRegistrationPreviewView, WalletDustRegistrationError> {
-        validate_confirmation(&command.confirmation).map_err(map_confirmation_error)?;
-        let profile_id = WalletProfileId::parse(command.profile_id)
-            .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
-        let draft_id = WalletTransactionDraftId::parse(command.draft_id)
-            .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
-        let authorization_challenge =
-            WalletTransactionAuthorizationChallenge::parse(command.authorization_challenge)
-                .map_err(WalletDustRegistrationError::InvalidAuthorizationChallenge)?;
-        let preview = self
-            .registrations
-            .authorize(
-                &profile_id,
-                AuthorizeWalletDustRegistrationRequest {
-                    draft_id,
-                    authorization_challenge,
-                    now: self.now()?,
-                },
-            )
-            .map_err(WalletDustRegistrationError::Operation)?;
-        Ok(WalletDustRegistrationPreviewView::from(&preview))
+    ) -> WalletDustRegistrationPreviewViewFuture<'a> {
+        Box::pin(async move {
+            validate_confirmation(&command.confirmation).map_err(map_confirmation_error)?;
+            let profile_id = WalletProfileId::parse(command.profile_id)
+                .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
+            let draft_id = WalletTransactionDraftId::parse(command.draft_id)
+                .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
+            let authorization_challenge =
+                WalletTransactionAuthorizationChallenge::parse(command.authorization_challenge)
+                    .map_err(WalletDustRegistrationError::InvalidAuthorizationChallenge)?;
+            let now = self
+                .approve_transition(
+                    &profile_id,
+                    &draft_id,
+                    Some(&authorization_challenge),
+                    WalletTransactionDraftState::Prepared,
+                    WalletApprovalRequest::authorize_dust_registration,
+                )
+                .await?;
+            // The capability is spent before polling the protected future;
+            // adapter admission still fences changes before the actual effect.
+            let preview = self
+                .registrations
+                .authorize(
+                    &profile_id,
+                    AuthorizeWalletDustRegistrationRequest {
+                        draft_id,
+                        authorization_challenge,
+                        now,
+                    },
+                )
+                .await
+                .map_err(WalletDustRegistrationError::Operation)?;
+            Ok(WalletDustRegistrationPreviewView::from(&preview))
+        })
+    }
+}
+
+impl<T, C> AuthorizeDevelopmentWalletDustRegistrationUseCase for WalletDustRegistrationService<T, C>
+where
+    T: WalletDustRegistrationPort + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute<'a>(
+        &'a self,
+        command: AuthorizeDevelopmentWalletDustRegistrationCommand,
+    ) -> WalletDustRegistrationPreviewViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = WalletProfileId::parse(command.profile_id)
+                .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
+            let draft_id = WalletTransactionDraftId::parse(command.draft_id)
+                .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
+            let authorization_challenge =
+                WalletTransactionAuthorizationChallenge::parse(command.authorization_challenge)
+                    .map_err(WalletDustRegistrationError::InvalidAuthorizationChallenge)?;
+            let preview = self
+                .approval_preview(
+                    &profile_id,
+                    &draft_id,
+                    Some(&authorization_challenge),
+                    WalletTransactionDraftState::Prepared,
+                )
+                .await?;
+            if preview.network_id().as_str() != "undeployed" {
+                return Err(WalletDustRegistrationError::DevelopmentAuthorityUnavailable);
+            }
+            let preview = self
+                .registrations
+                .authorize(
+                    &profile_id,
+                    AuthorizeWalletDustRegistrationRequest {
+                        draft_id,
+                        authorization_challenge,
+                        now: self.now()?,
+                    },
+                )
+                .await
+                .map_err(WalletDustRegistrationError::Operation)?;
+            Ok(WalletDustRegistrationPreviewView::from(&preview))
+        })
     }
 }
 
@@ -622,6 +821,54 @@ where
                 .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
             let draft_id = WalletTransactionDraftId::parse(command.draft_id)
                 .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
+            let now = self
+                .approve_transition(
+                    &profile_id,
+                    &draft_id,
+                    None,
+                    WalletTransactionDraftState::Authorized,
+                    WalletApprovalRequest::submit_dust_registration,
+                )
+                .await?;
+            // Failure or cancellation after consumption never restores approval.
+            let submitted = self
+                .registrations
+                .submit(
+                    &profile_id,
+                    SubmitWalletDustRegistrationRequest { draft_id, now },
+                )
+                .await
+                .map_err(WalletDustRegistrationError::Operation)?;
+            Ok(WalletDustRegistrationSubmissionView::from(&submitted))
+        })
+    }
+}
+
+impl<T, C> SubmitDevelopmentWalletDustRegistrationUseCase for WalletDustRegistrationService<T, C>
+where
+    T: WalletDustRegistrationPort + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute<'a>(
+        &'a self,
+        command: SubmitDevelopmentWalletDustRegistrationCommand,
+    ) -> WalletDustRegistrationSubmissionViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = WalletProfileId::parse(command.profile_id)
+                .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
+            let draft_id = WalletTransactionDraftId::parse(command.draft_id)
+                .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
+            let preview = self
+                .approval_preview(
+                    &profile_id,
+                    &draft_id,
+                    None,
+                    WalletTransactionDraftState::Authorized,
+                )
+                .await?;
+            if preview.network_id().as_str() != "undeployed" {
+                return Err(WalletDustRegistrationError::DevelopmentAuthorityUnavailable);
+            }
             let submitted = self
                 .registrations
                 .submit(
@@ -643,19 +890,22 @@ where
     T: WalletDustRegistrationPort + 'static,
     C: ClockPort + 'static,
 {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         command: GetWalletDustRegistrationCommand,
-    ) -> Result<WalletDustRegistrationPreviewView, WalletDustRegistrationError> {
-        let profile_id = WalletProfileId::parse(command.profile_id)
-            .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
-        let draft_id = WalletTransactionDraftId::parse(command.draft_id)
-            .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
-        let preview = self
-            .registrations
-            .get(&profile_id, &draft_id, self.now()?)
-            .map_err(WalletDustRegistrationError::Operation)?;
-        Ok(WalletDustRegistrationPreviewView::from(&preview))
+    ) -> WalletDustRegistrationPreviewViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = WalletProfileId::parse(command.profile_id)
+                .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
+            let draft_id = WalletTransactionDraftId::parse(command.draft_id)
+                .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
+            let preview = self
+                .registrations
+                .get(&profile_id, &draft_id, self.now()?)
+                .await
+                .map_err(WalletDustRegistrationError::Operation)?;
+            Ok(WalletDustRegistrationPreviewView::from(&preview))
+        })
     }
 }
 
@@ -664,19 +914,22 @@ where
     T: WalletDustRegistrationPort + 'static,
     C: ClockPort + 'static,
 {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         command: GetWalletDustRegistrationStatusCommand,
-    ) -> Result<WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationError> {
-        let profile_id = WalletProfileId::parse(command.profile_id)
-            .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
-        let draft_id = WalletTransactionDraftId::parse(command.draft_id)
-            .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
-        let status = self
-            .registrations
-            .status(&profile_id, &draft_id)
-            .map_err(WalletDustRegistrationError::Operation)?;
-        Ok(WalletDustRegistrationSubmissionStatusView::from(&status))
+    ) -> WalletDustRegistrationStatusViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = WalletProfileId::parse(command.profile_id)
+                .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
+            let draft_id = WalletTransactionDraftId::parse(command.draft_id)
+                .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
+            let status = self
+                .registrations
+                .status(&profile_id, &draft_id)
+                .await
+                .map_err(WalletDustRegistrationError::Operation)?;
+            Ok(WalletDustRegistrationSubmissionStatusView::from(&status))
+        })
     }
 }
 
@@ -685,19 +938,22 @@ where
     T: WalletDustRegistrationPort + 'static,
     C: ClockPort + 'static,
 {
-    fn execute(
-        &self,
+    fn execute<'a>(
+        &'a self,
         command: CancelWalletDustRegistrationSubmissionCommand,
-    ) -> Result<WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationError> {
-        let profile_id = WalletProfileId::parse(command.profile_id)
-            .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
-        let draft_id = WalletTransactionDraftId::parse(command.draft_id)
-            .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
-        let status = self
-            .registrations
-            .cancel_submission(&profile_id, &draft_id)
-            .map_err(WalletDustRegistrationError::Operation)?;
-        Ok(WalletDustRegistrationSubmissionStatusView::from(&status))
+    ) -> WalletDustRegistrationStatusViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = WalletProfileId::parse(command.profile_id)
+                .map_err(WalletDustRegistrationError::InvalidProfileIdentifier)?;
+            let draft_id = WalletTransactionDraftId::parse(command.draft_id)
+                .map_err(WalletDustRegistrationError::InvalidDraftIdentifier)?;
+            let status = self
+                .registrations
+                .cancel_submission(&profile_id, &draft_id)
+                .await
+                .map_err(WalletDustRegistrationError::Operation)?;
+            Ok(WalletDustRegistrationSubmissionStatusView::from(&status))
+        })
     }
 }
 
@@ -803,6 +1059,7 @@ const fn map_confirmation_error(
         | SensitiveWalletOperationError::InvalidKeyReference(_)
         | SensitiveWalletOperationError::EmptyPayload
         | SensitiveWalletOperationError::PayloadTooLarge
+        | SensitiveWalletOperationError::Approval(_)
         | SensitiveWalletOperationError::Operation(_) => {
             WalletDustRegistrationError::InvalidConfirmation
         }
@@ -899,26 +1156,26 @@ mod tests {
     }
 
     impl WalletDustRegistrationPort for RecordingRegistrations {
-        fn prepare(
-            &self,
-            _: &WalletProfileId,
+        fn prepare<'a>(
+            &'a self,
+            _: &'a WalletProfileId,
             request: PrepareWalletDustRegistrationRequest,
-        ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError> {
+        ) -> WalletDustRegistrationPreviewPortFuture<'a> {
             assert_eq!(request.expires_at.value(), 1_700_003_600_000);
             *self.prepare_calls.lock().expect("counter is available") += 1;
-            Ok(Self::preview(WalletTransactionDraftState::Prepared))
+            Box::pin(async { Ok(Self::preview(WalletTransactionDraftState::Prepared)) })
         }
 
-        fn authorize(
-            &self,
-            _: &WalletProfileId,
+        fn authorize<'a>(
+            &'a self,
+            _: &'a WalletProfileId,
             request: AuthorizeWalletDustRegistrationRequest,
-        ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError> {
+        ) -> WalletDustRegistrationPreviewPortFuture<'a> {
             assert_eq!(request.draft_id.as_str(), "dustreg_test");
             assert_eq!(request.authorization_challenge.as_str(), "dustauth_test");
             assert_eq!(request.now.value(), 1_700_000_000_000);
             *self.authorize_calls.lock().expect("counter is available") += 1;
-            Ok(Self::preview(WalletTransactionDraftState::Authorized))
+            Box::pin(async { Ok(Self::preview(WalletTransactionDraftState::Authorized)) })
         }
 
         fn submit<'a>(
@@ -938,36 +1195,43 @@ mod tests {
             })
         }
 
-        fn get(
-            &self,
-            _: &WalletProfileId,
-            _: &WalletTransactionDraftId,
+        fn get<'a>(
+            &'a self,
+            _: &'a WalletProfileId,
+            _: &'a WalletTransactionDraftId,
             _: UnixTimestampMillis,
-        ) -> Result<WalletDustRegistrationPreview, WalletDustRegistrationPortError> {
-            Ok(Self::preview(WalletTransactionDraftState::Prepared))
+        ) -> WalletDustRegistrationPreviewPortFuture<'a> {
+            let state = if *self.authorize_calls.lock().unwrap() > 0 {
+                WalletTransactionDraftState::Authorized
+            } else {
+                WalletTransactionDraftState::Prepared
+            };
+            Box::pin(async move { Ok(Self::preview(state)) })
         }
 
-        fn status(
-            &self,
-            _: &WalletProfileId,
-            _: &WalletTransactionDraftId,
-        ) -> Result<WalletDustRegistrationSubmissionStatus, WalletDustRegistrationPortError>
-        {
-            WalletDustRegistrationSubmissionStatus::included(Self::submission())
+        fn status<'a>(
+            &'a self,
+            _: &'a WalletProfileId,
+            _: &'a WalletTransactionDraftId,
+        ) -> WalletDustRegistrationStatusPortFuture<'a> {
+            Box::pin(async {
+                WalletDustRegistrationSubmissionStatus::included(Self::submission())
+                    .map_err(|_| WalletDustRegistrationPortError::InvalidData)
+            })
+        }
+
+        fn cancel_submission<'a>(
+            &'a self,
+            _: &'a WalletProfileId,
+            draft_id: &'a WalletTransactionDraftId,
+        ) -> WalletDustRegistrationStatusPortFuture<'a> {
+            Box::pin(async move {
+                WalletDustRegistrationSubmissionStatus::pending(
+                    draft_id.clone(),
+                    WalletTransactionSubmissionState::CancellationRequested,
+                )
                 .map_err(|_| WalletDustRegistrationPortError::InvalidData)
-        }
-
-        fn cancel_submission(
-            &self,
-            _: &WalletProfileId,
-            draft_id: &WalletTransactionDraftId,
-        ) -> Result<WalletDustRegistrationSubmissionStatus, WalletDustRegistrationPortError>
-        {
-            WalletDustRegistrationSubmissionStatus::pending(
-                draft_id.clone(),
-                WalletTransactionSubmissionState::CancellationRequested,
-            )
-            .map_err(|_| WalletDustRegistrationPortError::InvalidData)
+            })
         }
 
         fn reconcile_submission<'a>(
@@ -983,9 +1247,10 @@ mod tests {
     }
 
     fn service() -> WalletDustRegistrationService<RecordingRegistrations, FixedClock> {
-        WalletDustRegistrationService::new(
+        WalletDustRegistrationService::with_approvals(
             Arc::new(RecordingRegistrations::default()),
             Arc::new(FixedClock),
+            crate::approval::tests::trusted_service(Arc::new(FixedClock)),
         )
     }
 
@@ -998,13 +1263,80 @@ mod tests {
     }
 
     #[test]
+    fn caller_confirmation_and_challenge_do_not_approve_registration() {
+        let registrations = Arc::new(RecordingRegistrations::default());
+        let service =
+            WalletDustRegistrationService::new(registrations.clone(), Arc::new(FixedClock));
+        assert_eq!(
+            ready(AuthorizeWalletDustRegistrationUseCase::execute(
+                &service,
+                AuthorizeWalletDustRegistrationCommand {
+                    profile_id: "profile_test".into(),
+                    draft_id: "dustreg_test".into(),
+                    authorization_challenge: "dustauth_test".into(),
+                    confirmation: confirmation(true),
+                }
+            )),
+            Err(WalletDustRegistrationError::Approval(
+                WalletApprovalError::Unavailable
+            ))
+        );
+        assert_eq!(*registrations.authorize_calls.lock().unwrap(), 0);
+        *registrations.authorize_calls.lock().unwrap() = 1;
+        assert_eq!(
+            ready(SubmitWalletDustRegistrationUseCase::execute(
+                &service,
+                SubmitWalletDustRegistrationCommand {
+                    profile_id: "profile_test".into(),
+                    draft_id: "dustreg_test".into(),
+                    confirmation: confirmation(true),
+                }
+            )),
+            Err(WalletDustRegistrationError::Approval(
+                WalletApprovalError::Unavailable
+            ))
+        );
+        assert_eq!(*registrations.submit_calls.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn dedicated_development_authority_crosses_only_the_dust_registration_boundary() {
+        let registrations = Arc::new(RecordingRegistrations::default());
+        let service =
+            WalletDustRegistrationService::new(registrations.clone(), Arc::new(FixedClock));
+
+        let authorized = ready(AuthorizeDevelopmentWalletDustRegistrationUseCase::execute(
+            &service,
+            AuthorizeDevelopmentWalletDustRegistrationCommand {
+                profile_id: "profile_test".into(),
+                draft_id: "dustreg_test".into(),
+                authorization_challenge: "dustauth_test".into(),
+            },
+        ))
+        .expect("the exact undeployed registration is authorized");
+        assert!(authorized.submission_ready);
+
+        let submitted = ready(SubmitDevelopmentWalletDustRegistrationUseCase::execute(
+            &service,
+            SubmitDevelopmentWalletDustRegistrationCommand {
+                profile_id: "profile_test".into(),
+                draft_id: "dustreg_test".into(),
+            },
+        ))
+        .expect("the same authorized registration is submitted");
+        assert_eq!(submitted.transaction_id, "tx_registration");
+        assert_eq!(*registrations.authorize_calls.lock().unwrap(), 1);
+        assert_eq!(*registrations.submit_calls.lock().unwrap(), 1);
+    }
+
+    #[test]
     fn prepare_exposes_only_the_exact_aggregate_registration_plan() {
-        let result = PrepareWalletDustRegistrationUseCase::execute(
+        let result = ready(PrepareWalletDustRegistrationUseCase::execute(
             &service(),
             PrepareWalletDustRegistrationCommand {
                 profile_id: "profile_test".to_owned(),
             },
-        )
+        ))
         .expect("prepare succeeds");
 
         assert_eq!(result.registered_night.atomic_units, "5000000");
@@ -1028,7 +1360,9 @@ mod tests {
         };
 
         assert_eq!(
-            AuthorizeWalletDustRegistrationUseCase::execute(&service, command),
+            ready(AuthorizeWalletDustRegistrationUseCase::execute(
+                &service, command
+            )),
             Err(WalletDustRegistrationError::ConfirmationRequired)
         );
         assert_eq!(
@@ -1042,9 +1376,9 @@ mod tests {
 
     #[test]
     fn submission_requires_separate_confirmation_and_never_claims_spendability() {
-        let registrations = Arc::new(RecordingRegistrations::default());
-        let service =
-            WalletDustRegistrationService::new(Arc::clone(&registrations), Arc::new(FixedClock));
+        let service = service();
+        let registrations = service.registrations.clone();
+        *registrations.authorize_calls.lock().unwrap() = 1;
         let rejected = ready(SubmitWalletDustRegistrationUseCase::execute(
             &service,
             SubmitWalletDustRegistrationCommand {
@@ -1081,13 +1415,13 @@ mod tests {
 
     #[test]
     fn status_keeps_registration_observation_separate_from_dust_readiness() {
-        let status = GetWalletDustRegistrationStatusUseCase::execute(
+        let status = ready(GetWalletDustRegistrationStatusUseCase::execute(
             &service(),
             GetWalletDustRegistrationStatusCommand {
                 profile_id: "profile_test".to_owned(),
                 draft_id: "dustreg_test".to_owned(),
             },
-        )
+        ))
         .expect("status succeeds");
 
         assert_eq!(status.state, "included");
@@ -1099,13 +1433,13 @@ mod tests {
 
     #[test]
     fn cancellation_and_reconciliation_use_registration_specific_status() {
-        let cancelled = CancelWalletDustRegistrationSubmissionUseCase::execute(
+        let cancelled = ready(CancelWalletDustRegistrationSubmissionUseCase::execute(
             &service(),
             CancelWalletDustRegistrationSubmissionCommand {
                 profile_id: "profile_test".to_owned(),
                 draft_id: "dustreg_test".to_owned(),
             },
-        )
+        ))
         .expect("cancellation signal succeeds");
         assert_eq!(cancelled.state, "cancellation_requested");
         assert_eq!(cancelled.registration_observation, "not_observed");
@@ -1127,15 +1461,17 @@ mod tests {
     #[test]
     fn public_views_do_not_carry_adapter_private_registration_material() {
         let sentinel = "private-dust-key-signature-proof-transaction-bytes";
-        let preview = PrepareWalletDustRegistrationUseCase::execute(
+        let preview = ready(PrepareWalletDustRegistrationUseCase::execute(
             &service(),
             PrepareWalletDustRegistrationCommand {
                 profile_id: "profile_test".to_owned(),
             },
-        )
+        ))
         .expect("prepare succeeds");
+        let service = service();
+        *service.registrations.authorize_calls.lock().unwrap() = 1;
         let submitted = ready(SubmitWalletDustRegistrationUseCase::execute(
-            &service(),
+            &service,
             SubmitWalletDustRegistrationCommand {
                 profile_id: "profile_test".to_owned(),
                 draft_id: "dustreg_test".to_owned(),

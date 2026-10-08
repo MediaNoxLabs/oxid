@@ -11,7 +11,10 @@ use oxid_wallet_domain::{
     WalletTransferPreview, WalletTransferSubmission, WalletTransferSubmissionMode,
 };
 
-use crate::{SensitiveOperationConfirmation, SensitiveWalletOperationError, validate_confirmation};
+use crate::{
+    SensitiveOperationConfirmation, SensitiveWalletOperationError, WalletApprovalError,
+    WalletApprovalOperation, WalletApprovalRequest, WalletApprovalService, validate_confirmation,
+};
 
 /// Lifetime of a prepared transfer before its retained signing material expires.
 pub const WALLET_TRANSFER_DRAFT_TTL_MILLIS: u64 = 60 * 60 * 1_000;
@@ -235,12 +238,32 @@ pub struct AuthorizeWalletTransferCommand {
     pub authorization_challenge: String,
 }
 
+/// Composition-only request to authorize one exact local-development transfer.
+///
+/// This command does not carry or mint a general wallet approval capability.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthorizeDevelopmentWalletTransferCommand {
+    pub profile_id: String,
+    pub draft_id: String,
+    pub authorization_challenge: String,
+}
+
 /// Incoming request for proving and submitting one authorized transfer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubmitWalletTransferCommand {
     pub profile_id: String,
     pub draft_id: String,
     pub confirmation: SensitiveOperationConfirmation,
+}
+
+/// Composition-only request to submit an authorized local-development transfer.
+///
+/// This command is reserved for narrow development capabilities such as the
+/// fixed standalone faucet and is rejected outside the undeployed realm.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubmitDevelopmentWalletTransferCommand {
+    pub profile_id: String,
+    pub draft_id: String,
 }
 
 /// Incoming query for safe retained-draft metadata.
@@ -385,6 +408,14 @@ pub trait AuthorizeWalletTransferUseCase: Send + Sync {
     ) -> Result<WalletTransferPreviewView, WalletTransactionError>;
 }
 
+/// Composition-only authorization for a retained undeployed-realm transfer.
+pub trait AuthorizeDevelopmentWalletTransferUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: AuthorizeDevelopmentWalletTransferCommand,
+    ) -> Result<WalletTransferPreviewView, WalletTransactionError>;
+}
+
 /// Public result of an included transfer without proof or serialized transaction bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WalletTransferSubmissionView {
@@ -448,6 +479,14 @@ pub trait SubmitWalletTransferUseCase: Send + Sync {
     fn execute<'a>(
         &'a self,
         command: SubmitWalletTransferCommand,
+    ) -> WalletTransferSubmissionViewFuture<'a>;
+}
+
+/// Composition-only submission for an authorized undeployed-realm transfer.
+pub trait SubmitDevelopmentWalletTransferUseCase: Send + Sync {
+    fn execute<'a>(
+        &'a self,
+        command: SubmitDevelopmentWalletTransferCommand,
     ) -> WalletTransferSubmissionViewFuture<'a>;
 }
 
@@ -521,6 +560,7 @@ pub enum WalletTransactionError {
     ZeroAmount,
     ConfirmationRequired,
     InvalidConfirmation,
+    Approval(WalletApprovalError),
     Clock(PlatformError),
     Operation(WalletTransactionPortError),
 }
@@ -540,6 +580,7 @@ impl fmt::Display for WalletTransactionError {
             Self::ZeroAmount => formatter.write_str("transaction amount must be greater than zero"),
             Self::ConfirmationRequired => formatter.write_str("explicit confirmation is required"),
             Self::InvalidConfirmation => formatter.write_str("confirmation intent is invalid"),
+            Self::Approval(error) => error.fmt(formatter),
             Self::Clock(error) => error.fmt(formatter),
             Self::Operation(error) => error.fmt(formatter),
         }
@@ -552,14 +593,30 @@ impl Error for WalletTransactionError {}
 pub struct WalletTransactionService<T, C> {
     transactions: Arc<T>,
     clock: Arc<C>,
+    approvals: Arc<WalletApprovalService>,
 }
 
 impl<T, C> WalletTransactionService<T, C> {
     #[must_use]
-    pub const fn new(transactions: Arc<T>, clock: Arc<C>) -> Self {
+    pub fn new(transactions: Arc<T>, clock: Arc<C>) -> Self
+    where
+        C: ClockPort + 'static,
+    {
+        let approvals = Arc::new(WalletApprovalService::new(clock.clone()));
+        Self::with_approvals(transactions, clock, approvals)
+    }
+
+    /// The composition shares this service with profile/protection invalidation.
+    #[must_use]
+    pub const fn with_approvals(
+        transactions: Arc<T>,
+        clock: Arc<C>,
+        approvals: Arc<WalletApprovalService>,
+    ) -> Self {
         Self {
             transactions,
             clock,
+            approvals,
         }
     }
 
@@ -568,6 +625,56 @@ impl<T, C> WalletTransactionService<T, C> {
         C: ClockPort,
     {
         self.clock.now().map_err(WalletTransactionError::Clock)
+    }
+}
+
+impl<T: WalletTransactionPort, C: ClockPort> WalletTransactionService<T, C> {
+    fn approve_transition<O: WalletApprovalOperation>(
+        &self,
+        profile: &WalletProfileId,
+        draft: &WalletTransactionDraftId,
+        challenge: Option<&WalletTransactionAuthorizationChallenge>,
+        state: WalletTransactionDraftState,
+        request: fn(WalletProfileId, WalletTransferPreview) -> WalletApprovalRequest<O>,
+    ) -> Result<UnixTimestampMillis, WalletTransactionError> {
+        let read = || {
+            let now = self.now()?;
+            let preview = self
+                .transactions
+                .get(profile, draft, now)
+                .map_err(WalletTransactionError::Operation)?;
+            if preview.draft_id() != draft {
+                return Err(WalletTransactionError::Approval(
+                    WalletApprovalError::IntentMismatch,
+                ));
+            }
+            if challenge.is_some_and(|value| value != preview.authorization_challenge()) {
+                return Err(WalletTransactionError::Operation(
+                    WalletTransactionPortError::AuthorizationChallengeMismatch,
+                ));
+            }
+            if preview.expires_at() <= now {
+                return Err(WalletTransactionError::Approval(
+                    WalletApprovalError::Expired,
+                ));
+            }
+            if preview.state() != state {
+                return Err(WalletTransactionError::Operation(
+                    WalletTransactionPortError::DraftConflict,
+                ));
+            }
+            Ok(preview)
+        };
+        let capability = self
+            .approvals
+            .request(&request(profile.clone(), read()?))
+            .map_err(WalletTransactionError::Approval)?;
+        let expected = request(profile.clone(), read()?);
+        let now = self.now()?;
+        self.approvals
+            .consume(&capability, &expected)
+            .map_err(WalletTransactionError::Approval)?;
+        Ok(now)
     }
 }
 
@@ -685,6 +792,13 @@ where
         let authorization_challenge =
             WalletTransactionAuthorizationChallenge::parse(command.authorization_challenge)
                 .map_err(WalletTransactionError::InvalidAuthorizationChallenge)?;
+        let now = self.approve_transition(
+            &profile_id,
+            &draft_id,
+            Some(&authorization_challenge),
+            WalletTransactionDraftState::Prepared,
+            WalletApprovalRequest::authorize_transfer,
+        )?;
         let preview = self
             .transactions
             .authorize(
@@ -692,11 +806,68 @@ where
                 AuthorizeWalletTransferRequest {
                     draft_id,
                     authorization_challenge,
-                    now: self.now()?,
+                    now,
                 },
             )
             .map_err(WalletTransactionError::Operation)?;
         Ok(WalletTransferPreviewView::from(&preview))
+    }
+}
+
+impl<T, C> AuthorizeDevelopmentWalletTransferUseCase for WalletTransactionService<T, C>
+where
+    T: WalletTransactionPort + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute(
+        &self,
+        command: AuthorizeDevelopmentWalletTransferCommand,
+    ) -> Result<WalletTransferPreviewView, WalletTransactionError> {
+        let profile_id = WalletProfileId::parse(command.profile_id)
+            .map_err(WalletTransactionError::InvalidProfileIdentifier)?;
+        let draft_id = WalletTransactionDraftId::parse(command.draft_id)
+            .map_err(WalletTransactionError::InvalidDraftIdentifier)?;
+        let authorization_challenge =
+            WalletTransactionAuthorizationChallenge::parse(command.authorization_challenge)
+                .map_err(WalletTransactionError::InvalidAuthorizationChallenge)?;
+        let now = self.now()?;
+        let preview = self
+            .transactions
+            .get(&profile_id, &draft_id, now)
+            .map_err(WalletTransactionError::Operation)?;
+        if preview.draft_id() != &draft_id
+            || preview.authorization_challenge() != &authorization_challenge
+        {
+            return Err(WalletTransactionError::Approval(
+                WalletApprovalError::IntentMismatch,
+            ));
+        }
+        if preview.network_id().as_str() != "undeployed" {
+            return Err(WalletTransactionError::Operation(
+                WalletTransactionPortError::UnsupportedNetwork,
+            ));
+        }
+        if preview.expires_at() <= now {
+            return Err(WalletTransactionError::Approval(
+                WalletApprovalError::Expired,
+            ));
+        }
+        if preview.state() != WalletTransactionDraftState::Prepared {
+            return Err(WalletTransactionError::Operation(
+                WalletTransactionPortError::DraftConflict,
+            ));
+        }
+        self.transactions
+            .authorize(
+                &profile_id,
+                AuthorizeWalletTransferRequest {
+                    draft_id,
+                    authorization_challenge,
+                    now,
+                },
+            )
+            .map(|value| WalletTransferPreviewView::from(&value))
+            .map_err(WalletTransactionError::Operation)
     }
 }
 
@@ -715,18 +886,92 @@ where
                 .map_err(WalletTransactionError::InvalidProfileIdentifier)?;
             let draft_id = WalletTransactionDraftId::parse(command.draft_id)
                 .map_err(WalletTransactionError::InvalidDraftIdentifier)?;
+            let retained = self
+                .transactions
+                .get(&profile_id, &draft_id, self.now()?)
+                .map_err(WalletTransactionError::Operation)?;
+            if retained.state() == WalletTransactionDraftState::Submitted {
+                // Idempotent metadata retrieval is not a second submission.
+                let status = self
+                    .transactions
+                    .submission_status(&profile_id, &draft_id)
+                    .map_err(WalletTransactionError::Operation)?;
+                let submission = status
+                    .submission()
+                    .filter(|value| value.draft_id() == &draft_id)
+                    .ok_or(WalletTransactionError::Operation(
+                        WalletTransactionPortError::InvalidData,
+                    ))?;
+                return Ok(WalletTransferSubmissionView::from(
+                    &SubmittedWalletTransfer {
+                        preview: retained,
+                        submission: submission.clone(),
+                    },
+                ));
+            }
+            let now = self.approve_transition(
+                &profile_id,
+                &draft_id,
+                None,
+                WalletTransactionDraftState::Authorized,
+                WalletApprovalRequest::submit_transfer,
+            )?;
+            // Consumption is terminal before polling submission. Adapter admission
+            // must still fence lifecycle changes at the actual protected effect.
             let submitted = self
                 .transactions
-                .submit(
-                    &profile_id,
-                    SubmitWalletTransferRequest {
-                        draft_id,
-                        now: self.now()?,
-                    },
-                )
+                .submit(&profile_id, SubmitWalletTransferRequest { draft_id, now })
                 .await
                 .map_err(WalletTransactionError::Operation)?;
             Ok(WalletTransferSubmissionView::from(&submitted))
+        })
+    }
+}
+
+impl<T, C> SubmitDevelopmentWalletTransferUseCase for WalletTransactionService<T, C>
+where
+    T: WalletTransactionPort + 'static,
+    C: ClockPort + 'static,
+{
+    fn execute<'a>(
+        &'a self,
+        command: SubmitDevelopmentWalletTransferCommand,
+    ) -> WalletTransferSubmissionViewFuture<'a> {
+        Box::pin(async move {
+            let profile_id = WalletProfileId::parse(command.profile_id)
+                .map_err(WalletTransactionError::InvalidProfileIdentifier)?;
+            let draft_id = WalletTransactionDraftId::parse(command.draft_id)
+                .map_err(WalletTransactionError::InvalidDraftIdentifier)?;
+            let now = self.now()?;
+            let preview = self
+                .transactions
+                .get(&profile_id, &draft_id, now)
+                .map_err(WalletTransactionError::Operation)?;
+            if preview.draft_id() != &draft_id {
+                return Err(WalletTransactionError::Approval(
+                    WalletApprovalError::IntentMismatch,
+                ));
+            }
+            if preview.network_id().as_str() != "undeployed" {
+                return Err(WalletTransactionError::Operation(
+                    WalletTransactionPortError::UnsupportedNetwork,
+                ));
+            }
+            if preview.expires_at() <= now {
+                return Err(WalletTransactionError::Approval(
+                    WalletApprovalError::Expired,
+                ));
+            }
+            if preview.state() != WalletTransactionDraftState::Authorized {
+                return Err(WalletTransactionError::Operation(
+                    WalletTransactionPortError::DraftConflict,
+                ));
+            }
+            self.transactions
+                .submit(&profile_id, SubmitWalletTransferRequest { draft_id, now })
+                .await
+                .map(|value| WalletTransferSubmissionView::from(&value))
+                .map_err(WalletTransactionError::Operation)
         })
     }
 }
@@ -910,6 +1155,7 @@ const fn map_confirmation_error(error: SensitiveWalletOperationError) -> WalletT
         | SensitiveWalletOperationError::InvalidKeyReference(_)
         | SensitiveWalletOperationError::EmptyPayload
         | SensitiveWalletOperationError::PayloadTooLarge
+        | SensitiveWalletOperationError::Approval(_)
         | SensitiveWalletOperationError::Operation(_) => {
             WalletTransactionError::InvalidConfirmation
         }
@@ -1052,7 +1298,13 @@ mod tests {
             _: &WalletTransactionDraftId,
             _: UnixTimestampMillis,
         ) -> Result<WalletTransferPreview, WalletTransactionPortError> {
-            Ok(Self::preview(WalletTransactionDraftState::Prepared))
+            Ok(Self::preview(
+                if *self.authorize_calls.lock().unwrap() > 0 {
+                    WalletTransactionDraftState::Authorized
+                } else {
+                    WalletTransactionDraftState::Prepared
+                },
+            ))
         }
 
         fn submit<'a>(
@@ -1122,9 +1374,10 @@ mod tests {
     }
 
     fn service() -> WalletTransactionService<RecordingTransactions, FixedClock> {
-        WalletTransactionService::new(
+        WalletTransactionService::with_approvals(
             Arc::new(RecordingTransactions::default()),
             Arc::new(FixedClock),
+            crate::approval::tests::trusted_service(Arc::new(FixedClock)),
         )
     }
 
@@ -1340,6 +1593,69 @@ mod tests {
     }
 
     #[test]
+    fn public_challenge_and_confirmation_cannot_approve_value_movement() {
+        let transactions = Arc::new(RecordingTransactions::default());
+        let service = WalletTransactionService::new(transactions.clone(), Arc::new(FixedClock));
+        assert_eq!(
+            AuthorizeWalletTransferUseCase::execute(
+                &service,
+                AuthorizeWalletTransferCommand {
+                    profile_id: "profile_test".into(),
+                    draft_id: "txdraft_test".into(),
+                    authorization_challenge: "txauth_test".into(),
+                }
+            ),
+            Err(WalletTransactionError::Approval(
+                crate::WalletApprovalError::Unavailable
+            ))
+        );
+        *transactions.authorize_calls.lock().unwrap() = 1;
+        assert_eq!(
+            ready(SubmitWalletTransferUseCase::execute(
+                &service,
+                SubmitWalletTransferCommand {
+                    profile_id: "profile_test".into(),
+                    draft_id: "txdraft_test".into(),
+                    confirmation: confirmation(true),
+                }
+            )),
+            Err(WalletTransactionError::Approval(
+                crate::WalletApprovalError::Unavailable
+            ))
+        );
+        assert_eq!(*transactions.authorize_calls.lock().unwrap(), 1);
+        assert_eq!(*transactions.submit_calls.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn dedicated_development_authority_crosses_only_the_undeployed_transfer_boundary() {
+        let transactions = Arc::new(RecordingTransactions::default());
+        let service = WalletTransactionService::new(transactions.clone(), Arc::new(FixedClock));
+        let authorized = AuthorizeDevelopmentWalletTransferUseCase::execute(
+            &service,
+            AuthorizeDevelopmentWalletTransferCommand {
+                profile_id: "profile_test".into(),
+                draft_id: "txdraft_test".into(),
+                authorization_challenge: "txauth_test".into(),
+            },
+        )
+        .expect("explicit development authority authorizes undeployed transfer");
+        assert_eq!(authorized.state, "authorized");
+
+        let submitted = ready(SubmitDevelopmentWalletTransferUseCase::execute(
+            &service,
+            SubmitDevelopmentWalletTransferCommand {
+                profile_id: "profile_test".into(),
+                draft_id: "txdraft_test".into(),
+            },
+        ))
+        .expect("explicit development authority submits undeployed transfer");
+        assert_eq!(submitted.transaction_id, "tx_submitted");
+        assert_eq!(*transactions.authorize_calls.lock().unwrap(), 1);
+        assert_eq!(*transactions.submit_calls.lock().unwrap(), 1);
+    }
+
+    #[test]
     fn confirmed_authorization_returns_only_safe_status() {
         let service = service();
         let result = AuthorizeWalletTransferUseCase::execute(
@@ -1389,8 +1705,10 @@ mod tests {
 
     #[test]
     fn confirmed_submission_returns_only_public_inclusion_metadata() {
+        let service = service();
+        *service.transactions.authorize_calls.lock().unwrap() = 1;
         let result = ready(SubmitWalletTransferUseCase::execute(
-            &service(),
+            &service,
             SubmitWalletTransferCommand {
                 profile_id: "profile_test".to_owned(),
                 draft_id: "txdraft_test".to_owned(),

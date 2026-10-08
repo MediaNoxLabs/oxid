@@ -637,11 +637,12 @@ plaintext, explicit consent, distinct managed authentication and Jubjub methods,
 exact three-part verified import, encrypted persistence, unavailable production
 composition, and compile-time mobile isolation. Never add a permissive Portal
 decoder, runtime production route switch, helper checkout, personal endpoint,
-or fixed device selector. The owner-invoked virtual-mobile lane builds from a
+or fixed device selector. The owner-invoked virtual-mobile lane discovers an
+installed simulator/AVD capability when no reviewed override is supplied, builds from a
 clean `git archive HEAD`, runs a shell-mediated nine-scenario journey without
 exposing the control capability to XCTest, inspects the development encrypted
 envelope, kills and replaces the app process without data reset, and publishes
-only the closed `oxid-portal-virtual-mobile-evidence-v1` record after exact
+only the closed `oxid-portal-virtual-mobile-evidence-v2` record after exact
 simulator/emulator, listener, stack, build, and private-artifact cleanup. iOS
 uses only a newly created receipt-matched UDID and never kills CoreSimulator;
 Android rejects every physical, mixed, wrong-serial, wrong-AVD, or non-QEMU
@@ -1459,7 +1460,7 @@ transport loss remains `Submitting` because its external outcome is unknown;
 never make that state retryable without chain reconciliation.
 
 The accepted ledger compatibility revision is
-`d9414884db9da9e9b1f6f3a7f742d79a5732f817`. The native Midnight transaction
+`b85f5d8e503fd1d7a1b128bbc1d7156baf823a65`. The native Midnight transaction
 adapter consumes its ledger/base-crypto/coin/serialize/storage/transient
 packages from the official HTTPS Git URL at that full `rev`, with ledger default
 features disabled and its `proving` feature enabled. It also consumes the
@@ -1992,8 +1993,9 @@ duplicating versions across manifests.
 6. Run `node scripts/dev-loops.mjs doctor` and
    `node scripts/dev-loops.mjs gates`
    before a PR loop. Configuration failures are blockers.
-7. Create pull requests as drafts. Do not mark them ready until validation and
-   review evidence are recorded.
+7. After the signed exact-head local gate passes, create the pull request ready
+   for review through `scripts/dev-loops.mjs pr create`. Do not create a draft
+   and later promote the unchanged head because that admits duplicate CI runs.
 8. Keep the worktree clean. Never delete unrelated user files or changes.
 9. Commit repository-facing work with DCO and GPG:
 

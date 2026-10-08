@@ -37,6 +37,7 @@ support_pid=""
 browser_pid=""
 profile_active=0
 cleanup_running=0
+cleanup_owner_pid="${BASHPID:-$$}"
 baseline=""
 
 fail() {
@@ -81,7 +82,14 @@ stop_owned_process() {
 
 cleanup() {
   local incoming=$? cleanup_status=0 after_cleanup=""
-  if [ "$cleanup_running" -eq 1 ]; then exit "$incoming"; fi
+  if [ "${BASHPID:-$$}" != "$cleanup_owner_pid" ] || [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
+  if [ "$cleanup_running" -eq 1 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
   cleanup_running=1
   trap - EXIT INT TERM HUP
   set +e

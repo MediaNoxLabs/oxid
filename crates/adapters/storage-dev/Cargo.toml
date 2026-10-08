@@ -16,9 +16,11 @@ development-fixture = []
 bip32.workspace = true
 ed25519-dalek.workspace = true
 k256.workspace = true
+hex.workspace = true
 midnight-serialize.workspace = true
 midnight-transient-crypto.workspace = true
 oxid-adapter-backup-portable.workspace = true
+oxid-adapter-store-atomic.workspace = true
 oxid-foundation.workspace = true
 oxid-platform-ports.workspace = true
 oxid-wallet-application.workspace = true
@@ -28,8 +30,8 @@ sha2.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-hex.workspace = true
 oxid-adapter-storage-memory.workspace = true
+tempfile = "3.27"
 
 [lints]
 workspace = true

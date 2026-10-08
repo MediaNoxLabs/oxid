@@ -7,7 +7,7 @@ use oxid_credential_application::{
     CredentialDisclosurePlanView, CredentialDisclosureView, CredentialView,
 };
 use oxid_diagnostics_application::DiagnosticSnapshotView;
-use oxid_identity_application::DidRecordView;
+use oxid_identity_application::{DidDeploymentOperation, DidRecordView};
 use oxid_passport_vault_application::{
     PassportVaultCallPreviewView, PassportVaultCallSubmissionStatusView,
     PassportVaultCallSubmissionView, PassportVaultLockView, PassportVaultView,
@@ -15,11 +15,13 @@ use oxid_passport_vault_application::{
 use oxid_presentation_application::CredentialPresentationView;
 use oxid_protocol_application::{CredentialIssuanceView, SelfIssuedAuthenticationView};
 use oxid_wallet_application::{
-    DerivedWalletAccountView, SelectedWalletRealmSyncView, WalletAccountView,
-    WalletDustRegistrationPreviewView, WalletDustRegistrationSubmissionStatusView,
-    WalletDustRegistrationSubmissionView, WalletDustSyncView, WalletKeyView, WalletNetworkListView,
-    WalletRealmFamilyView, WalletSecurityStatusView, WalletShieldedSyncView,
-    WalletTransferPreviewView, WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
+    DerivedWalletAccountView, SelectedWalletRealmProjection, WalletAccountView,
+    WalletDustRegistrationPreviewView, WalletDustRegistrationSettlementAuthorizationPhase,
+    WalletDustRegistrationSettlementProjection, WalletDustRegistrationSettlementState,
+    WalletDustRegistrationSubmissionStatusView, WalletDustRegistrationSubmissionView,
+    WalletDustSyncView, WalletKeyView, WalletNetworkListView, WalletRealmFamilyView,
+    WalletSecurityStatusView, WalletShieldedSyncView, WalletTransferPreviewView,
+    WalletTransferSubmissionStatusView, WalletTransferSubmissionView,
 };
 use oxid_wallet_domain::{
     PublicKeyEncoding, WalletKeyAlgorithm, WalletKeyPurpose, WalletProtectionClass,
@@ -47,7 +49,7 @@ pub(super) fn account_value(account: &WalletAccountView) -> Value {
         "networkName": account.network_name,
         "networkEnvironment": account.network_environment,
         "accountId": account.account_id,
-        "source": account.source,
+        "source": account.source.as_str(),
         "addresses": account.addresses.iter().map(address_value).collect::<Vec<_>>(),
         "balances": account.balances.iter().map(balance_value).collect::<Vec<_>>(),
         "sync": sync_value(account),
@@ -83,7 +85,7 @@ pub(super) fn balance_value(balance: &oxid_wallet_application::WalletAssetBalanc
 
 pub(super) fn sync_value(account: &WalletAccountView) -> Value {
     json!({
-        "state": account.sync.state,
+        "state": account.sync.state.as_str(),
         "currentCursor": account.sync.current_cursor,
         "targetCursor": account.sync.target_cursor,
         "chainTipHeight": account.sync.chain_tip_height,
@@ -91,8 +93,30 @@ pub(super) fn sync_value(account: &WalletAccountView) -> Value {
     })
 }
 
-pub(super) fn selected_realm_sync_value(status: &SelectedWalletRealmSyncView) -> Value {
+pub(super) fn selected_realm_sync_value(projection: &SelectedWalletRealmProjection) -> Value {
+    let status = &projection.view;
     json!({
+        "identity": {
+            "profileId": projection.identity.profile.to_string(),
+            "networkId": projection.identity.realm.to_string()
+        },
+        "revision": projection.revision,
+        "fresh": projection.fresh,
+        "consistent": projection.consistent,
+        "actionable": match projection.actionable {
+            oxid_wallet_application::SelectedWalletRealmActionReadiness::Ready => "ready",
+            oxid_wallet_application::SelectedWalletRealmActionReadiness::Refreshing => "refreshing",
+            oxid_wallet_application::SelectedWalletRealmActionReadiness::Unavailable => "unavailable",
+        },
+        "observation": match projection.observation {
+            oxid_wallet_application::SelectedWalletRealmObservation::Settled => json!({
+                "state": "settled"
+            }),
+            oxid_wallet_application::SelectedWalletRealmObservation::PollAfter(delay) => json!({
+                "state": "poll_after",
+                "afterMs": delay.as_millis()
+            }),
+        },
         "account": realm_family_value(&status.account, account_value),
         "dust": realm_family_value(&status.dust, dust_sync_value),
         "shielded": realm_family_value(&status.shielded, shielded_sync_value)
@@ -191,6 +215,58 @@ pub(super) fn dust_registration_asset_value(
         "decimals": asset.decimals,
         "atomicUnits": asset.atomic_units,
     })
+}
+
+pub(super) fn dust_registration_settlement_value(
+    projection: &WalletDustRegistrationSettlementProjection,
+) -> Value {
+    json!({
+        "state": dust_registration_settlement_state_name(projection.state),
+        "identity": projection.identity.as_ref().map(|identity| json!({
+            "profileId": identity.profile.to_string(),
+            "networkId": identity.realm.to_string(),
+            "generation": identity.generation,
+        })),
+        "registration": projection.registration.as_ref().map(|registration| json!({
+            "draftId": registration.draft_id.as_str(),
+            "authorizationPhase": match registration.authorization_phase {
+                WalletDustRegistrationSettlementAuthorizationPhase::AwaitingAuthorization => "awaiting_authorization",
+                WalletDustRegistrationSettlementAuthorizationPhase::Submitting => "submitting",
+                WalletDustRegistrationSettlementAuthorizationPhase::Submitted => "submitted",
+            },
+            "transactionId": registration.transaction_id.as_ref().map(oxid_wallet_application::ChainTransactionId::as_str),
+            "included": registration.included,
+            "dustReady": registration.dust_ready,
+            "observationRevision": registration.observation_revision,
+            "dustRevision": registration.dust_revision,
+        })),
+        "checkpoint": projection.checkpoint.as_ref().map(|checkpoint| json!({
+            "revision": checkpoint.revision,
+            "eligible": checkpoint.eligible,
+        })),
+        "preparationRevision": projection.preparation_revision,
+        "recoveryRevision": projection.recovery_revision,
+    })
+}
+
+const fn dust_registration_settlement_state_name(
+    state: WalletDustRegistrationSettlementState,
+) -> &'static str {
+    match state {
+        WalletDustRegistrationSettlementState::Unavailable => "unavailable",
+        WalletDustRegistrationSettlementState::NotEligible => "not_eligible",
+        WalletDustRegistrationSettlementState::ActionRequired => "action_required",
+        WalletDustRegistrationSettlementState::AwaitingAuthorization => "awaiting_authorization",
+        WalletDustRegistrationSettlementState::Submitting => "submitting",
+        WalletDustRegistrationSettlementState::Confirming => "confirming",
+        WalletDustRegistrationSettlementState::Reconciling => "reconciling",
+        WalletDustRegistrationSettlementState::Ready => "ready",
+        WalletDustRegistrationSettlementState::Cancelled => "cancelled",
+        WalletDustRegistrationSettlementState::Offline => "offline",
+        WalletDustRegistrationSettlementState::TimedOut => "timed_out",
+        WalletDustRegistrationSettlementState::Degraded => "degraded",
+        WalletDustRegistrationSettlementState::Suspended => "suspended",
+    }
 }
 
 pub(super) fn diagnostic_snapshot_value(snapshot: &DiagnosticSnapshotView) -> Value {
@@ -357,6 +433,33 @@ pub(super) fn did_record_value(record: &DidRecordView) -> Value {
         },
         "contentType": record.content_type,
         "source": record.source,
+    })
+}
+
+pub(super) fn did_deployment_value(operation: &DidDeploymentOperation) -> Value {
+    json!({
+        "operationId": operation.operation_id().as_str(),
+        "profileId": operation.profile_id().as_str(),
+        "network": operation.network().as_str(),
+        "state": operation.state().as_str(),
+        "effect": operation.effect().as_str(),
+        "failure": operation.failure().map(|failure| failure.as_str()),
+        "resumeFrom": operation.resume_from().map(|state| state.as_str()),
+        "did": operation.did().map(|did| did.as_str()),
+        "submissionId": operation.submission_id(),
+        "transactionHashHex": operation.transaction_hash_hex(),
+        "blockHashHex": operation.block_hash_hex(),
+        "blockHeight": operation.block_height(),
+        "receipts": operation.receipts().iter().map(|receipt| json!({
+            "effect": receipt.effect().as_str(),
+            "submissionId": receipt.submission_id(),
+            "transactionHashHex": receipt.transaction_hash_hex(),
+            "blockHashHex": receipt.block_hash_hex(),
+            "blockHeight": receipt.block_height(),
+        })).collect::<Vec<_>>(),
+        "createdAtMillis": operation.created_at().value(),
+        "updatedAtMillis": operation.updated_at().value(),
+        "containsSecrets": false,
     })
 }
 

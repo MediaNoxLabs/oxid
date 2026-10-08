@@ -35,6 +35,28 @@ oxid_adb_inventory_snapshot() {
   timeout -k 2s "${deadline}s" env -u ANDROID_SERIAL "$adb" devices -l
 }
 
+oxid_android_avd_definition_exists() {
+  local candidate="$1"
+  [[ "$candidate" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  for avd_ini in "${ANDROID_AVD_HOME:-}/$candidate.ini" "${ANDROID_SDK_HOME:-}/avd/$candidate.ini" "$HOME/.android/avd/$candidate.ini"; do
+    if [ -f "$avd_ini" ] && [ ! -L "$avd_ini" ]; then return 0; fi
+  done
+  return 1
+}
+
+oxid_android_discover_avd() {
+  local emulator="$1" candidate
+  [ -x "$emulator" ] || return 1
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if oxid_android_avd_definition_exists "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <("$emulator" -list-avds | LC_ALL=C sort -u)
+  return 1
+}
+
 oxid_require_empty_adb_inventory() {
   local adb="$1" inventory
   inventory="$(oxid_adb_inventory_snapshot "$adb")" || return 1
@@ -191,6 +213,138 @@ oxid_emulator_job_owned() {
   oxid_emulator_command_matches "$command_line" "$executable" "$avd" "$port"
 }
 
+oxid_emulator_process_start_identity() {
+  local pid="$1" start
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  start="$(oxid_process_ps -p "$pid" -o lstart= 2>/dev/null)" || return 1
+  start="$(timeout -k 1s "${OXID_PROCESS_PS_TIMEOUT_SECONDS:-5}s" awk '{$1=$1; print}' <<<"$start")" || return 1
+  [ -n "$start" ] || return 1
+  printf '%s\n' "$start"
+}
+
+oxid_emulator_process_is_live() {
+  local pid="$1" state
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  state="$(oxid_process_ps -p "$pid" -o stat= 2>/dev/null)" || return 1
+  [[ "$state" != Z* ]]
+}
+
+oxid_find_unique_emulator_process() {
+  local executable="$1" avd="$2" port="$3" snapshot pid command_line found=""
+  snapshot="$(oxid_process_ps -axo pid= -o command= 2>/dev/null)" || return 1
+  while read -r pid command_line; do
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
+    case " $command_line " in
+      *" -avd $avd "*" -port $port "*) ;;
+      *) continue ;;
+    esac
+    if oxid_emulator_command_matches "$command_line" "$executable" "$avd" "$port"; then
+      [ -z "$found" ] || return 1
+      found="$pid"
+    fi
+  done <<<"$snapshot"
+  [ -n "$found" ] || return 1
+  printf '%s\n' "$found"
+}
+
+oxid_emulator_owner_receipt_write() {
+  local receipt="$1" launch_pid="$2" current_pid="$3" current_start="$4"
+  local executable="$5" avd="$6" port="$7" executable_identity="$8" temporary
+  [[ "$launch_pid" =~ ^[1-9][0-9]*$ && "$current_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ "$avd" =~ ^[A-Za-z0-9._-]+$ && "$port" =~ ^[1-9][0-9]{0,4}$ ]] || return 1
+  [[ "$executable_identity" =~ ^[0-9]+:[0-9]+$ && "$current_start" != *$'\t'* && -n "$current_start" ]] || return 1
+  [ -e "$executable" ] && [ ! -L "$executable" ] || return 1
+  temporary="$receipt.tmp.${BASHPID:-$$}"
+  [ ! -e "$temporary" ] && [ ! -L "$temporary" ] || return 1
+  umask 077
+  printf 'android-emulator-owner-v1\nlaunch_pid\t%s\ncurrent_pid\t%s\ncurrent_start\t%s\nexecutable_identity\t%s\navd\t%s\nport\t%s\n' \
+    "$launch_pid" "$current_pid" "$current_start" "$executable_identity" "$avd" "$port" >"$temporary" || return 1
+  chmod 600 "$temporary" || { rm -f -- "$temporary"; return 1; }
+  mv "$temporary" "$receipt"
+}
+
+oxid_emulator_owner_receipt_read() {
+  local receipt="$1" mode key value count=0
+  OXID_EMULATOR_RECEIPT_SCHEMA=""
+  OXID_EMULATOR_RECEIPT_LAUNCH_PID=""
+  OXID_EMULATOR_RECEIPT_CURRENT_PID=""
+  OXID_EMULATOR_RECEIPT_CURRENT_START=""
+  OXID_EMULATOR_RECEIPT_EXECUTABLE_IDENTITY=""
+  OXID_EMULATOR_RECEIPT_AVD=""
+  OXID_EMULATOR_RECEIPT_PORT=""
+  [ -f "$receipt" ] && [ ! -L "$receipt" ] || return 1
+  if mode="$(stat -c '%a' "$receipt" 2>/dev/null)"; then :; else mode="$(stat -f '%Lp' "$receipt")" || return 1; fi
+  [ "$mode" = 600 ] || return 1
+  IFS= read -r OXID_EMULATOR_RECEIPT_SCHEMA <"$receipt" || return 1
+  [ "$OXID_EMULATOR_RECEIPT_SCHEMA" = android-emulator-owner-v1 ] || return 1
+  while IFS=$'\t' read -r key value; do
+    case "$key" in
+      launch_pid) [ -z "$OXID_EMULATOR_RECEIPT_LAUNCH_PID" ] || return 1; OXID_EMULATOR_RECEIPT_LAUNCH_PID="$value" ;;
+      current_pid) [ -z "$OXID_EMULATOR_RECEIPT_CURRENT_PID" ] || return 1; OXID_EMULATOR_RECEIPT_CURRENT_PID="$value" ;;
+      current_start) [ -z "$OXID_EMULATOR_RECEIPT_CURRENT_START" ] || return 1; OXID_EMULATOR_RECEIPT_CURRENT_START="$value" ;;
+      executable_identity) [ -z "$OXID_EMULATOR_RECEIPT_EXECUTABLE_IDENTITY" ] || return 1; OXID_EMULATOR_RECEIPT_EXECUTABLE_IDENTITY="$value" ;;
+      avd) [ -z "$OXID_EMULATOR_RECEIPT_AVD" ] || return 1; OXID_EMULATOR_RECEIPT_AVD="$value" ;;
+      port) [ -z "$OXID_EMULATOR_RECEIPT_PORT" ] || return 1; OXID_EMULATOR_RECEIPT_PORT="$value" ;;
+      *) return 1 ;;
+    esac
+    count=$((count + 1))
+  done < <(tail -n +2 "$receipt")
+  [[ "$count" -eq 6 && "$OXID_EMULATOR_RECEIPT_LAUNCH_PID" =~ ^[1-9][0-9]*$ \
+    && "$OXID_EMULATOR_RECEIPT_CURRENT_PID" =~ ^[1-9][0-9]*$ \
+    && "$OXID_EMULATOR_RECEIPT_EXECUTABLE_IDENTITY" =~ ^[0-9]+:[0-9]+$ \
+    && "$OXID_EMULATOR_RECEIPT_AVD" =~ ^[A-Za-z0-9._-]+$ \
+    && "$OXID_EMULATOR_RECEIPT_PORT" =~ ^[1-9][0-9]{0,4}$ \
+    && -n "$OXID_EMULATOR_RECEIPT_CURRENT_START" ]]
+}
+
+oxid_emulator_owner_receipt_matches() {
+  local receipt="$1" launch_pid="$2" executable="$3" avd="$4" port="$5"
+  local executable_identity start snapshot _parent _comm command_line
+  oxid_emulator_owner_receipt_read "$receipt" || return 1
+  [ "$OXID_EMULATOR_RECEIPT_LAUNCH_PID" = "$launch_pid" \
+    ] && [ "$OXID_EMULATOR_RECEIPT_AVD" = "$avd" \
+    ] && [ "$OXID_EMULATOR_RECEIPT_PORT" = "$port" ] || return 1
+  executable_identity="$(oxid_filesystem_identity "$executable")" || return 1
+  [ "$OXID_EMULATOR_RECEIPT_EXECUTABLE_IDENTITY" = "$executable_identity" ] || return 1
+  oxid_emulator_process_is_live "$OXID_EMULATOR_RECEIPT_CURRENT_PID" || return 1
+  start="$(oxid_emulator_process_start_identity "$OXID_EMULATOR_RECEIPT_CURRENT_PID")" || return 1
+  [ "$start" = "$OXID_EMULATOR_RECEIPT_CURRENT_START" ] || return 1
+  snapshot="$(oxid_direct_child_snapshot "$OXID_EMULATOR_RECEIPT_CURRENT_PID")" || return 1
+  read -r _parent _comm command_line <<<"$snapshot"
+  oxid_emulator_command_matches "$command_line" "$executable" "$avd" "$port"
+}
+
+oxid_emulator_owner_receipt_create() {
+  local receipt="$1" launch_pid="$2" expected_parent="$3" executable="$4" avd="$5" port="$6"
+  local current_pid current_start executable_identity
+  [ ! -e "$receipt" ] && [ ! -L "$receipt" ] || return 1
+  oxid_emulator_job_owned "$launch_pid" "$expected_parent" "$executable" "$avd" "$port" || return 1
+  current_pid="$launch_pid"
+  current_start="$(oxid_emulator_process_start_identity "$current_pid")" || return 1
+  executable_identity="$(oxid_filesystem_identity "$executable")" || return 1
+  oxid_emulator_owner_receipt_write "$receipt" "$launch_pid" "$current_pid" "$current_start" \
+    "$executable" "$avd" "$port" "$executable_identity"
+}
+
+oxid_emulator_owner_receipt_refresh() {
+  local receipt="$1" launch_pid="$2" executable="$3" avd="$4" port="$5"
+  local previous_pid current_pid current_start executable_identity
+  oxid_emulator_owner_receipt_matches "$receipt" "$launch_pid" "$executable" "$avd" "$port" && return 0
+  oxid_emulator_owner_receipt_read "$receipt" || return 1
+  [ "$OXID_EMULATOR_RECEIPT_LAUNCH_PID" = "$launch_pid" \
+    ] && [ "$OXID_EMULATOR_RECEIPT_AVD" = "$avd" \
+    ] && [ "$OXID_EMULATOR_RECEIPT_PORT" = "$port" ] || return 1
+  executable_identity="$(oxid_filesystem_identity "$executable")" || return 1
+  [ "$OXID_EMULATOR_RECEIPT_EXECUTABLE_IDENTITY" = "$executable_identity" ] || return 1
+  previous_pid="$OXID_EMULATOR_RECEIPT_CURRENT_PID"
+  oxid_emulator_process_is_live "$previous_pid" && return 1
+  current_pid="$(oxid_find_unique_emulator_process "$executable" "$avd" "$port")" || return 1
+  [ "$current_pid" != "$previous_pid" ] || return 1
+  current_start="$(oxid_emulator_process_start_identity "$current_pid")" || return 1
+  oxid_emulator_owner_receipt_write "$receipt" "$launch_pid" "$current_pid" "$current_start" \
+    "$executable" "$avd" "$port" "$executable_identity"
+}
+
 oxid_poll_job_dead() {
   local pid="$1" attempts="$2"
   for ((_attempt = 0; _attempt < attempts; _attempt++)); do
@@ -201,15 +355,22 @@ oxid_poll_job_dead() {
 }
 
 oxid_process_group_is_live() {
-  local pgid="$1" snapshot
-  snapshot="$(oxid_process_ps -axo pgid=,stat= 2>/dev/null)" || return 0
-  timeout -k 1s "${OXID_PROCESS_PS_TIMEOUT_SECONDS:-5}s" \
-    awk -v pgid="$pgid" '$1 == pgid && $2 !~ /^Z/ { found=1 } END { exit !found }' <<<"$snapshot"
-  case "$?" in
-    0) return 0 ;;
+  local pgid="$1" pids status=0 pid state
+  [[ "$pgid" =~ ^[1-9][0-9]*$ ]] || return 0
+  command -v pgrep >/dev/null 2>&1 || return 0
+  pids="$(timeout -k 1s "${OXID_PROCESS_PS_TIMEOUT_SECONDS:-5}s" pgrep -g "$pgid" 2>/dev/null)" \
+    || status=$?
+  case "$status" in
+    0) ;;
     1) return 1 ;;
     *) return 0 ;;
   esac
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 0
+    state="$(oxid_process_ps -p "$pid" -o stat= 2>/dev/null)" || continue
+    [[ "$state" = Z* ]] || return 0
+  done <<<"$pids"
+  return 1
 }
 
 oxid_poll_process_group_dead() {
@@ -252,6 +413,42 @@ oxid_terminate_emulator_job() {
     0|137|143) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+oxid_terminate_emulator_receipt() {
+  local receipt="$1" launch_pid="$2" executable="$3" avd="$4" port="$5"
+  local current_pid attempts generation candidate status=0
+  for generation in 1 2; do
+    oxid_emulator_owner_receipt_refresh "$receipt" "$launch_pid" "$executable" "$avd" "$port" || return 2
+    oxid_emulator_owner_receipt_read "$receipt" || return 2
+    current_pid="$OXID_EMULATOR_RECEIPT_CURRENT_PID"
+    kill -TERM "$current_pid" 2>/dev/null || return 1
+    for ((attempts = 0; attempts < 200; attempts++)); do
+      oxid_emulator_process_is_live "$current_pid" || break
+      timeout -k 1s 2s sleep 0.1 || return 1
+    done
+    if oxid_emulator_process_is_live "$current_pid"; then
+      oxid_emulator_owner_receipt_matches "$receipt" "$launch_pid" "$executable" "$avd" "$port" || return 1
+      kill -KILL "$current_pid" 2>/dev/null || return 1
+      for ((attempts = 0; attempts < 50; attempts++)); do
+        oxid_emulator_process_is_live "$current_pid" || break
+        timeout -k 1s 2s sleep 0.1 || return 1
+      done
+      oxid_emulator_process_is_live "$current_pid" && return 1
+    fi
+    candidate="$(oxid_find_unique_emulator_process "$executable" "$avd" "$port" 2>/dev/null || true)"
+    [ -n "$candidate" ] || break
+    [ "$generation" -lt 2 ] || return 1
+  done
+  if oxid_job_is_running "$launch_pid"; then
+    wait "$launch_pid" 2>/dev/null || status=$?
+    case "$status" in 0|137|143) ;; *) return 1 ;; esac
+  else
+    wait "$launch_pid" 2>/dev/null || true
+  fi
+  oxid_emulator_owner_receipt_read "$receipt" || return 1
+  rm -f -- "$receipt"
+  [ ! -e "$receipt" ]
 }
 
 oxid_filesystem_identity() {

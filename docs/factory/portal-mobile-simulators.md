@@ -83,6 +83,39 @@ just ios-portal-exact-sequence-simulator
 just android-portal-exact-sequence-avd
 ```
 
+While repairing one iOS selector or transition, run one reviewed phase instead
+of repeating the complete lane:
+
+```bash
+OXID_XCODE_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+OXID_IOS_RUNTIME_ID='<explicit-reviewed-runtime-id>' \
+OXID_IOS_DEVICE_TYPE_ID='<explicit-reviewed-iphone-device-type-id>' \
+just ios-portal-diagnostic protocol-error
+```
+
+The allow-list is `cold-route`, `prepare-holder`, `route-refuse`, `malformed`,
+`protocol-error`, `protocol-timeout`, `issue-error`, `issue`, and `restored`.
+Unknown, missing, or ambiguous selectors fail before the iOS admission
+supervisor can mutate host state. Each focused run creates a fresh
+receipt-owned simulator and executes the minimum earlier UI state needed by
+the selected phase; it never assumes state from a previous run.
+
+The first focused run builds the packaged app. Later attempts may reuse it only
+when private receipts verify the exact Oxid `HEAD` and tree, Portal deployment
+manifest digest, configuration, target, and artifact digest. Every focused run
+still builds a fresh XCTest bundle, owns and removes its simulator, Portal
+processes, listeners, build/test state, and private log. A successful attempt
+writes only a mode-`0600` diagnostic metric at
+`target/ios-portal-diagnostic/<phase>/diagnostic.json`. That record explicitly
+sets `acceptanceEvidence` and `canonicalReceiptTouched` to `false`; it cannot
+create or overwrite
+`target/ios-portal-exact-sequence-simulator/evidence.json`.
+
+Use the focused loop to diagnose one phase, batch one repair, and then run
+`just ios-portal-exact-sequence-simulator` once. Only that complete clean lane
+is authoritative acceptance evidence. Do not promote a focused result, and do
+not start iOS while Android or another owned mobile runtime is active.
+
 Do not retry a platform automatically after an offer is armed. Resolve the
 failure, prove cleanup, remove no ambiguous owner state, and start a fresh
 complete run with fresh app data and offers.
@@ -110,13 +143,19 @@ target/ios-portal-exact-sequence-simulator/evidence.json
 target/android-portal-exact-sequence-avd/evidence.json
 ```
 
-Both use `oxid-portal-virtual-mobile-evidence-v1`. They contain only the Oxid
+Both use `oxid-portal-virtual-mobile-evidence-v2`. They contain only the Oxid
 head/tree, reviewed Portal pins, schema versions, coarse virtual-platform facts,
 artifact digest, standardized scenario/counter results, derived booleans, and
 cleanup acceptance. They exclude simulator UDIDs and names, ADB serials and AVD
 names, DIDs, URLs, offers, grants, tokens, nonces, credentials, claims, proofs,
 capabilities, paths, PIDs, and timestamps. Private build sources, DerivedData,
 XCTest results, and logs are removed before publication.
+
+Each record classifies the disposable install as `fresh`, the process restart
+as `preserved`, and migration as `not_exercised`; the closed schema rejects a
+migration claim that the lane did not execute. When no reviewed override is
+supplied, the harness deterministically discovers an installed supported iOS
+runtime/device type or Android AVD without publishing its selector.
 
 On a failed iOS journey, the harness still removes its receipt-owned simulator,
 Portal stack, listeners, and detached build source, but retains the owner-private
@@ -126,6 +165,30 @@ They are never publication evidence and may contain sensitive development data;
 delete only that receipt-owned run directory after the failure is understood.
 
 ## Ownership and timeouts
+
+iOS acceptance first acquires one user-scoped, mode-`0700` host admission
+lease. The receipt records only the supervisor PID, scenario class, and start
+time and is removed after the exact owner exits. A valid dead-owner receipt is
+reclaimed through an exclusive in-directory claim; a concurrent live takeover
+is preserved. Malformed, symlinked, foreign-owned, or live receipts fail closed.
+Active `xcodebuild`, `simctl`, `testmanagerd`, or `xctest` processes cause an
+immediate exit `75` before a build starts. A persistent Simulator UI or idle
+CoreSimulator service alone is not proof of an active test owner and therefore
+does not block admission. This is the bounded-refusal policy: the harness never
+kills or waits on a foreign session. Finish that session and retry; do not
+manually remove a live receipt.
+`OXID_IOS_XCODE_LEASE_DIR` is a test/diagnostic override and must be an absolute
+private directory.
+
+The Portal preflight is bounded to 180 seconds and the complete Portal route to
+7,200 seconds. Profile acceptance is bounded to 3,600 seconds. Wallet lifecycle
+acceptance is bounded to 1,800 seconds, with 1,200 seconds reserved for its
+single XCTest. Every Portal and profile XCTest has a 600-second ceiling. A
+timeout or supervisor signal terminates the receipt-owned process group, allows
+30 seconds for shell traps and simulator deletion, and then escalates only that
+group. Supervisor output is limited to admitted/completed phase records. On a
+failure it names the owner-private `child.log`; remove that directory only
+after diagnosis. Successful runs remove the transient log.
 
 iOS creates a uniquely named simulator and stores the exact returned UDID in an
 owner-private receipt. Every operation is `simctl <operation> <receipt-UDID>`;

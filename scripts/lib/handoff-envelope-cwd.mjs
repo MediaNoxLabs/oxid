@@ -2,6 +2,7 @@
 
 import { execFile } from "node:child_process";
 import { lstat, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -9,6 +10,7 @@ const execFileAsync = promisify(execFile);
 const WORKTREE_NAMESPACE_SEGMENTS = ["tmp", "worktrees", "dev-loops"];
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const ISSUE_BRANCH_PATTERN = /^(?:build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)\/issue-([1-9]\d*)$/;
+const DELIVERY_BASE_PATTERN = /^origin\/(?:develop|milestone-\d+\.\d+\.\d+)$/;
 
 function isContained(parent, child) {
   const relative = path.relative(parent, child);
@@ -56,6 +58,19 @@ async function commandText(command, args) {
     timeout: 30_000,
   });
   return stdout.trim();
+}
+
+async function commandSucceeds(command, args) {
+  try {
+    await execFileAsync(command, args, {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function resolveHostedPrHead(target) {
@@ -108,7 +123,7 @@ async function authorizePrIssueWorktree(target, candidate, {
   } catch {
     return false;
   }
-  if (!/^origin\/(?:develop|milestone-\d+\.\d+\.\d+)$/.test(deliveryBase)) return false;
+  if (!DELIVERY_BASE_PATTERN.test(deliveryBase)) return false;
   const [head, hosted] = await Promise.all([
     commandText("git", ["-C", candidate, "rev-parse", "HEAD"]),
     resolvePrHead(target),
@@ -117,6 +132,43 @@ async function authorizePrIssueWorktree(target, candidate, {
     throw new Error(`managed issue worktree does not match hosted PR #${target.pr} head`);
   }
   return true;
+}
+
+async function authorizeCodexIssueWorktree(target, candidate, {
+  commonRoot,
+  codexWorktreesRoot,
+  worktrees,
+}) {
+  if (!["issue", "local_phase"].includes(target?.kind) || !worktrees.includes(candidate)) return false;
+  const relative = path.relative(codexWorktreesRoot, candidate);
+  if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) return false;
+  const segments = relative.split(path.sep).filter(Boolean);
+  if (segments.length !== 2) return false;
+
+  let branch;
+  try {
+    branch = await commandText("git", ["-C", candidate, "branch", "--show-current"]);
+  } catch {
+    return false;
+  }
+  const match = branch.match(ISSUE_BRANCH_PATTERN);
+  if (match === null || Number(match[1]) !== target.issue) return false;
+  if ((await commandText("git", ["-C", candidate, "status", "--porcelain"])) !== "") return false;
+
+  let deliveryBase;
+  try {
+    deliveryBase = await commandText("git", [
+      "-C",
+      commonRoot,
+      "config",
+      "--get",
+      `branch.${branch}.oxidDeliveryBase`,
+    ]);
+  } catch {
+    return false;
+  }
+  if (!DELIVERY_BASE_PATTERN.test(deliveryBase)) return false;
+  return commandSucceeds("git", ["-C", candidate, "merge-base", "--is-ancestor", deliveryBase, "HEAD"]);
 }
 
 function canonicalTargets(target, commonRoot, core) {
@@ -161,8 +213,13 @@ async function assertProspectiveAncestors(candidate, commonRoot) {
   throw new Error(`prospective handoff envelope cwd escapes the common checkout: ${candidate}`);
 }
 
-async function assertOwnedOrProspective(candidate, { commonRoot, canonical, worktrees }) {
-  if (!isContained(commonRoot, candidate) || countWorktreeNamespaces(candidate) !== 1) {
+async function assertOwnedOrProspective(candidate, {
+  commonRoot,
+  canonical,
+  worktrees,
+  externalOwned = false,
+}) {
+  if (!externalOwned && (!isContained(commonRoot, candidate) || countWorktreeNamespaces(candidate) !== 1)) {
     throw new Error(`refusing non-canonical handoff envelope cwd: ${candidate}`);
   }
   if (!canonical.includes(candidate)) {
@@ -170,6 +227,9 @@ async function assertOwnedOrProspective(candidate, { commonRoot, canonical, work
   }
 
   const state = await pathState(candidate);
+  if (externalOwned && !state.exists) {
+    throw new Error(`refusing absent external handoff envelope cwd: ${candidate}`);
+  }
   if (!state.exists) {
     await assertProspectiveAncestors(candidate, commonRoot);
     return;
@@ -187,6 +247,7 @@ async function assertOwnedOrProspective(candidate, { commonRoot, canonical, work
 
 export async function normalizeHandoffEnvelopeCwd(envelope, resolved, core, {
   resolvePrHead = resolveHostedPrHead,
+  codexWorktreesRoot = path.join(homedir(), ".codex", "worktrees"),
 } = {}) {
   const commonRoot = path.resolve(resolved.commonRoot);
   const gitRoot = path.resolve(resolved.gitRoot);
@@ -210,6 +271,7 @@ export async function normalizeHandoffEnvelopeCwd(envelope, resolved, core, {
   let canonical = canonicalTargets(envelope.target, commonRoot, core);
   let cwd;
   const candidate = isMainCheckout ? path.resolve(envelope.cwd) : gitRoot;
+  let externalOwned = false;
   if (!canonical.includes(candidate) && await authorizePrIssueWorktree(envelope.target, candidate, {
     commonRoot,
     core,
@@ -217,6 +279,14 @@ export async function normalizeHandoffEnvelopeCwd(envelope, resolved, core, {
     resolvePrHead,
   })) {
     canonical = [...canonical, candidate];
+  }
+  if (!isMainCheckout && !canonical.includes(candidate) && await authorizeCodexIssueWorktree(
+    envelope.target,
+    candidate,
+    { commonRoot, codexWorktreesRoot: path.resolve(codexWorktreesRoot), worktrees },
+  )) {
+    canonical = [...canonical, candidate];
+    externalOwned = true;
   }
   if (isMainCheckout) {
     cwd = candidate;
@@ -226,7 +296,12 @@ export async function normalizeHandoffEnvelopeCwd(envelope, resolved, core, {
     if (!canonical.includes(gitRoot)) {
       throw new Error(`invocation worktree disagrees with resolver target: ${gitRoot}`);
     }
-    await assertOwnedOrProspective(gitRoot, { commonRoot, canonical, worktrees });
+    await assertOwnedOrProspective(gitRoot, {
+      commonRoot,
+      canonical,
+      worktrees,
+      externalOwned,
+    });
     cwd = gitRoot;
   }
 

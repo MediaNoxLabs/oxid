@@ -51,6 +51,13 @@ desktop-build:
 desktop-run:
     cargo run -p oxid-app
 
+# Live standalone replay uses optimized cryptography without release behavior.
+desktop-live-build:
+    cargo build --profile desktop-live -p oxid-app --no-default-features --features desktop,standalone-development,standalone-local
+
+desktop-live-run:
+    cargo run --profile desktop-live -p oxid-app --no-default-features --features desktop,standalone-development,standalone-local
+
 desktop-proof-benchmark-build:
     cargo build -p oxid-app --no-default-features --features desktop,developer-proof-benchmark
 
@@ -78,6 +85,10 @@ portal-macos-laptop-e2e:
 # Run the owner-invoked ARM64-Darwin Dioxus Portal journey.
 portal-desktop-e2e:
     ./scripts/e2e/portal-desktop-e2e.sh
+
+# Owner-invoked ARM64 macOS rendered developer pager smoke; captures are private.
+developer-pager-desktop-e2e:
+    ./scripts/e2e/developer-pager-desktop-e2e.sh
 
 # Start the virtual-mobile Portal issuer, resolver, offer endpoint, and authenticated manifest.
 portal-virtual-mobile-stack:
@@ -124,7 +135,38 @@ portal-android-flow-contract:
 android-portal-tailnet-physical-smoke:
     ./scripts/test-android-portal-tailnet-physical.sh
 
-# Start a fresh, owner-invoked physical Android Portal QR demo; it is not E2E evidence.
+# Prepare or resume the three exact pinned Portal images without requiring a phone or Tailnet.
+portal-tailnet-manual-prepare:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-prepare
+
+# Receipt-bound, state-preserving Portal application phases. Configure precedes build.
+portal-tailnet-manual-configure:
+    ./scripts/portal-tailnet-manual-phases.sh configure
+
+portal-tailnet-manual-build:
+    ./scripts/portal-tailnet-manual-phases.sh build
+
+portal-tailnet-manual-admit:
+    ./scripts/portal-tailnet-manual-phases.sh admit
+
+portal-tailnet-manual-install:
+    ./scripts/portal-tailnet-manual-phases.sh install
+
+portal-tailnet-manual-launch:
+    ./scripts/portal-tailnet-manual-phases.sh launch
+
+portal-tailnet-manual-phase-status:
+    ./scripts/portal-tailnet-manual-phases.sh status
+
+# Verify the exact pinned Portal source and prepared image receipt without starting Tailnet or a device.
+portal-tailnet-manual-prepared-status:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-prepared-status
+
+# Check every interactive demo prerequisite without building, installing, routing, or clearing app data.
+portal-tailnet-manual-doctor:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-doctor
+
+# Start a state-preserving demo from a completed preparation receipt; it is not E2E evidence.
 portal-tailnet-manual-start:
     ./scripts/test-android-portal-tailnet-physical.sh manual-start
 
@@ -132,9 +174,37 @@ portal-tailnet-manual-start:
 portal-tailnet-manual-status:
     ./scripts/test-android-portal-tailnet-physical.sh manual-status
 
+# Start already-created Portal services without building, installing, launching, or clearing app data.
+portal-tailnet-services-up:
+    ./scripts/e2e/portal-services-lifecycle.sh services-up
+
+# Report the receipt-owned Portal service state without changing any service or app state.
+portal-tailnet-services-status:
+    ./scripts/e2e/portal-services-lifecycle.sh services-status
+
+# Stop only receipt-owned Portal services; prepared images and app data remain intact.
+portal-tailnet-services-stop:
+    ./scripts/e2e/portal-services-lifecycle.sh services-stop
+
+# Explicitly clear only Oxid application data on one authorized physical device.
+portal-tailnet-manual-reset:
+    ./scripts/test-android-portal-tailnet-physical.sh manual-reset
+
 # Stop one receipt-supervised manual demo and restore its exact prior Serve baseline.
 portal-tailnet-manual-stop:
     ./scripts/test-android-portal-tailnet-physical.sh manual-stop
+
+# Statically validate the first repository-owned Taskflow without enabling its mutating Pi extension.
+taskflow-portal-tailnet-verify:
+    node ./scripts/factory/taskflow-static.mjs verify ./.pi/taskflows/flows/demos/portal-tailnet-prepare.json
+
+# Render the zero-token bound arguments, phase order, and maximum agent-call count.
+taskflow-portal-tailnet-plan:
+    node ./scripts/factory/taskflow-static.mjs plan ./.pi/taskflows/flows/demos/portal-tailnet-prepare.json '{"mode":"prepare-only"}'
+
+# Render the reviewable Mermaid DAG and static verification report.
+taskflow-portal-tailnet-compile:
+    node ./scripts/factory/taskflow-static.mjs compile ./.pi/taskflows/flows/demos/portal-tailnet-prepare.json
 
 # Verify exact-sequence process ownership and bounded process-group cleanup without Android or Docker.
 android-portal-avd-safety-contract:
@@ -143,6 +213,10 @@ android-portal-avd-safety-contract:
 # Verify disposable-simulator selection, receipt identity, and bounded exact cleanup without a simulator.
 ios-portal-simulator-safety-contract:
     ./scripts/e2e/ios-simulator-ownership.test.sh
+
+# Verify cold XCTest compilation and independent scenario execution budgets without a simulator.
+ios-portal-build-budget-contract:
+    ./scripts/e2e/ios-portal-build-budget-contract.test.sh
 
 # Verify the shared closed virtual-mobile evidence schema, derivation, redaction, and publication.
 portal-virtual-mobile-evidence-contract:
@@ -154,7 +228,11 @@ android-portal-exact-sequence-avd:
 
 # Build and exercise the packaged Portal profile on one newly created disposable iOS Simulator.
 ios-portal-exact-sequence-simulator:
-    @timeout -k 30s 7200s ./scripts/test-ios-portal-exact-sequence-simulator.sh
+    @timeout -k 30s 9000s ./scripts/test-ios-portal-exact-sequence-simulator.sh
+
+# Run one allow-listed iOS Portal phase with exact-input artifact reuse; never emits acceptance evidence.
+ios-portal-diagnostic phase:
+    @timeout -k 30s 9000s ./scripts/test-ios-portal-exact-sequence-simulator.sh --diagnostic-phase "{{phase}}"
 
 # Preflight both virtual targets, prequalify shared macOS behavior, then run iOS before Android.
 portal-mobile-simulators-e2e:
@@ -162,7 +240,7 @@ portal-mobile-simulators-e2e:
     @./scripts/test-ios-portal-exact-sequence-simulator.sh --preflight >tmp/issue-213/aggregate-ios-preflight.log 2>&1 || { printf '%s\n' 'portal-mobile-simulators-e2e: FAIL phase=ios-preflight' >&2; exit 1; }
     @./scripts/test-android-portal-exact-sequence-avd.sh --preflight >tmp/issue-213/aggregate-android-preflight.log 2>&1 || { printf '%s\n' 'portal-mobile-simulators-e2e: FAIL phase=android-preflight' >&2; exit 1; }
     @timeout -k 30s 7200s just portal-macos-laptop-e2e >tmp/issue-213/aggregate-macos.log 2>&1 || { printf '%s\n' 'portal-mobile-simulators-e2e: FAIL phase=macos-prequalification' >&2; exit 1; }
-    @timeout -k 30s 7200s ./scripts/test-ios-portal-exact-sequence-simulator.sh
+    @timeout -k 30s 9000s ./scripts/test-ios-portal-exact-sequence-simulator.sh
     @timeout --preserve-status -k 180s 14400s ./scripts/test-android-portal-exact-sequence-avd.sh
     @jq -s -e --arg head "$(git rev-parse HEAD)" --arg tree "$(git rev-parse 'HEAD^{tree}')" 'length == 4 and all(.[]; .oxid == {head:$head,tree:$tree}) and (.[2].platform.kind == "ios_simulator") and (.[3].platform.kind == "android_emulator")' target/portal-headless-e2e/evidence.json target/portal-desktop-e2e/evidence.json target/ios-portal-exact-sequence-simulator/evidence.json target/android-portal-exact-sequence-avd/evidence.json >/dev/null
     @echo "portal-mobile-simulators-e2e: PASS evidence=target/ios-portal-exact-sequence-simulator/evidence.json,target/android-portal-exact-sequence-avd/evidence.json"
@@ -182,6 +260,37 @@ standalone-public-balances:
 standalone-funded-finality:
     ./scripts/test-standalone-funded-finality.sh
 
+standalone-faucet:
+    ./scripts/run-standalone-faucet.sh
+
+standalone-faucet-http:
+    ./scripts/run-standalone-faucet-http.sh
+
+standalone-faucet-headless-e2e:
+    ./scripts/e2e/standalone-faucet-headless-e2e.sh
+
+standalone-night-round-trip-headless-e2e:
+    ./scripts/e2e/standalone-night-round-trip-headless-e2e.sh
+
+standalone-faucet-http-headless-e2e:
+    ./scripts/e2e/standalone-faucet-http-headless-e2e.sh
+
+# Owner-invoked private HTTPS discovery/funding lifecycle; never starts a phone.
+standalone-faucet-tailnet-start:
+    ./scripts/standalone-faucet-tailnet.sh start
+
+standalone-faucet-tailnet-status:
+    ./scripts/standalone-faucet-tailnet.sh status
+
+standalone-faucet-tailnet-stop:
+    ./scripts/standalone-faucet-tailnet.sh stop
+
+standalone-faucet-tailnet-accept:
+    ./scripts/standalone-faucet-tailnet.sh accept
+
+standalone-faucet-tailnet-lifecycle-test:
+    node --test ./scripts/e2e/standalone-faucet-tailnet-lifecycle.test.mjs
+
 standalone-funded-shielded-finality:
     ./scripts/test-standalone-funded-shielded-finality.sh
 
@@ -197,6 +306,17 @@ preprod-registration-e2e:
 standalone-phone-up:
     ./scripts/standalone-up.sh phone
 
+# Receipt-scoped Tailnet preparation for issue #556. It reuses the existing
+# stack and faucet boundaries and never replaces unrelated Serve configuration.
+standalone-tailnet-round-trip-start:
+    ./scripts/standalone-tailnet-round-trip.sh start
+
+standalone-tailnet-round-trip-status:
+    ./scripts/standalone-tailnet-round-trip.sh status
+
+standalone-tailnet-round-trip-stop:
+    ./scripts/standalone-tailnet-round-trip.sh stop
+
 standalone-down:
     ./scripts/standalone-down.sh
 
@@ -211,6 +331,10 @@ ios-deploy:
 
 ios-standalone-local:
     OXID_STANDALONE_NETWORK_PROFILE=local ./scripts/run-ios-simulator.sh
+
+# Uses only the private receipt created by standalone-tailnet-round-trip-start.
+ios-standalone-tailnet:
+    OXID_STANDALONE_NETWORK_PROFILE=tailnet ./scripts/run-ios-simulator.sh
 
 ios-dev:
     OXID_UI_PROFILE=dev ./scripts/run-ios-simulator.sh
@@ -239,14 +363,36 @@ ios-backup-smoke:
 ios-native-custody-smoke:
     ./scripts/test-ios-native-custody.sh
 
+# Prove selected-realm recovery on one explicitly selected, receipt-owned simulator.
+ios-wallet-lifecycle-simulator:
+    @timeout -k 30s 1800s ./scripts/test-ios-wallet-lifecycle-simulator.sh
+
+# Run one inventory-owned iOS Maestro journey as non-release diagnostic evidence.
+ios-maestro-focused composition flow:
+    @timeout -k 30s 1800s ./scripts/test-ios-maestro-focused.sh --composition "{{composition}}" --flow "{{flow}}"
+
 android-run:
     ./scripts/run-android-emulator.sh
 
 android-build:
     ./scripts/run-android-emulator.sh build
 
+# Build an arm64 release candidate and write a private static-check receipt.
+# This command never selects, boots, installs to, or launches an Android target.
+android-release-build:
+    env -u RUSTC_WRAPPER ./scripts/build-android-release-candidate.sh
+
 android-deploy:
     ./scripts/run-android-emulator.sh deploy
+
+# Smoke the exact receipt-bound artifact produced by `just android-release-build`.
+android-smoke-prebuilt apk="target/android-release-candidate/oxid-app-arm64-v8a-release.apk" receipt="target/android-release-candidate/receipt.json":
+    ./scripts/test-android-profile-flow.sh --apk {{quote(apk)}} --receipt {{quote(receipt)}}
+
+# Inspect an existing APK only; this does not build, install, or start Android.
+# Override apk= with the exact release artifact selected for milestone evidence.
+android-verify-16k apk="target/dx/oxid-app/debug/android/app/app/build/outputs/apk/debug/app-debug.apk":
+    node ./scripts/android-verify-16k.mjs {{quote(apk)}}
 
 android-standalone-local:
     OXID_STANDALONE_NETWORK_PROFILE=local ./scripts/run-android-emulator.sh

@@ -32,7 +32,7 @@ checkout cannot independently verify an unknown contributor's GPG keyring.
 | `headless-linux` | `./run.sh headless-integration` | same Linux host; no live services | core, headless, Compact | hard 10 min | Hosted PR lane |
 | `ui-linux` | `./run.sh ui` (profile guards, feature compilation and UI/app tests) | minimal `ci-ui` shell plus Linux GTK/WebKit libraries | UI, platform | hard 20 min; a 25 min GitHub completion cap retains terminal metrics and cleanup for cold read-only runs without treating an SLO breach as healthy | Hosted PR lane |
 | `ui-release-linux` | `./run.sh ui-release` (optimized build and forbidden-marker audit) | minimal `ci-ui` shell, release compilation | explicit feature-PR demand; complete profiles | hard 25 min | On-demand PR artifact lane and complete-profile backstop |
-| `coverage-linux` | `./run.sh coverage` | minimal `ci-coverage` shell and `cargo-llvm-cov`; host coverage explicitly enables deployment readiness, Tailnet DID publication, standalone wallet, PreProd observation, and recovery UI features that are otherwise selected only by device profiles | explicit feature-PR demand; every `develop`/`main` complete profile | hard 25 min, current-phase 70% line floor; changed production files without an instrumented mapping fail closed and are reported together, while conventional `src/**/tests.rs`, `*_tests.rs`, the reviewed declaration-only composition facade, and the explicit desktop test driver remain non-production | On-demand PR lane and complete-profile backstop |
+| `coverage-linux` | `./run.sh coverage` | minimal `ci-coverage` shell and `cargo-llvm-cov`; host coverage explicitly enables deployment readiness, Tailnet DID publication, standalone wallet, PreProd observation, and recovery UI features that are otherwise selected only by device profiles | explicit feature-PR demand; every `develop`/`main` complete profile | hard 40 min, current-phase 70% line floor; the budget includes a cold instrumented Ledger8 dependency build, while changed production files without an instrumented mapping still fail closed and are reported together; conventional `src/**/tests.rs`, `*_tests.rs`, the reviewed declaration-only composition facade, and the explicit desktop test driver remain non-production | On-demand PR lane and complete-profile backstop |
 | `quality` | `./run.sh quality --strict` | minimal uncached `ci-quality` audit/deny/rustdoc shell | explicit feature-PR demand; complete profiles; weekly schedule | hard 20 min; 9m15 on PR #165 | On-demand PR lane and complete-profile backstop |
 | `nix-package` | `nix build` | x86_64 Linux, locked Nix graph | explicit feature-PR demand; build changes; complete profiles | hard 45 min | On-demand PR lane and complete-profile backstop |
 | `compact-artifacts` | build presentation, Passport Vault artifacts and call composer together | Compact toolchain and locked p18 sources | build and Compact | hard 30 min | Hosted PR lane |
@@ -68,8 +68,20 @@ independent short policy contexts still run. `ready_for_review` and a
 `synchronize` event while `github.event.pull_request.draft` is false recompute
 the ordinary change-relevant plan for that exact head. `workflow_dispatch` is
 not draft-limited, so its profile and `targets` inputs can request any existing
-public hosted target. Pushes to `develop`, `main`, and `milestone-*` remain
-complete-profile backstops.
+public hosted target. For an on-demand run on a branch based on a milestone,
+pass `comparison_base` as the full 40-character SHA of that milestone commit.
+The planner and Coverage use the same base; the planner rejects other input
+formats, and Coverage requires the base to be an ancestor of the run's head.
+For example:
+
+```bash
+MILESTONE_SHA=$(git rev-parse origin/milestone-0.2.0)
+gh workflow run ci.yml --ref test/issue-807 -f profile=feature \
+  -f targets=coverage-linux -f "comparison_base=$MILESTONE_SHA"
+```
+
+Pushes to `develop`, `main`, and `milestone-*` remain complete-profile
+backstops.
 
 A successful draft aggregate is only truthful evidence that its selected L0
 work passed. It is not merge authorization: the existing milestone merge guard
@@ -198,6 +210,7 @@ storage ceiling before any new layer becomes required.
 | PR or push to `main` | `release` | every deterministic public hosted lane, in parallel |
 | manual workflow | selected `feature`, `integration`, or `release` | impacted, public-full, or public-full respectively; extra hosted targets may be named |
 | nightly schedule | release backstop | complete hermetic Nix suite |
+| manual Nightly dispatch from a frozen `milestone-<x.y.z>` | release qualification | full hermetic Nix suite plus checksum-pinned Scorecard CLI at the exact milestone SHA; the develop promotion audit requires both green jobs and the retained SHA-named Scorecard result |
 
 Milestone trains are the only agent-mergeable targets. `develop` remains the
 human-controlled engineering baseline and maps to the internal `integration`

@@ -17,6 +17,7 @@ use std::{
 };
 
 use base64::{Engine as _, engine::general_purpose};
+use ed25519_dalek::{Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey};
 use futures::executor::block_on;
 use oxid_adapter_did_midnight::{
     STANDALONE_COMPACT_PASSPORT_ISSUER_DID, StandaloneDidResolver, resolution_to_json_value,
@@ -30,9 +31,11 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const STARTUP_DIAGNOSTIC_LIMIT: usize = 512;
 const ISSUER_METHOD: &str = "did:midnight:undeployed:a4c9483a0c7cdd808056a93334ab97207b38b4363d1da5cbfb78ad256cd689f0#issuer-key-1";
 const ISSUER_X: &str = "r3S3KuAV2Y2wviagxqTsKNuUFmqHlVjfWwQvZaV_pQA";
 const ISSUER_Y: &str = "b8GewrvMw5hldx4dBHZSAqBhYb_p7bVdcVqC2FU08mM";
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 const SECRET_CODE: &str = "PORTAL_TEST_PRE_AUTHORIZED_CODE";
 const ACCESS_TOKEN: &str = "PORTAL_TEST_ACCESS_TOKEN";
 const NONCE: &str = "PORTAL_TEST_NONCE";
@@ -55,11 +58,46 @@ const PORTAL_STANDALONE_EXCLUDED_ENV: [&str; 10] = [
     "OXID_PRESENTATION_ARTIFACTS_DIR",
 ];
 
-fn configure_canonical_standalone(command: &mut Command) {
+fn bounded_startup_diagnostic(stderr: &[u8]) -> String {
+    let diagnostic = String::from_utf8_lossy(stderr);
+    let mut bounded = String::with_capacity(STARTUP_DIAGNOSTIC_LIMIT);
+    let mut truncated = false;
+
+    for character in diagnostic.chars() {
+        if bounded.len() + character.len_utf8() > STARTUP_DIAGNOSTIC_LIMIT {
+            truncated = true;
+            break;
+        }
+        bounded.push(if character.is_control() {
+            ' '
+        } else {
+            character
+        });
+    }
+
+    if truncated {
+        bounded.push_str(" [truncated]");
+    }
+    bounded
+}
+
+fn configure_canonical_standalone(command: &mut Command, store: &TestStore) {
     for key in PORTAL_STANDALONE_EXCLUDED_ENV {
         command.env_remove(key);
     }
     command
+        .env(
+            "OXID_DID_STORE_PATH",
+            store.root.join("private/did-records.json"),
+        )
+        .env(
+            "OXID_CREDENTIAL_STORE_PATH",
+            store.root.join("private/credentials.enc"),
+        )
+        .env(
+            "OXID_CREDENTIAL_KEY_PATH",
+            store.root.join("private/credentials.key"),
+        )
         .env("OXID_MIDNIGHT_NETWORK_ID", "undeployed")
         .env("OXID_MIDNIGHT_INDEXER_WS_URL", INDEXER_WS)
         .env("OXID_MIDNIGHT_INDEXER_HTTP_URL", INDEXER_HTTP)
@@ -104,6 +142,7 @@ impl Drop for TestStore {
     }
 }
 
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 struct ProcessHarness {
     child: Child,
     input: ChildStdin,
@@ -111,9 +150,13 @@ struct ProcessHarness {
     error: BufReader<ChildStderr>,
 }
 
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 impl ProcessHarness {
+    #[cfg(feature = "development-did-approval-fixture")]
     fn spawn(store: &TestStore, manifest_digest: &str) -> Self {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_oxid-headless"));
+        let mut command = Command::new(env!(
+            "CARGO_BIN_EXE_oxid-headless-development-did-approval-fixture"
+        ));
         command
             .env("OXID_PROFILE_STORE_PATH", store.profiles())
             .env(
@@ -149,7 +192,7 @@ impl ProcessHarness {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        configure_canonical_standalone(&mut command);
+        configure_canonical_standalone(&mut command, store);
         let mut child = command.spawn().expect("headless wallet should start");
         Self {
             input: child.stdin.take().expect("stdin"),
@@ -187,12 +230,24 @@ impl ProcessHarness {
     }
 }
 
+#[derive(Default, Clone)]
+struct HolderProofExpectation {
+    holder_did: String,
+    method_id: String,
+    public_key_x: String,
+}
+
 #[derive(Default)]
 struct ServerState {
     holder: Option<BoundCredentialRequest>,
+    holder_proof: Option<HolderProofExpectation>,
     journal: Vec<(String, String)>,
+    grant_redeemed: bool,
+    response_status: u16,
+    issued_credentials: usize,
 }
 
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 struct PortalServer {
     origin: String,
     state: Arc<Mutex<ServerState>>,
@@ -200,6 +255,7 @@ struct PortalServer {
     thread: Option<thread::JoinHandle<()>>,
 }
 
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 impl PortalServer {
     fn spawn() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("Portal fixture listener");
@@ -234,10 +290,13 @@ impl PortalServer {
                     .expect("state")
                     .journal
                     .push((path.clone(), body.clone()));
+                thread_state.lock().expect("state").response_status = 200;
                 let response = response_for(&path, &body, &thread_origin, &thread_state);
+                let status = thread_state.lock().expect("state").response_status;
                 write!(
                     stream,
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    "HTTP/1.1 {status} {}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    if status == 200 { "OK" } else { "Bad Request" },
                     response.len(),
                     response
                 )
@@ -252,8 +311,10 @@ impl PortalServer {
         }
     }
 
-    fn set_holder(&self, holder: BoundCredentialRequest) {
-        self.state.lock().expect("state").holder = Some(holder);
+    fn set_holder(&self, holder: BoundCredentialRequest, proof: HolderProofExpectation) {
+        let mut state = self.state.lock().expect("state");
+        state.holder = Some(holder);
+        state.holder_proof = Some(proof);
     }
 
     fn offer(&self) -> String {
@@ -290,6 +351,35 @@ impl PortalServer {
         let bytes = serde_json::to_vec(&manifest).expect("manifest");
         fs::write(path, &bytes).expect("manifest file");
         hex::encode(Sha256::digest(bytes))
+    }
+
+    fn post_credential_request(&self, request: &Value) -> (u16, Value) {
+        let body = serde_json::to_string(request).expect("credential request JSON");
+        let mut stream = std::net::TcpStream::connect(self.origin.trim_start_matches("http://"))
+            .expect("Portal fixture connection");
+        write!(
+            stream,
+            "POST /api/issuer/credentials HTTP/1.1\r\nHost: fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .expect("credential request write");
+        stream.flush().expect("credential request flush");
+        let mut response = String::new();
+        stream
+            .read_to_string(&mut response)
+            .expect("credential response read");
+        let (headers, body) = response
+            .split_once("\r\n\r\n")
+            .expect("credential response framing");
+        let status = headers
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|value| value.parse::<u16>().ok())
+            .expect("credential response status");
+        let body = serde_json::from_str(body).expect("credential response JSON");
+        (status, body)
     }
 }
 
@@ -368,26 +458,44 @@ fn response_for(path: &str, body: &str, origin: &str, state: &Arc<Mutex<ServerSt
         .to_string(),
         "/api/issuer/token" => {
             assert!(body.contains("pre-authorized_code=PORTAL_TEST_PRE_AUTHORIZED_CODE"));
-            json!({"access_token":ACCESS_TOKEN,"expires_in":300,"token_type":"Bearer"}).to_string()
+            let mut state = state.lock().expect("state");
+            if state.grant_redeemed {
+                state.response_status = 400;
+                json!({"error":"invalid_grant"}).to_string()
+            } else {
+                state.grant_redeemed = true;
+                json!({"access_token":ACCESS_TOKEN,"expires_in":300,"token_type":"Bearer"}).to_string()
+            }
         }
         "/api/issuer/nonce" => {
             assert!(body.is_empty(), "Portal nonce request body must be empty");
             json!({"c_nonce":NONCE,"c_nonce_expires_in":300}).to_string()
         }
         "/api/issuer/credentials" => {
-            let request: Value = serde_json::from_str(body).expect("credential request");
-            assert_eq!(request["credential_configuration_id"], "digital_passport_v1");
-            assert_eq!(request["proofs"]["jwt"].as_array().map(Vec::len), Some(1));
-            let holder_method = request["midnight"]["holderBindingMethod"]
-                .as_str()
-                .expect("holder binding method");
-            let holder = state
-                .lock()
-                .expect("state")
-                .holder
-                .clone()
-                .expect("holder public facts configured");
-            assert_eq!(holder.holder_binding_method_id, holder_method);
+            let request: Value = match serde_json::from_str(body) {
+                Ok(request) => request,
+                Err(_) => return reject_proof(state),
+            };
+            let mut server = state.lock().expect("state");
+            let proof = request["proofs"]["jwt"]
+                .as_array()
+                .and_then(|proofs| (proofs.len() == 1).then_some(proofs))
+                .and_then(|proofs| proofs[0].as_str());
+            let holder_method = request["midnight"]["holderBindingMethod"].as_str();
+            let holder = server.holder.clone();
+            let expected = server.holder_proof.as_ref();
+            if request["credential_configuration_id"] != "digital_passport_v1"
+                || holder.as_ref().map(|holder| holder.holder_binding_method_id.as_str()) != holder_method
+                || proof.zip(expected).is_none_or(|(proof, expected)| {
+                    !validate_holder_proof(proof, expected, origin)
+                })
+            {
+                drop(server);
+                return reject_proof(state);
+            }
+            server.issued_credentials += 1;
+            let holder = holder.expect("holder public facts configured");
+            drop(server);
             let bundle = block_on(
                 StandaloneBoundCompactCredentialIssuer::new(Arc::new(SystemClock)).issue(
                     holder.clone(),
@@ -435,6 +543,104 @@ fn response_for(path: &str, body: &str, origin: &str, state: &Arc<Mutex<ServerSt
     }
 }
 
+fn reject_proof(state: &Arc<Mutex<ServerState>>) -> String {
+    state.lock().expect("state").response_status = 400;
+    json!({"error":"invalid_proof"}).to_string()
+}
+
+fn validate_holder_proof(proof: &str, expected: &HolderProofExpectation, audience: &str) -> bool {
+    let mut parts = proof.split('.');
+    let (Some(header), Some(payload), Some(signature), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    let decode_json = |part: &str| {
+        general_purpose::URL_SAFE_NO_PAD
+            .decode(part)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+    };
+    let (Some(header_value), Some(payload_value)) = (decode_json(header), decode_json(payload))
+    else {
+        return false;
+    };
+    if header_value["alg"] != "EdDSA"
+        || header_value["typ"] != "openid4vci-proof+jwt"
+        || header_value["kid"] != expected.method_id
+        || !expected
+            .method_id
+            .starts_with(&format!("{}#", expected.holder_did))
+        || payload_value["aud"] != audience
+        || payload_value["nonce"] != NONCE
+        || !payload_value["iat"].is_u64()
+    {
+        return false;
+    }
+    let Ok(public_key) = general_purpose::URL_SAFE_NO_PAD.decode(&expected.public_key_x) else {
+        return false;
+    };
+    let Ok(public_key) = <[u8; 32]>::try_from(public_key.as_slice()) else {
+        return false;
+    };
+    let Ok(signature) = general_purpose::URL_SAFE_NO_PAD.decode(signature) else {
+        return false;
+    };
+    let Ok(signature) = Signature::try_from(signature.as_slice()) else {
+        return false;
+    };
+    VerifyingKey::from_bytes(&public_key)
+        .and_then(|key| key.verify(format!("{header}.{payload}").as_bytes(), &signature))
+        .is_ok()
+}
+
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
+fn signed_holder_proof(
+    signing_key: &SigningKey,
+    method_id: &str,
+    audience: &str,
+    nonce: &str,
+) -> String {
+    let protected = general_purpose::URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "alg":"EdDSA",
+            "kid":method_id,
+            "typ":"openid4vci-proof+jwt"
+        }))
+        .expect("holder proof header"),
+    );
+    let claims = general_purpose::URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({"aud":audience,"iat":1,"nonce":nonce}))
+            .expect("holder proof claims"),
+    );
+    let signing_input = format!("{protected}.{claims}");
+    let signature = signing_key.sign(signing_input.as_bytes());
+    format!(
+        "{signing_input}.{}",
+        general_purpose::URL_SAFE_NO_PAD.encode(signature.to_bytes())
+    )
+}
+
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
+fn with_holder_proof(request: &Value, proof: &str) -> Value {
+    let mut request = request.clone();
+    request["proofs"]["jwt"] = json!([proof]);
+    request
+}
+
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
+fn assert_holder_proof_rejected(server: &PortalServer, request: &Value, proof: &str) {
+    let (status, response) = server.post_credential_request(&with_holder_proof(request, proof));
+    assert_eq!(status, 400);
+    assert_eq!(response, json!({"error":"invalid_proof"}));
+    assert!(!response.to_string().contains(SECRET_CODE));
+    assert_eq!(
+        server.state.lock().expect("state").issued_credentials,
+        1,
+        "rejected proof must stop before credential issuance"
+    );
+}
+
 fn portal_private_parts() -> Value {
     fn padded<const N: usize>(value: &[u8]) -> [u8; N] {
         let mut output = [0_u8; N];
@@ -460,12 +666,14 @@ fn portal_private_parts() -> Value {
     })
 }
 
+#[cfg_attr(not(feature = "development-did-approval-fixture"), allow(dead_code))]
 fn request(process: &mut ProcessHarness, id: &str, method: &str, params: Value) -> Value {
     process.request(json!({
         "protocol":"oxid.headless.v1","id":id,"method":method,"params":params
     }))
 }
 
+#[cfg(feature = "development-did-approval-fixture")]
 #[test]
 fn portal_standalone_profile_issues_encrypts_restores_and_reverifies_in_a_new_process() {
     let store = TestStore::new();
@@ -521,18 +729,35 @@ fn portal_standalone_profile_issues_encrypts_restores_and_reverifies_in_a_new_pr
         .expect("Jubjub method");
     let binding_method = binding["id"].as_str().expect("binding method").to_owned();
     assert_ne!(authentication_method, binding_method);
-    server.set_holder(BoundCredentialRequest {
-        holder_did: holder_did.clone(),
-        holder_binding_method_id: binding_method.clone(),
-        public_key_x: binding["publicKeyJwk"]["x"]
-            .as_str()
-            .expect("binding x")
-            .to_owned(),
-        public_key_y: binding["publicKeyJwk"]["y"]
-            .as_str()
-            .expect("binding y")
-            .to_owned(),
-    });
+    let authentication = document["verificationMethods"]
+        .as_array()
+        .expect("verification methods")
+        .iter()
+        .find(|value| value["id"] == authentication_method)
+        .expect("authentication verification method");
+    assert_eq!(authentication["publicKeyJwk"]["crv"], "Ed25519");
+    server.set_holder(
+        BoundCredentialRequest {
+            holder_did: holder_did.clone(),
+            holder_binding_method_id: binding_method.clone(),
+            public_key_x: binding["publicKeyJwk"]["x"]
+                .as_str()
+                .expect("binding x")
+                .to_owned(),
+            public_key_y: binding["publicKeyJwk"]["y"]
+                .as_str()
+                .expect("binding y")
+                .to_owned(),
+        },
+        HolderProofExpectation {
+            holder_did: holder_did.clone(),
+            method_id: authentication_method.clone(),
+            public_key_x: authentication["publicKeyJwk"]["x"]
+                .as_str()
+                .expect("authentication x")
+                .to_owned(),
+        },
+    );
 
     let routed = request(
         &mut first,
@@ -597,10 +822,126 @@ fn portal_standalone_profile_issues_encrypts_restores_and_reverifies_in_a_new_pr
         }),
     );
     assert_eq!(accepted["result"]["issuance"]["state"], "succeeded");
+    let (proof, credential_request, expected) = {
+        let state = server.state.lock().expect("state");
+        let credential_request = state
+            .journal
+            .iter()
+            .find(|(path, _)| path == "/api/issuer/credentials")
+            .and_then(|(_, body)| serde_json::from_str::<Value>(body).ok())
+            .expect("issued credential request");
+        let proof = credential_request["proofs"]["jwt"][0]
+            .as_str()
+            .expect("issued request proof")
+            .to_owned();
+        (
+            proof,
+            credential_request,
+            state.holder_proof.clone().expect("proof expectation"),
+        )
+    };
+    assert!(validate_holder_proof(&proof, &expected, &server.origin));
+    let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
+    server.state.lock().expect("state").holder_proof = Some(HolderProofExpectation {
+        holder_did: expected.holder_did.clone(),
+        method_id: expected.method_id.clone(),
+        public_key_x: general_purpose::URL_SAFE_NO_PAD
+            .encode(signing_key.verifying_key().to_bytes()),
+    });
+    let signed = |method: &str, audience: &str, nonce: &str| {
+        signed_holder_proof(&signing_key, method, audience, nonce)
+    };
+    assert_holder_proof_rejected(
+        &server,
+        &credential_request,
+        &signed(&expected.method_id, "http://wrong.example", NONCE),
+    );
+    assert_holder_proof_rejected(
+        &server,
+        &credential_request,
+        &signed(&expected.method_id, &server.origin, "wrong-nonce"),
+    );
+    assert_holder_proof_rejected(
+        &server,
+        &credential_request,
+        &signed("did:midnight:wrong#key", &server.origin, NONCE),
+    );
+    let wrong_key = SigningKey::from_bytes(&[8_u8; 32]);
+    assert_holder_proof_rejected(
+        &server,
+        &credential_request,
+        &signed_holder_proof(&wrong_key, &expected.method_id, &server.origin, NONCE),
+    );
+    assert_holder_proof_rejected(&server, &credential_request, "not-a-jwt");
+    let valid_controlled = signed(&expected.method_id, &server.origin, NONCE);
+    let invalid_signature = format!(
+        "{}.{}",
+        valid_controlled.rsplit_once('.').expect("JWT signature").0,
+        "AA"
+    );
+    assert_holder_proof_rejected(&server, &credential_request, &invalid_signature);
+    let credential_requests_before_replay = server
+        .state
+        .lock()
+        .expect("state")
+        .journal
+        .iter()
+        .filter(|(path, _)| path == "/api/issuer/credentials")
+        .count();
     let credential_id = accepted["result"]["issuance"]["credentialId"]
         .as_str()
         .expect("credential id")
         .to_owned();
+
+    let replay_prepared = request(
+        &mut first,
+        "replay-prepare",
+        "credential.issuance.prepare",
+        json!({"offer":offer}),
+    );
+    let replay_issuance_id = replay_prepared["result"]["issuance"]["id"]
+        .as_str()
+        .expect("replay issuance id");
+    let replayed = request(
+        &mut first,
+        "replay-accept",
+        "credential.issuance.accept",
+        json!({
+            "issuanceId":replay_issuance_id,
+            "holderDid":holder_did,
+            "methodId":authentication_method,
+            "holderBindingMethodId":binding_method,
+            "confirmed":true,
+            "intent":"ACCEPT_CREDENTIAL_ISSUANCE"
+        }),
+    );
+    assert_eq!(
+        replayed["ok"], false,
+        "a redeemed grant must not issue again"
+    );
+    assert_eq!(replayed["error"]["code"], "issuer_rejected");
+    assert!(!replayed.to_string().contains(SECRET_CODE));
+    let server_state = server.state.lock().expect("state");
+    assert_eq!(
+        server_state
+            .journal
+            .iter()
+            .filter(|(path, _)| path == "/api/issuer/token")
+            .count(),
+        2,
+        "a replay must reach token exchange"
+    );
+    assert_eq!(
+        server_state
+            .journal
+            .iter()
+            .filter(|(path, _)| path == "/api/issuer/credentials")
+            .count(),
+        credential_requests_before_replay,
+        "a replay must stop before the credential endpoint"
+    );
+    drop(server_state);
+
     let listed = request(&mut first, "list", "credential.list", json!({}));
     assert_eq!(
         listed["result"]["credentials"].as_array().map(Vec::len),
@@ -738,11 +1079,15 @@ fn portal_startup_accepts_only_the_exact_local_standalone_bundle() {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_canonical_standalone(&mut accepted);
+    configure_canonical_standalone(&mut accepted, &store);
     let output = accepted
         .output()
         .expect("canonical headless startup result");
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "canonical startup failed: {}",
+        bounded_startup_diagnostic(&output.stderr)
+    );
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 
@@ -768,7 +1113,7 @@ fn portal_startup_accepts_only_the_exact_local_standalone_bundle() {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        configure_canonical_standalone(&mut command);
+        configure_canonical_standalone(&mut command, &store);
         command.env(key, value);
         let output = command.output().expect("headless startup result");
         assert!(!output.status.success(), "noncanonical {key} must fail");
@@ -796,7 +1141,7 @@ fn portal_startup_accepts_only_the_exact_local_standalone_bundle() {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        configure_canonical_standalone(&mut command);
+        configure_canonical_standalone(&mut command, &store);
         command.env_remove(removed);
         let output = command.output().expect("headless startup result");
         assert!(!output.status.success(), "partial bundle missing {removed}");
@@ -831,7 +1176,7 @@ fn portal_startup_accepts_only_the_exact_local_standalone_bundle() {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        configure_canonical_standalone(&mut command);
+        configure_canonical_standalone(&mut command, &store);
         command.env(extra, marker);
         let output = command.output().expect("headless startup result");
         assert!(!output.status.success(), "extra setting {extra} must fail");

@@ -7,7 +7,7 @@
 - Amends: ADR-0024, ADR-0027, ADR-0029, and ADR-0034
 - Implementation state: Bounded public journal, persist-before-broadcast boundary, restart restore/duplicate prevention, finalized-chain reconciliation, headless methods, and mobile recovery presentation implemented
 - Storage hardening: owner-private reads and atomic replacement delegate to the shared `store-atomic` adapter
-- Amended by: ADR-0079, ADR-0080
+- Amended by: ADR-0079, ADR-0080, ADR-0110
 
 ## Context
 

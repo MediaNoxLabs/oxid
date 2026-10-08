@@ -56,7 +56,8 @@ fn receives_reverifies_and_deletes_a_credential_without_exposing_wire_bytes() {
 
 #[test]
 fn issues_and_stores_a_verified_credential_through_the_headless_flow() {
-    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let wallet =
+        HeadlessWallet::new(oxid_composition::compose_in_memory_with_development_did_approval());
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"issuance-profile","method":"wallet.profile.create","params":{"displayName":"Issuance flow"}}"#,
@@ -265,25 +266,20 @@ fn issues_and_stores_a_verified_credential_through_the_headless_flow() {
         .expect("original holder x-coordinate")
         .to_owned();
     let rotated_holder = execute_with_wallet(
-            &wallet,
-            &json!({
-                "protocol": PROTOCOL_VERSION,
-                "id": "presentation-holder-rotate",
-                "method": "did.update",
-                "params": {
-                    "operation": "updateVerificationMethod",
-                    "did": did,
-                    "methodId": holder_binding_method_id,
-                    "algorithm": "jubjub",
-                    "confirmation": {
-                        "title": "Rotate presentation key",
-                        "summary": "Authorize the current DID method to replace its protected presentation key.",
-                        "confirmed": true
-                    }
-                }
-            })
-            .to_string(),
-        );
+        &wallet,
+        &json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "presentation-holder-rotate",
+            "method": "did.update",
+            "params": {
+                "operation": "updateVerificationMethod",
+                "did": did,
+                "methodId": holder_binding_method_id,
+                "algorithm": "jubjub",
+            }
+        })
+        .to_string(),
+    );
     let rotated_holder_x =
         rotated_holder[0]["result"]["didRecord"]["document"]["verificationMethods"]
             .as_array()
@@ -481,11 +477,6 @@ fn issues_and_stores_a_verified_credential_through_the_headless_flow() {
                 "did": did,
                 "relationship": "assertionMethod",
                 "methodId": holder_binding_method_id,
-                "confirmation": {
-                    "title": "Remove presentation authority",
-                    "summary": "Remove this DID method from the assertion relationship.",
-                    "confirmed": true
-                }
             }
         })
         .to_string(),
@@ -529,5 +520,69 @@ fn issues_and_stores_a_verified_credential_through_the_headless_flow() {
         !rejected_without_authority[0]
             .to_string()
             .contains("vp_token")
+    );
+}
+
+#[test]
+fn ordinary_composition_rejects_issuance_without_approval_and_has_zero_effects() {
+    const DID: &str =
+        "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let created = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"unapproved-profile","method":"wallet.profile.create","params":{"displayName":"Unapproved issuance"}}"#,
+    );
+    let profile_id = created[0]["result"]["profile"]["id"]
+        .as_str()
+        .expect("profile");
+    let selected = execute_with_wallet(
+        &wallet,
+        &json!({"protocol": PROTOCOL_VERSION, "id": "unapproved-select", "method": "wallet.profile.select", "params": {"profileId": profile_id}}).to_string(),
+    );
+    assert_eq!(selected[0]["ok"], true);
+    let prepared = execute_with_wallet(
+        &wallet,
+        &json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "unapproved-prepare",
+            "method": "credential.issuance.prepare",
+            "params": {"offer": standalone_credential_offer()},
+        })
+        .to_string(),
+    );
+    let issuance_id = prepared[0]["result"]["issuance"]["id"]
+        .as_str()
+        .expect("issuance id");
+    let rejected = execute_with_wallet(
+        &wallet,
+        &json!({
+            "protocol": PROTOCOL_VERSION,
+            "id": "unapproved-accept",
+            "method": "credential.issuance.accept",
+            "params": {
+                "issuanceId": issuance_id,
+                "holderDid": DID,
+                "methodId": format!("{DID}#auth-1"),
+                "holderBindingMethodId": format!("{DID}#holder-jubjub-1"),
+                "confirmed": true,
+                "intent": "ACCEPT_CREDENTIAL_ISSUANCE",
+            },
+        })
+        .to_string(),
+    );
+    assert_eq!(rejected[0]["error"]["code"], "approval_unavailable");
+
+    let state = execute_with_wallet(
+        &wallet,
+        &format!(
+            "{}\n{}",
+            json!({"protocol": PROTOCOL_VERSION, "id": "unapproved-get", "method": "credential.issuance.get", "params": {"issuanceId": issuance_id}}),
+            json!({"protocol": PROTOCOL_VERSION, "id": "unapproved-list", "method": "credential.list", "params": {}}),
+        ),
+    );
+    assert_eq!(state[0]["result"]["issuance"]["state"], "awaiting_consent");
+    assert_eq!(
+        state[1]["result"]["credentials"].as_array().map(Vec::len),
+        Some(0)
     );
 }

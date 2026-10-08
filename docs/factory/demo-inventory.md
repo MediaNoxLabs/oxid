@@ -18,6 +18,15 @@ node scripts/demo-inventory.mjs prepare wallet-root-recovery-native-presence and
 node scripts/demo-inventory.mjs use-case list
 ```
 
+Approved product use cases carry an interaction budget. Entry taps are counted
+from the stable navigation shell (or from an already-classified ingress), and
+decision screens are Oxid-owned screens that ask the holder to choose or
+confirm something. The app action that invokes native authorization counts as
+an authorization prompt; the OS-owned prompt and network wait do not count as
+additional screens. A budget is a design acceptance target, not evidence that
+the journey passed. Normal holder journeys require zero routine manual sync
+actions. Deferred work carries no active budget claim.
+
 In Pi, `/scenario list`, `/scenario show <id>`, and
 `/scenario prepare <id> [target-id]` use the same validator; `/use-case list`
 and `/use-case show <id>` expose the atomic aliases. When no target is supplied,
@@ -52,6 +61,58 @@ cadence/evidence values, and scenarios without test mappings. Live, expensive
 or physical evidence remains on its declared cadence; it is not a universal PR
 gate.
 
+## Approved product journeys
+
+The 0.2.0 product map adds the wallet and identity use cases without replacing
+the lower-level executable inventory: onboarding, recovery, profile/realm
+switching, automatic reconciliation, receive/fund NIGHT, send NIGHT, DID
+inventory/creation, DID detail/maintenance, OID4VCI issuance, credential
+inventory/detail, OID4VP presentation, SIOPv2 authentication,
+activity/transaction detail, security/backup settings, and development
+diagnostics.
+
+They compose into five ordered journeys:
+
+1. `journey-new-wallet-first-night-transfer`
+2. `journey-realm-profile-resilience`
+3. `journey-did-to-issued-credential`
+4. `journey-presentation-and-authentication`
+5. `journey-passport-vault-readiness` — approved as a future concept and
+   deferred beyond 0.2.0
+
+The first four journeys compose the 0.2.0 review products
+`oxid-wallet-essentials` and `oxid-identity-wallet`. Passport Vault and the
+`oxid-passport` demo remain in the inventory as post-0.2.0 product concepts;
+they are not milestone acceptance requirements. The inventory deliberately
+records every unfinished default target as **unsupported; planned** until an
+exact target has
+complete commands, health checks, cleanup, and evidence. `/scenario prepare`
+therefore reports the gap instead of converting scattered component evidence
+into a false end-to-end claim. A follow-up UI or Maestro slice promotes only
+the journey it actually makes repeatable.
+
+## Native transport trust readiness
+
+`transportTrustReadiness` is a closed, payload-free release-evidence manifest.
+It classifies the indexer, node, and prover consistently across three route
+classes: Standalone loopback uses `DevelopmentLoopback`, private Tailnet routes
+use `BundledPublicRoots`, and PreProd uses the operating system's
+`PlatformTrust`. The manifest stores prerequisites and evidence classes, never
+routes, peers, certificate material, credentials, or device identity.
+
+Android emulator and iOS Simulator results remain diagnostics. Physical Android
+is an explicit owner-invoked acceptance lane for Tailnet and PreProd; it is not
+part of ordinary merge CI. Physical iOS is recorded as planned/unsupported until
+signing, deployment, and a reviewed runbook exist. An unavailable capability is
+reported as unavailable rather than inferred from host or simulator evidence.
+
+The dependency audit deliberately records two verifier lines. The pinned
+Jsonrpsee 0.24.11 transport (through Subxt 0.44.3) owns
+`rustls-platform-verifier` 0.5.3, while Reqwest 0.13.4 and the shared platform
+boundary own 0.7.0. [`check-transport-trust.sh`](../../scripts/check-transport-trust.sh)
+keeps that temporary upstream split bounded; consolidation requires a separately
+verified Jsonrpsee/Subxt upgrade.
+
 ## Initial slice
 
 `wallet-root-recovery-native-presence` records the merged native-presence recovery
@@ -67,11 +128,31 @@ automated, privacy-preserving physical-device evidence remains a planned gap.
 `standalone-profile-asset-synchronization` covers only the shipped explicit
 standalone-development composition: its fixed `undeployed` network identity,
 compile-time `local` (loopback) or `tailnet` route class, and independent
-public NIGHT, DUST, and shielded synchronization states. Local simulator runs
-are diagnostic. The physical Android Tailnet lane is also a development-route
+public NIGHT, DUST, and shielded synchronization states. The send recipient step may scan only the closed public NIGHT receive request or a
+validated raw Bech32m address, and only fills the recipient field; it never advances the
+wizard or routes identity. The undeployed label is development-only routing context, not an
+authenticated genesis identity. Local simulator runs are diagnostic. The physical Android Tailnet lane is also a development-route
 diagnostic, not public-network or production acceptance. It records freshness
 states rather than a balance assertion because the public-genesis development
 state is mutable.
+
+`standalone-two-wallet-night-and-dust` is the localhost/headless two-actor
+wallet round trip. A separate compile- and runtime-gated localhost faucet gives
+each fresh isolated wallet one fixed NIGHT grant, then each wallet explicitly
+registers and observes positive DUST within ten minutes. A → B imports B's
+versioned NIGHT receive request; B → A validates A's raw Bech32m fallback.
+Both included transfers reconcile as confirmed incoming/outgoing history and
+their included submission journals remain readable. Process-local development
+custody deliberately does not make a restart or recovery claim. See
+[`standalone-headless-faucet.md`](standalone-headless-faucet.md).
+The scenario does not claim Tailnet, PreProd, QR/browser presentation, shielded
+funding, UI, simulator, or physical-device behavior.
+
+`standalone-two-wallet-http-funding` qualifies the same grant policy through a
+real loopback HTTP/1.1 listener. It starts the listener on an ephemeral local
+port, funds two new isolated headless wallets, and requires each authoritative
+balance to equal exactly 50,000 NIGHT. This remains headless localhost evidence;
+Tailnet routing and responsive discovery presentation belong to issue #540.
 
 ## Development proof and local diagnostics slice
 

@@ -4,6 +4,9 @@ package dev.dioxus.main
 
 import android.content.Intent
 import android.os.Bundle
+import java.nio.ByteBuffer
+import android.webkit.WebView
+import androidx.activity.OnBackPressedCallback
 import io.medianox.oxid.mobile.OxidMobilePlugin
 
 typealias BuildConfig = io.medianox.oxid.BuildConfig
@@ -14,10 +17,32 @@ typealias BuildConfig = io.medianox.oxid.BuildConfig
  */
 class MainActivity : WryActivity() {
     private val oxidMobilePlugin by lazy { OxidMobilePlugin(this) }
+    private var oxidWebView: WebView? = null
+    private lateinit var applicationBackCallback: OnBackPressedCallback
+
+    override val handleBackNavigation: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         captureIdentityLink(intent)
         super.onCreate(savedInstanceState)
+        applicationBackCallback = object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val webView = oxidWebView
+                if (webView == null) {
+                    delegateBackToHost()
+                    return
+                }
+                webView.evaluateJavascript(APPLICATION_BACK_SCRIPT) { handled ->
+                    if (handled != "true") delegateBackToHost()
+                }
+            }
+        }
+        onBackPressedDispatcher.addCallback(this, applicationBackCallback)
+    }
+
+    override fun onWebViewCreate(webView: WebView) {
+        super.onWebViewCreate(webView)
+        oxidWebView = webView
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -51,6 +76,15 @@ class MainActivity : WryActivity() {
         OxidMobilePlugin.captureIdentityLink(intent.dataString)
     }
 
+    private fun delegateBackToHost() {
+        applicationBackCallback.isEnabled = false
+        try {
+            onBackPressedDispatcher.onBackPressed()
+        } finally {
+            applicationBackCallback.isEnabled = true
+        }
+    }
+
     /** JNI entry points use the activity instance so Android resolves classes with the app loader. */
     fun oxidStartScanJson(): String = oxidMobilePlugin.startScanJson()
 
@@ -79,7 +113,33 @@ class MainActivity : WryActivity() {
     fun oxidTakeBackupDocumentResultJson(): String =
         oxidMobilePlugin.takeBackupDocumentResultJson()
 
-    fun oxidCustodyJson(request: String): String = oxidMobilePlugin.custodyJson(request)
+    fun oxidAuthorizeRecoveryPhraseRevealJson(): String =
+        oxidMobilePlugin.authorizeRecoveryPhraseRevealJson()
+
+    fun oxidCustodyInspectControl(profileId: String): String =
+        oxidMobilePlugin.custodyInspectControl(profileId)
+
+    fun oxidCustodyInitializeControl(profileId: String, source: ByteBuffer): String =
+        oxidMobilePlugin.custodyInitializeControl(profileId, source)
+
+    fun oxidCustodyPrepareUnlockControl(profileId: String, reason: String): String =
+        oxidMobilePlugin.custodyPrepareUnlockControl(profileId, reason)
+
+    fun oxidCustodyPrepareLoadControl(profileId: String): String =
+        oxidMobilePlugin.custodyPrepareLoadControl(profileId)
+
+    fun oxidCustodyPendingLengthJson(): String = oxidMobilePlugin.custodyPendingLengthJson()
+
+    fun oxidCustodyTakePending(request: String, destination: ByteBuffer): String =
+        oxidMobilePlugin.custodyTakePending(request, destination)
+
+    fun oxidCustodyDiscardPending(): String = oxidMobilePlugin.custodyDiscardPending()
+
+    fun oxidCustodySaveControl(profileId: String, source: ByteBuffer): String =
+        oxidMobilePlugin.custodySaveControl(profileId, source)
+
+    fun oxidCustodyLockControl(profileId: String): String =
+        oxidMobilePlugin.custodyLockControl(profileId)
 
     /** Smoke-only JNI failure injection; normal builds have no Rust caller for this method. */
     fun oxidThrowForJniRecoveryTest(): String {
@@ -89,4 +149,15 @@ class MainActivity : WryActivity() {
 
     /** Side-effect-free second call for the smoke-only JNI recovery probe. */
     fun oxidJniRecoveryProbeJson(): String = "{\"status\":\"ready\"}"
+
+    companion object {
+        private const val APPLICATION_BACK_SCRIPT = """
+            (() => {
+                const action = document.querySelector('button.back-action');
+                if (!(action instanceof HTMLButtonElement) || action.disabled) return false;
+                action.click();
+                return true;
+            })()
+        """
+    }
 }

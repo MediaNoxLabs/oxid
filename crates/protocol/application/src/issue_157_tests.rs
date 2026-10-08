@@ -9,6 +9,26 @@ const AUTHENTICATION_ID: &str = "authentication_issue_157";
 const SIGNED_SECRET: &[u8] = b"issued-signed-credential-secret";
 const PROOF_SECRET: &[u8] = b"issued-detached-proof-secret";
 const PRIVATE_SECRET: &[u8] = b"issued-private-material-secret";
+const HOLDER_DID: &str =
+    "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+struct IssuanceAuthority(
+    oxid_foundation::AcceptedFlowIssuer<{ oxid_foundation::CREDENTIAL_ISSUANCE_FLOW_KIND }>,
+);
+
+impl CredentialIssuanceAuthorityPort for IssuanceAuthority {
+    fn mint(
+        &self,
+        request: CredentialIssuanceAuthorityRequest,
+    ) -> Result<AcceptedCredentialIssuanceFlow, AcceptedFlowApprovalError> {
+        Ok(self.0.mint(
+            request,
+            oxid_foundation::UnixTimestampMillis::new(1),
+            oxid_foundation::UnixTimestampMillis::new(2),
+            0,
+        ))
+    }
+}
 
 struct IssuanceProtocol {
     discard_failures: usize,
@@ -85,9 +105,10 @@ fn issuance_service(
     sink_error: IssuedCredentialSinkError,
     discard_failures: usize,
 ) -> CredentialIssuanceService {
-    CredentialIssuanceService::new(
+    CredentialIssuanceService::with_authority(
         Arc::new(IssuanceProtocol::new(discard_failures)),
         Arc::new(FailingSink(sink_error)),
+        Arc::new(IssuanceAuthority(oxid_foundation::AcceptedFlowIssuer::new())),
     )
 }
 
@@ -106,9 +127,9 @@ fn accept_command() -> AcceptCredentialIssuanceCommand {
     AcceptCredentialIssuanceCommand {
         profile_id: PROFILE.to_owned(),
         issuance_id: ISSUANCE_ID.to_owned(),
-        holder_did: "did:midnight:undeployed:holder".to_owned(),
-        method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
-        holder_binding_method_id: "did:midnight:undeployed:holder#holder-jubjub-1".to_owned(),
+        holder_did: HOLDER_DID.to_owned(),
+        method_id: format!("{HOLDER_DID}#auth-1"),
+        holder_binding_method_id: format!("{HOLDER_DID}#holder-jubjub-1"),
         confirmed: true,
         intent: "ACCEPT_CREDENTIAL_ISSUANCE".to_owned(),
     }
@@ -157,7 +178,15 @@ fn issued_credential_sink_errors_are_terminal_redacted_and_replay_safe() {
         assert_eq!(failure, Err(CredentialIssuanceError::Sink(sink_error)));
 
         let failed = inspect_issuance(&service);
-        assert_eq!(failed.state, "failed");
+        let expected_state = if matches!(
+            sink_error,
+            IssuedCredentialSinkError::Unavailable | IssuedCredentialSinkError::PersistenceFailed
+        ) {
+            "outcome_unknown"
+        } else {
+            "failed"
+        };
+        assert_eq!(failed.state, expected_state);
         assert_eq!(failed.failure_code.as_deref(), Some(failure_code));
         assert_eq!(failed.credential_id, None);
         assert_eq!(
@@ -205,6 +234,13 @@ fn issuance_discard_failure_preserves_awaiting_session_for_retry() {
     let retained = inspect_issuance(&service);
     assert_eq!(retained.state, "awaiting_consent");
     assert_eq!(retained.failure_code, None);
+    assert!(
+        ListCredentialIssuanceActivityUseCase::execute(&service, PROFILE.to_owned())
+            .expect("activity projection")
+            .records
+            .is_empty(),
+        "a local discard failure is not evidence of an uncertain issuance"
+    );
 
     let refused = RefuseCredentialIssuanceUseCase::execute(
         &service,
@@ -218,8 +254,13 @@ fn issuance_discard_failure_preserves_awaiting_session_for_retry() {
 }
 
 #[test]
-fn failed_issuance_discard_failure_preserves_failure_for_retry() {
-    let service = issuance_service(IssuedCredentialSinkError::PersistenceFailed, 1);
+fn uncertain_issuance_discard_failure_preserves_unknown_outcome_for_retry() {
+    let protocol = Arc::new(IssuanceProtocol::new(1));
+    let service = CredentialIssuanceService::with_authority(
+        protocol.clone(),
+        Arc::new(FailingSink(IssuedCredentialSinkError::PersistenceFailed)),
+        Arc::new(IssuanceAuthority(oxid_foundation::AcceptedFlowIssuer::new())),
+    );
     prepare_issuance(&service);
     assert_eq!(
         poll(AcceptCredentialIssuanceUseCase::execute(
@@ -244,7 +285,7 @@ fn failed_issuance_discard_failure_preserves_failure_for_retry() {
         ))
     );
     let retained = inspect_issuance(&service);
-    assert_eq!(retained.state, "failed");
+    assert_eq!(retained.state, "outcome_unknown");
     assert_eq!(
         retained.failure_code.as_deref(),
         Some("credential_persistence_failed")
@@ -257,9 +298,22 @@ fn failed_issuance_discard_failure_preserves_failure_for_retry() {
             issuance_id: ISSUANCE_ID.to_owned(),
         },
     )
-    .expect("failed-session discard can be retried");
-    assert_eq!(refused.state, "refused");
-    assert_eq!(refused.failure_code, None);
+    .expect("uncertain-session discard can be retried");
+    assert_eq!(refused.state, "outcome_unknown");
+    assert_eq!(
+        refused.failure_code.as_deref(),
+        Some("credential_persistence_failed")
+    );
+    let duplicate = RefuseCredentialIssuanceUseCase::execute(
+        &service,
+        RefuseCredentialIssuanceCommand {
+            profile_id: PROFILE.to_owned(),
+            issuance_id: ISSUANCE_ID.to_owned(),
+        },
+    )
+    .expect("duplicate discard is idempotent");
+    assert_eq!(duplicate.state, "outcome_unknown");
+    assert_eq!(protocol.discard_calls.load(Ordering::SeqCst), 2);
 }
 
 struct AuthenticationProtocol {

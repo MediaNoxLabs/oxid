@@ -56,8 +56,8 @@ pub use shielded_checkpoint::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use submission::{
-    MidnightChainIdentityError, MidnightProvingMode, MidnightStandaloneConfig,
-    MidnightStandaloneConfigError, authenticate_midnight_chain_identity,
+    MidnightChainIdentityError, MidnightProvingMode, MidnightRemoteProvingMaterialSource,
+    MidnightStandaloneConfig, MidnightStandaloneConfigError, authenticate_midnight_chain_identity,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use submission_journal::{
@@ -130,7 +130,7 @@ pub(crate) const ZSWAP_ROLE: u32 = 3;
 pub(crate) const ZSWAP_INDEX: u32 = 0;
 
 // Canonical ledger-8 atomic-unit semantics reviewed at
-// midnight-ledger d9414884db9da9e9b1f6f3a7f742d79a5732f817,
+// midnight-ledger b85f5d8e503fd1d7a1b128bbc1d7156baf823a65,
 // ledger/src/structure.rs. Keeping these adapter-local avoids importing the
 // ledger's transaction/proof graph into a read-model-only capability.
 pub(crate) const STARS_PER_NIGHT: u128 = 1_000_000;
@@ -850,6 +850,31 @@ where
             .map_err(map_account_to_dust_error)?;
         self.dust_sync.cancel(profile_id, &network)
     }
+
+    fn dust_status_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        self.dust_sync.status(profile_id, network_id)
+    }
+
+    fn start_dust_sync_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        let account_index = self.account_index(profile_id, network_id)?;
+        self.dust_sync.start(profile_id, network_id, account_index)
+    }
+
+    fn cancel_dust_sync_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletDustSyncSnapshot, WalletDustSyncPortError> {
+        self.dust_sync.cancel(profile_id, network_id)
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -888,6 +913,32 @@ where
             .selected(profile_id)
             .map_err(map_account_to_shielded_error)?;
         self.shielded_sync.cancel(profile_id, &network)
+    }
+
+    fn shielded_status_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        self.shielded_sync.status(profile_id, network_id)
+    }
+
+    fn start_shielded_sync_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        let account_index = self.shielded_account_index(profile_id, network_id)?;
+        self.shielded_sync
+            .start(profile_id, network_id, account_index)
+    }
+
+    fn cancel_shielded_sync_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<oxid_wallet_domain::WalletShieldedSyncSnapshot, WalletShieldedSyncPortError> {
+        self.shielded_sync.cancel(profile_id, network_id)
     }
 }
 
@@ -1194,6 +1245,30 @@ where
             let selected = self.selected(profile_id)?;
             let network =
                 network_by_id(&selected)?.ok_or(WalletAccountPortError::UnsupportedNetwork)?;
+            self.ensure_associated_account(profile_id, &network)?;
+            self.source.sync(profile_id, &network).await
+        })
+    }
+
+    fn account_in_realm(
+        &self,
+        profile_id: &WalletProfileId,
+        network_id: &oxid_wallet_domain::ChainNetworkId,
+    ) -> Result<WalletAccountSnapshot, WalletAccountPortError> {
+        let network =
+            network_by_id(network_id)?.ok_or(WalletAccountPortError::UnsupportedNetwork)?;
+        self.ensure_associated_account(profile_id, &network)?;
+        self.source.account(profile_id, &network)
+    }
+
+    fn sync_in_realm<'a>(
+        &'a self,
+        profile_id: &'a WalletProfileId,
+        network_id: &'a oxid_wallet_domain::ChainNetworkId,
+    ) -> WalletAccountPortFuture<'a> {
+        Box::pin(async move {
+            let network =
+                network_by_id(network_id)?.ok_or(WalletAccountPortError::UnsupportedNetwork)?;
             self.ensure_associated_account(profile_id, &network)?;
             self.source.sync(profile_id, &network).await
         })
@@ -1645,6 +1720,37 @@ where
     C: ClockPort + 'static,
     K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort + 'static,
 {
+    protected_standalone_midnight_wallet_with_checkpoint_options_and_proving_material(
+        config,
+        account_checkpoints,
+        dust_checkpoints,
+        shielded_checkpoints,
+        submission_journal,
+        None,
+        clock,
+        keys,
+    )
+}
+
+/// Wires standalone checkpoints plus an explicit authenticated source for
+/// non-built-in application circuit proving material.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn protected_standalone_midnight_wallet_with_checkpoint_options_and_proving_material<C, K>(
+    config: MidnightStandaloneConfig,
+    account_checkpoints: Option<MidnightAccountCheckpointConfig>,
+    dust_checkpoints: Option<MidnightDustCheckpointConfig>,
+    shielded_checkpoints: Option<MidnightShieldedCheckpointConfig>,
+    submission_journal: Option<MidnightSubmissionJournalConfig>,
+    remote_proving_material: Option<Arc<dyn MidnightRemoteProvingMaterialSource>>,
+    clock: Arc<C>,
+    keys: Arc<K>,
+) -> MidnightWalletAdapter<LiveMidnightAccountSource<C>, ProtectedMidnightAccountDeriver<K>>
+where
+    C: ClockPort + 'static,
+    K: WalletDerivedSecretUsePort + WalletKeyDerivationPort + WalletKeyOperationPort + 'static,
+{
     let indexer = config.indexer().clone();
     let default_network = indexer.network_id().clone();
     let source = account_checkpoints.map_or_else(
@@ -1702,15 +1808,19 @@ where
     let reconciler = Arc::new(submission::LiveMidnightSubmissionReconciler::new(
         config.clone(),
     ));
+    let completer = submission::LiveMidnightTransactionCompleter::new_with_dust_store(
+        config, dust_store, clock,
+    );
+    let completer = if let Some(source) = remote_proving_material {
+        completer.with_remote_proving_material(source)
+    } else {
+        completer
+    };
     MidnightWalletAdapter::with_default_network_deriver_and_completer(
         source,
         default_network,
         ProtectedMidnightAccountDeriver::new(keys),
-        Arc::new(
-            submission::LiveMidnightTransactionCompleter::new_with_dust_store(
-                config, dust_store, clock,
-            ),
-        ),
+        Arc::new(completer),
     )
     .with_dust_sync(dust_sync)
     .with_shielded_sync(shielded_sync)

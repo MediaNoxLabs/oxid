@@ -31,6 +31,8 @@ export function runManagedChild(command, args, {
   stderr = process.stderr,
   label = "child process",
   graceMs = 3000,
+  timeoutMs = 0,
+  stdio = ["inherit", "pipe", "pipe"],
   spawnImpl = spawn,
   processRef = process,
   platform = process.platform,
@@ -43,28 +45,42 @@ export function runManagedChild(command, args, {
       cwd,
       env,
       detached: platform !== "win32",
-      stdio: ["inherit", "pipe", "pipe"],
+      stdio,
     });
     child.stdout?.pipe(stdout, { end: false });
     child.stderr?.pipe(stderr, { end: false });
 
     let parentSignal;
+    let timedOut = false;
     let escalation;
+    let deadline;
     const send = (signal) => signalProcessTree(child.pid, signal, { platform, kill });
-    const handlers = new Map(FORWARDED_SIGNALS.map((signal) => [signal, () => {
-      if (parentSignal) return;
-      parentSignal = signal;
+    const terminate = () => {
       send("SIGTERM");
       escalation = setTimeoutImpl(() => send("SIGKILL"), graceMs);
       escalation.unref?.();
+    };
+    const handlers = new Map(FORWARDED_SIGNALS.map((signal) => [signal, () => {
+      if (parentSignal) return;
+      parentSignal = signal;
+      terminate();
     }]));
     const onExit = () => send("SIGKILL");
 
     for (const [signal, handler] of handlers) processRef.once(signal, handler);
     processRef.once("exit", onExit);
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      deadline = setTimeoutImpl(() => {
+        if (parentSignal || timedOut) return;
+        timedOut = true;
+        terminate();
+      }, timeoutMs);
+      deadline.unref?.();
+    }
 
     const cleanup = () => {
       if (escalation) clearTimeoutImpl(escalation);
+      if (deadline) clearTimeoutImpl(deadline);
       for (const [signal, handler] of handlers) processRef.off(signal, handler);
       processRef.off("exit", onExit);
     };
@@ -75,6 +91,7 @@ export function runManagedChild(command, args, {
     child.once("close", (code, signal) => {
       cleanup();
       if (parentSignal) resolve(SIGNAL_EXIT_CODE[parentSignal]);
+      else if (timedOut) resolve(124);
       else if (signal) reject(new Error(`${label} terminated by ${signal}`));
       else resolve(code ?? 1);
     });

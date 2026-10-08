@@ -18,7 +18,7 @@ apps -> incoming adapters -> application -> domain
 | Application | the matching `…/application` crates | Use cases, incoming traits, and owned outgoing ports. **Zero external dependencies.** |
 | Platform ports | `platform/ports` | OS capability traits (clock, randomness, QR, export). |
 | Adapters | `adapters/*` (17 crates) | Chain, SSI protocol, storage, custody, mobile-native. External types are converted at this boundary and never leak inward. |
-| Composition | `composition` | The only place adapters meet ports. Selects fail-closed production or explicit standalone wiring. |
+| Composition | `composition` | The only place adapters meet ports. Selects fail-closed production or explicit standalone wiring; native mobile backup/document and storage adapters are iOS/Android target dependencies, not part of the headless closure. |
 | Apps | `apps/oxid` (Dioxus), `apps/oxid-headless` (NDJSON) | Incoming shells; render state and emit commands. |
 
 Each business capability is its own hexagon with a domain/application pair, so
@@ -55,6 +55,14 @@ collaboration goes through ports wired in composition.
   callbacks or return opaque references — a port's type signature makes
   secret exfiltration unrepresentable rather than merely forbidden.
 
+## Approval capability design
+
+The [wallet approval capability design](https://github.com/MediaNoxLabs/oxid/blob/develop/docs/wallet-approval-capabilities.md)
+catalogs the trusted-composition guard, application-clock TTL, one-attempt
+consumption policy, compile-time authority boundaries, and command/event matrix.
+It is a foundation boundary, not a claim that existing sign/delete consumers
+have migrated.
+
 ## Composition is a decision, not plumbing
 
 `compose()` — the normal production path — wires *unavailable* adapters for
@@ -63,7 +71,10 @@ fail-closed behavior. Explicit compositions
 (`compose_headless_from_environment`, the mobile standalone development
 features) opt into development custody, deterministic simulations, and live
 standalone transports. Feature guards (`compile_error!`) prevent
-contradictory combinations from compiling at all.
+contradictory combinations from compiling at all. Native backup-document and
+storage adapters are declared in Cargo's iOS/Android target-dependency table,
+so headless and MCP-facing host builds cannot resolve the mobile-native adapter
+closure.
 
 For the reasoning behind these boundaries, the
 [decision records](adr-catalog.md) are the authoritative log — start with

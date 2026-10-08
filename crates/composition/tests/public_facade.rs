@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
+use futures::executor::block_on;
 use oxid_composition::*;
+use oxid_protocol_application::{
+    CredentialIssuanceActivityFinality, CredentialIssuanceActivityStatus,
+    PrepareCredentialIssuanceCommand, RefuseCredentialIssuanceCommand,
+};
+use std::sync::Arc;
 
 fn assert_clone<T: Clone>() {}
 fn assert_error<T: std::error::Error + Send + Sync + 'static>() {}
@@ -41,6 +47,7 @@ fn application_service_getters_remain_available_at_the_root_facade() {
     let _ = services.derive_wallet_account();
     let _ = services.get_wallet_account();
     let _ = services.sync_wallet_account();
+    let _ = services.get_wallet_operation_timeline();
     let _ = services.get_wallet_dust_sync_status();
     let _ = services.start_wallet_dust_sync();
     let _ = services.cancel_wallet_dust_sync();
@@ -84,6 +91,7 @@ fn application_service_getters_remain_available_at_the_root_facade() {
     let _ = services.refuse_credential_issuance();
     let _ = services.get_credential_issuance();
     let _ = services.list_credential_issuances();
+    let _ = services.list_credential_issuance_activity();
     let _ = services.prepare_self_issued_authentication();
     let _ = services.accept_self_issued_authentication();
     let _ = services.refuse_self_issued_authentication();
@@ -96,6 +104,7 @@ fn application_service_getters_remain_available_at_the_root_facade() {
     let _ = services.refuse_credential_presentation();
     let _ = services.get_credential_presentation();
     let _ = services.list_credential_presentations();
+    let _ = services.list_credential_presentation_activity();
     let _ = services.list_passport_vault_locks();
     let _ = services.decode_passport_vault_contract_state();
     let _ = services.read_passport_vault_contract_state();
@@ -115,6 +124,61 @@ fn application_service_getters_remain_available_at_the_root_facade() {
     let _ = services.passport_vault_call_contract_address_hex();
     let _ = services.passport_vault_state_persistence();
     let _ = services.compact_presentation_proof_available();
+}
+
+#[test]
+fn headless_issuance_activity_uses_one_application_projection() {
+    let services = compose_in_memory();
+    let first = services.list_credential_issuance_activity();
+    let second = services.list_credential_issuance_activity();
+    assert!(Arc::ptr_eq(&first, &second));
+    let view = first
+        .execute("profile_1".to_owned())
+        .expect("headless activity projection");
+    assert!(view.records.is_empty());
+    assert_eq!(view.source, "application_event_projection");
+
+    let prepared = block_on(services.prepare_credential_issuance().execute(
+        PrepareCredentialIssuanceCommand {
+            profile_id: "profile_1".to_owned(),
+            offer: standalone_oid4vci_offer(),
+        },
+    ))
+    .expect("composed issuance preparation");
+    services
+        .refuse_credential_issuance()
+        .execute(RefuseCredentialIssuanceCommand {
+            profile_id: "profile_1".to_owned(),
+            issuance_id: prepared.id,
+        })
+        .expect("composed issuance refusal");
+
+    let activity = services
+        .list_credential_issuance_activity()
+        .execute("profile_1".to_owned())
+        .expect("composed activity projection");
+    assert_eq!(activity.records.len(), 1);
+    assert_eq!(
+        activity.records[0].status,
+        CredentialIssuanceActivityStatus::Refused
+    );
+    assert_eq!(
+        activity.records[0].finality,
+        CredentialIssuanceActivityFinality::Final
+    );
+}
+
+#[test]
+fn headless_presentation_activity_uses_one_navigation_independent_projection() {
+    let services = compose_in_memory();
+    let first = services.list_credential_presentation_activity();
+    let second = services.list_credential_presentation_activity();
+    assert!(Arc::ptr_eq(&first, &second));
+    let activity = first
+        .execute("profile_1".to_owned())
+        .expect("headless presentation activity projection");
+    assert!(activity.records.is_empty());
+    assert_eq!(activity.source, "application_event_projection");
 }
 
 #[test]

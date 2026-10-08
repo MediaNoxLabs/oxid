@@ -37,8 +37,83 @@ fn ceremony_id(state: &WalletOnboardingState) -> Option<String> {
     }
 }
 
-fn lifecycle_generation_is_current(started: u64, current: u64) -> bool {
-    started == current
+fn lifecycle_generation_is_current(
+    started: u64,
+    current: u64,
+    authorized_resume: Option<u64>,
+    authorization_in_flight: bool,
+) -> bool {
+    started == current || authorized_resume == Some(current) || authorization_in_flight
+}
+
+fn may_admit_authorization_lifecycle(state: &WalletOnboardingState, expected: bool) -> bool {
+    expected
+        && matches!(
+            state,
+            WalletOnboardingState::Working | WalletOnboardingState::Completing
+        )
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+async fn settle_native_authorization_lifecycle() {
+    // LocalAuthentication/Android credential surfaces can report their final
+    // resume after the blocking authorization callback has completed. Keep the
+    // operation fenced until that bounded platform hand-off settles so the
+    // trailing wake cannot cancel a successful ceremony as an unrelated
+    // background transition.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+async fn settle_native_authorization_lifecycle() {}
+
+const fn prepare_requires_native_authorization(intent: WalletOnboardingIntent) -> bool {
+    matches!(intent, WalletOnboardingIntent::Create)
+}
+
+const fn onboarding_title(intent: WalletOnboardingIntent) -> &'static str {
+    match intent {
+        WalletOnboardingIntent::Create => "Create private wallet",
+        WalletOnboardingIntent::RestorePhrase => "Restore 24-word recovery phrase",
+    }
+}
+
+const fn onboarding_action(intent: WalletOnboardingIntent) -> &'static str {
+    match intent {
+        WalletOnboardingIntent::Create => "Generate recovery phrase",
+        WalletOnboardingIntent::RestorePhrase => "Verify recovery phrase",
+    }
+}
+
+const fn onboarding_explanation(intent: WalletOnboardingIntent) -> &'static str {
+    match intent {
+        WalletOnboardingIntent::Create => {
+            "Device protection is required before a new recovery phrase can appear. The phrase stays in this ceremony and is never written to profile metadata, logs, analytics, or clipboard storage."
+        }
+        WalletOnboardingIntent::RestorePhrase => {
+            "Restore into this empty profile with its 24-word recovery phrase. You can retry or go back without merging wallet state, and the phrase is never written to profile metadata, logs, analytics, or clipboard storage."
+        }
+    }
+}
+
+const fn onboarding_acknowledgement(intent: WalletOnboardingIntent) -> &'static str {
+    match intent {
+        WalletOnboardingIntent::Create => "I saved this new recovery phrase outside the app.",
+        WalletOnboardingIntent::RestorePhrase => {
+            "I verified that this is the recovery phrase I intend to restore."
+        }
+    }
+}
+
+const fn onboarding_failure_next_step(intent: WalletOnboardingIntent) -> &'static str {
+    match intent {
+        WalletOnboardingIntent::Create => {
+            "Your Create wallet task is still selected. Confirm that this device has a passcode or biometric lock, then retry; no wallet root was installed."
+        }
+        WalletOnboardingIntent::RestorePhrase => {
+            "Your Restore wallet task is still selected. Check the 24 words and retry; no existing wallet state was merged or replaced."
+        }
+    }
 }
 
 #[component]
@@ -62,6 +137,8 @@ pub(crate) fn WalletOnboarding(
     let mut acknowledged = use_signal(|| false);
     let initial_lifecycle = lifecycle_wake();
     let mut last_lifecycle = use_signal(move || initial_lifecycle);
+    let mut authorization_in_flight = use_signal(|| false);
+    let mut authorized_resume = use_signal(|| None::<u64>);
 
     let screen_privacy = services.screen_privacy();
     use_effect(move || {
@@ -73,6 +150,15 @@ pub(crate) fn WalletOnboarding(
         let generation = lifecycle_wake();
         if generation != last_lifecycle() {
             last_lifecycle.set(generation);
+            // The app-owned Android/iOS authorization surface can emit several
+            // lifecycle events. Admit them only while its blocking command is
+            // in flight; every later wake retains fail-closed cancellation.
+            if may_admit_authorization_lifecycle(&state.read(), authorization_in_flight()) {
+                authorized_resume.set(Some(generation));
+                return;
+            }
+            authorization_in_flight.set(false);
+            authorized_resume.set(None);
             suspend.suspend();
             phrase_input.write().zeroize();
             phrase_input.set(Zeroizing::new(String::new()));
@@ -96,18 +182,16 @@ pub(crate) fn WalletOnboarding(
     let cancel_after_failure = onboarding.cancel.clone();
     let cancel_after_stale_prepare = onboarding.cancel.clone();
     let cancel_from_button = onboarding.cancel.clone();
-    let heading = match intent {
-        WalletOnboardingIntent::Create => "Create private wallet",
-        WalletOnboardingIntent::RestorePhrase => "Restore recovery phrase",
-    };
-    let action = match intent {
-        WalletOnboardingIntent::Create => "Generate recovery phrase",
-        WalletOnboardingIntent::RestorePhrase => "Verify recovery phrase",
-    };
+    let heading = onboarding_title(intent);
+    let action = onboarding_action(intent);
+    let explanation = onboarding_explanation(intent);
 
     let feedback = match &*state.read() {
         WalletOnboardingState::Failed(message) => rsx! {
-            div { class: "result error", role: "alert", p { "{message}" } }
+            div { class: "result error", role: "alert",
+                p { "{message}" }
+                p { "{onboarding_failure_next_step(intent)}" }
+            }
         },
         WalletOnboardingState::Working => rsx! {
             div { class: "result", role: "status", aria_busy: "true",
@@ -128,7 +212,7 @@ pub(crate) fn WalletOnboarding(
         section { class: "page-heading onboarding-heading",
             p { class: "eyebrow", "Midnight · {onboarding.network_id}" }
             h1 { "{heading}" }
-            p { "A fresh device authorization is required before a new phrase can appear. The phrase stays in this ceremony and is never written to profile metadata, logs, analytics, or clipboard storage." }
+            p { "{explanation}" }
         }
         section { class: "profile-card surface-card complete-recovery-card",
             strong { "{profile.display_name}" }
@@ -162,11 +246,12 @@ pub(crate) fn WalletOnboarding(
                 label { class: "confirmation-row",
                     input {
                         r#type: "checkbox",
+                        aria_label: "{onboarding_acknowledgement(intent)}",
                         checked: acknowledged(),
                         disabled: busy,
-                        onchange: move |event| acknowledged.set(event.checked()),
+                        oninput: move |event| acknowledged.set(event.checked()),
                     }
-                    "I have securely saved or verified this recovery phrase."
+                    "{onboarding_acknowledgement(intent)}"
                 }
             }
             if prepared_id.is_none() {
@@ -198,16 +283,31 @@ pub(crate) fn WalletOnboarding(
                         let cancel_stale_prepare = cancel_after_stale_prepare.clone();
                         let lifecycle_generation = lifecycle_wake();
                         let lifecycle_wake_for_prepare = lifecycle_wake;
+                        let mut authorization_in_flight_for_prepare = authorization_in_flight;
+                        let mut authorized_resume_for_prepare = authorized_resume;
+                        // Wry may report several lifecycle events around one
+                        // app-owned credential surface. Admit them only while the
+                        // blocking native authorization operation owns the transition.
+                        authorization_in_flight_for_prepare
+                            .set(prepare_requires_native_authorization(intent));
+                        authorized_resume_for_prepare.set(None);
                         state.set(WalletOnboardingState::Working);
                         spawn(async move {
                             let result = run_ui_blocking(move || {
                                 prepare.execute(PrepareWalletOnboardingCommand { profile_id, mode })
                             })
                             .await;
+                            if prepare_requires_native_authorization(intent) {
+                                settle_native_authorization_lifecycle().await;
+                            }
                             let lifecycle_is_current = lifecycle_generation_is_current(
                                 lifecycle_generation,
                                 lifecycle_wake_for_prepare(),
+                                authorized_resume_for_prepare(),
+                                authorization_in_flight_for_prepare(),
                             );
+                            authorization_in_flight_for_prepare.set(false);
+                            authorized_resume_for_prepare.set(None);
                             match result {
                                 Ok(Ok(prepared)) if lifecycle_is_current => {
                                     state.set(WalletOnboardingState::Prepared(prepared));
@@ -250,6 +350,10 @@ pub(crate) fn WalletOnboarding(
                         let ceremony_id_for_failure = ceremony_id.clone();
                         let lifecycle_generation = lifecycle_wake();
                         let lifecycle_wake_for_completion = lifecycle_wake;
+                        let mut authorization_in_flight_for_completion = authorization_in_flight;
+                        let mut authorized_resume_for_completion = authorized_resume;
+                        authorization_in_flight_for_completion.set(true);
+                        authorized_resume_for_completion.set(None);
                         state.set(WalletOnboardingState::Completing);
                         spawn(async move {
                             let result = run_ui_blocking(move || {
@@ -265,10 +369,15 @@ pub(crate) fn WalletOnboarding(
                                 })
                             })
                             .await;
+                            settle_native_authorization_lifecycle().await;
                             let lifecycle_is_current = lifecycle_generation_is_current(
                                 lifecycle_generation,
                                 lifecycle_wake_for_completion(),
+                                authorized_resume_for_completion(),
+                                authorization_in_flight_for_completion(),
                             );
+                            authorization_in_flight_for_completion.set(false);
+                            authorized_resume_for_completion.set(None);
                             match result {
                                 Ok(Ok(_)) if lifecycle_is_current => on_complete.call(profile),
                                 Ok(Ok(_)) => {}
@@ -331,8 +440,80 @@ mod tests {
 
     #[test]
     fn lifecycle_generation_rejects_late_ui_updates() {
-        assert!(lifecycle_generation_is_current(7, 7));
-        assert!(!lifecycle_generation_is_current(7, 8));
+        assert!(lifecycle_generation_is_current(7, 7, None, false));
+        assert!(lifecycle_generation_is_current(7, 8, Some(8), false));
+        assert!(lifecycle_generation_is_current(7, 9, Some(8), true));
+        assert!(!lifecycle_generation_is_current(7, 8, None, false));
+        assert!(!lifecycle_generation_is_current(7, 9, Some(8), false));
+    }
+
+    #[test]
+    fn only_busy_native_authorization_admits_lifecycle_churn() {
+        assert!(may_admit_authorization_lifecycle(
+            &WalletOnboardingState::Working,
+            true
+        ));
+        assert!(may_admit_authorization_lifecycle(
+            &WalletOnboardingState::Completing,
+            true
+        ));
+        assert!(!may_admit_authorization_lifecycle(
+            &WalletOnboardingState::Idle,
+            true
+        ));
+        assert!(!may_admit_authorization_lifecycle(
+            &WalletOnboardingState::Working,
+            false
+        ));
+    }
+
+    #[test]
+    fn onboarding_intents_are_explicit_and_distinct() {
+        assert_eq!(
+            onboarding_title(WalletOnboardingIntent::Create),
+            "Create private wallet"
+        );
+        assert_eq!(
+            onboarding_title(WalletOnboardingIntent::RestorePhrase),
+            "Restore 24-word recovery phrase"
+        );
+        assert_ne!(
+            onboarding_action(WalletOnboardingIntent::Create),
+            onboarding_action(WalletOnboardingIntent::RestorePhrase)
+        );
+        assert!(onboarding_acknowledgement(WalletOnboardingIntent::Create).contains("saved"));
+        assert!(
+            onboarding_acknowledgement(WalletOnboardingIntent::RestorePhrase).contains("restore")
+        );
+        assert!(
+            onboarding_explanation(WalletOnboardingIntent::Create)
+                .contains("Device protection is required")
+        );
+        assert!(
+            onboarding_explanation(WalletOnboardingIntent::RestorePhrase).contains("empty profile")
+        );
+        assert!(
+            !onboarding_explanation(WalletOnboardingIntent::RestorePhrase)
+                .contains("new recovery phrase")
+        );
+        assert!(
+            onboarding_failure_next_step(WalletOnboardingIntent::Create)
+                .contains("Create wallet task is still selected")
+        );
+        assert!(
+            onboarding_failure_next_step(WalletOnboardingIntent::RestorePhrase)
+                .contains("Restore wallet task is still selected")
+        );
+    }
+
+    #[test]
+    fn mnemonic_restore_does_not_admit_unrelated_lifecycle_churn() {
+        assert!(prepare_requires_native_authorization(
+            WalletOnboardingIntent::Create
+        ));
+        assert!(!prepare_requires_native_authorization(
+            WalletOnboardingIntent::RestorePhrase
+        ));
     }
 
     #[test]

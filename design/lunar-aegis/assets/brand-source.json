@@ -1,0 +1,55 @@
+{
+  "brand": "OXID WALLET",
+  "tagline": "Zero-Knowledge Sovereign Identity & Crypto Vault",
+  "blockchain": "Midnight Network (IOG)",
+  "flagshipLogo": "OXID Lunar Aegis (01 Shielded Crescent Evolution)",
+  "palette": {
+    "surface": {
+      "name": "Midnight Obsidian",
+      "hex": "#07090E",
+      "rgb": "rgb(7, 9, 14)",
+      "usage": "Dark background baseline, OLED contrast"
+    },
+    "card": {
+      "name": "Deep Slate Navy",
+      "hex": "#0F172A",
+      "rgb": "rgb(15, 23, 42)",
+      "usage": "Elevated container and card surfaces"
+    },
+    "primaryGlow": {
+      "name": "Celestial Cyan",
+      "hex": "#06B6D4",
+      "rgb": "rgb(6, 182, 212)",
+      "usage": "Active cryptographic proofs, primary logo glow"
+    },
+    "secondaryAccent": {
+      "name": "Phantom Violet",
+      "hex": "#8B5CF6",
+      "rgb": "rgb(139, 92, 246)",
+      "usage": "Zero-knowledge veil, biometric identity status"
+    },
+    "text": {
+      "name": "Pure Titanium",
+      "hex": "#F8FAFC",
+      "rgb": "rgb(248, 250, 252)",
+      "usage": "High-contrast headings and primary labels"
+    },
+    "textMuted": {
+      "name": "Slate Steel",
+      "hex": "#94A3B8",
+      "rgb": "rgb(148, 163, 184)",
+      "usage": "Subtitles, metadata, cryptographic hashes"
+    }
+  },
+  "typography": {
+    "headings": "Space Grotesk, sans-serif",
+    "body": "Plus Jakarta Sans, sans-serif",
+    "code": "JetBrains Mono, monospace"
+  },
+  "specifications": {
+    "safeMargin": "1.5X central keyhole radius",
+    "faviconMin": "16x16 px",
+    "navbarMin": "32x32 px",
+    "appIconMaster": "1024x1024 px"
+  }
+}

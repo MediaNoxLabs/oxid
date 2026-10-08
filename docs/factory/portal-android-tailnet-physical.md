@@ -30,19 +30,90 @@ just android-portal-tailnet-physical-smoke
 ## Owner manual QR demonstration
 
 This optional lifecycle is a live owner demo, not physical-lane evidence and
-never a replacement for the automated physical or simulator lanes. From the
-same clean, healthy preconditions, start one fresh session:
+never a replacement for the automated physical or simulator lanes. Prepare the
+exact pinned Portal artifacts first. This phase does not require a phone,
+Tailscale, or the standalone stack and may be safely rerun after a failure.
+
+The first ADR-0117 Factory-flow canary makes this preparation sequence
+reviewable before it runs. The commands below resolve only the exact pinned
+Taskflow core and spend zero model tokens:
 
 ```bash
+just taskflow-portal-tailnet-verify
+just taskflow-portal-tailnet-plan
+just taskflow-portal-tailnet-compile
+```
+
+The plan is `preflight → prepare-artifacts → verify-prepared-artifacts →
+handoff`. Taskflow execution remains disabled while issue #690 proves
+long-process progress, cancellation, resume, and orphan cleanup. To exercise the
+prototype interactively, open the saved flow in Pi after that conformance gate;
+until then, follow the same explicit checkpoint below. Rejecting its approval is
+supposed to halt the flow—there is no bypass around a failed preparation.
+
+```bash
+just portal-tailnet-manual-prepare
+just portal-tailnet-manual-prepared-status
+```
+
+Preparation realizes and loads the resolver, DID manager, and issuer images one
+at a time and pulls the pinned Smocker support image before the interactive
+window. Each completed Portal image is checkpointed with its immutable image ID,
+independent archive digest, Nix output path and persistent GC root, cache-hit
+marker, and elapsed seconds. A retry resumes after
+the last validated checkpoint instead of rebuilding successful phases.
+
+Only one preparation process may own the receipt. `preparation-busy` means an
+existing preparer still owns the lock; wait for it to finish. If start reports
+`artifacts-not-prepared`, rerun `just portal-tailnet-manual-prepare` and then
+`just portal-tailnet-manual-prepared-status` before reconnecting the phone.
+
+With the preparation receipt complete, connect the phone and Tailscale, ensure
+the standalone stack is healthy on 6300, 8088, and 9944, and start one session:
+
+```bash
+just portal-tailnet-manual-doctor
 just portal-tailnet-manual-start
+```
+
+Doctor is a read-only admission checkpoint. It checks the exact prepared
+artifacts, clean tracked source, Docker, the owned standalone Tailnet routes,
+MagicDNS/HTTPS identity, absence of a conflicting Portal project, and exactly
+one authorized non-QEMU phone. It does not build, install, launch, create a
+route, start a service, or clear application data. A failure names one bounded
+remediation; do not bypass it by manually combining partial state.
+
+Start fails before changing Tailnet or phone state if the prepared source,
+receipt, Nix outputs, or loaded Docker image IDs no longer match. It creates and
+validates the same private mode-`0600` pinned mock transform used by the browser
+contract, then exposes its KYC page under the receipt-owned same-origin HTTPS
+`/kyc` mount. It opens the Portal page in the Mac browser and prints the one
+permitted public page URL plus service, Tailnet, Android, and total readiness
+timings; status intentionally reveals no payload. This owner demo remains
+non-evidence. Start is the foreground owner and deliberately remains running;
+do not close that terminal. It reports `READY` only after two independent
+receipt, process, Docker, device, Serve, and public-page checks. Run status or
+stop from another terminal:
+
+```bash
 just portal-tailnet-manual-status
 ```
 
-Start creates and validates the same private mode-`0600` pinned mock transform
-used by the browser contract, then exposes its KYC page under the receipt-owned
-same-origin HTTPS `/kyc` mount. It opens the Portal page in the Mac browser and
-prints the one permitted public page URL; status intentionally reveals no
-payload. This owner demo remains non-evidence.
+## Service-only restart
+
+After a successful manual start, Portal services can be stopped and started independently
+without rebuilding images, installing or launching Oxid, or clearing application data:
+
+```bash
+just portal-tailnet-services-status
+just portal-tailnet-services-stop
+just portal-tailnet-services-up
+```
+
+These commands operate only on the receipt-owned Portal Compose services. They retain the
+prepared images, service containers, and Android application state. `services-up` requires
+that the existing ownership receipt and service shape remain valid; it never falls back to
+build, install, launch, or reset behavior.
 
 On the phone, explicitly prepare the holder before accepting an offer:
 
@@ -73,8 +144,27 @@ just portal-tailnet-manual-stop
 ```
 
 Stop validates the session/process/Serve receipts, removes only owned Portal
-state, and restores the exact prior Serve baseline. If a receipt is ambiguous,
-it fails closed for owner review rather than deleting shared state.
+runtime state, and restores the exact prior Serve baseline. It retains prepared
+artifacts so the next start avoids a build-from-scratch. If a receipt is
+ambiguous, it fails closed for owner review rather than deleting shared state.
+An interrupted Portal Compose startup leaves a private provisional ownership
+receipt, so the exact project can be recovered with the same stop/cleanup path
+instead of becoming an unowned partial stack.
+
+Manual start installs a compatible APK with Android's data-preserving upgrade
+path and does **not** clear profiles, custody associations, credentials,
+preferences, or diagnostics. If the owner explicitly needs an empty Oxid data
+container, stop the session first and invoke the destructive operation by name:
+
+```bash
+just portal-tailnet-manual-reset
+```
+
+Reset prints the exact package and `application-data` scope before mutation,
+refuses to run while a manual session is active, preserves the installed APK,
+and verifies that the package still exists. The automated physical conformance
+lane remains clean-room evidence and therefore selects app-data reset explicitly
+inside its owned disposable run.
 
 ## Safety, evidence, and cleanup
 

@@ -1,0 +1,29 @@
+{
+  "schema": "oxid-midnight-integration-compatibility-v1",
+  "contractRelease": "0.4.0",
+  "wallet": {
+    "ledgerRevision": "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65",
+    "ledgerVersion": "8.2.0-rc.1",
+    "didToolchainRevision": "05b237a5e51f9c22853b424e7d4236dfa9384c24",
+    "didToolchainPackageVersion": "0.4.0"
+  },
+  "standalone": {
+    "networkId": "undeployed",
+    "nodeImage": "midnightntwrk/midnight-node:0.22.3",
+    "indexerImage": "midnightntwrk/indexer-standalone:4.0.0",
+    "proofServerImage": "midnightntwrk/proof-server:8.0.3"
+  },
+  "portal": {
+    "repository": "https://github.com/input-output-hk/lace-id-portal.git",
+    "commit": "25499870f84d77173c46e4af3021311decfb840b",
+    "tree": "2d845d2293603dfd8adce5362c8a9941e6ba78a9",
+    "didSourceRevision": "cf00aacb3e1bb300e87bc4dd11ec0897fab6e233",
+    "didPackageVersion": "0.4.0",
+    "didManagerPackageManifestSha256": "9640d912ac9bb225e6382cf80c5c30929127701c8a72d85c121cfda335b28ef9"
+  },
+  "demoReadiness": {
+    "nativeHolderDidRequired": true,
+    "nativeHolderDidImplemented": false,
+    "outOfBandHolderPublicationAllowed": false
+  }
+}

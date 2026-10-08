@@ -16,6 +16,7 @@ readonly PRIVATE_STATE="$RUN_ROOT/private"
 readonly PRIVATE_LOG="$PRIVATE_STATE/journey.log"
 readonly EVIDENCE="$RUN_ROOT/evidence.json"
 readonly BUILD_RECEIPT="$PRIVATE_STATE/build-receipt.tsv"
+readonly EMULATOR_RECEIPT="$PRIVATE_STATE/emulator-owner.receipt"
 readonly PACKAGE="io.medianox.oxid"
 readonly TRIGGER="openid-credential-offer://standalone-portal-test-fetch"
 readonly CONTROL_ORIGIN="http://127.0.0.1:18095"
@@ -25,7 +26,7 @@ readonly EMULATOR_PORT=5562
 readonly SERIAL="emulator-$EMULATOR_PORT"
 readonly CDP_PORT=19247
 readonly OPERATION="${1:-run}"
-readonly -a REVERSE_PORTS=(6300 8088 9944 18090 18091 18093)
+readonly -a REVERSE_PORTS=(6300 8088 9944 36301 18090 18091 18093)
 readonly -a PORTAL_PORTS=(18090 18091 18092 18093 18094 18095)
 readonly -a SHARED_PORTS=(6300 8088 9944)
 
@@ -39,6 +40,7 @@ arm_pid=""
 forward_active=0
 emulator_online=0
 cleanup_running=0
+cleanup_owner_pid="${BASHPID:-$$}"
 cleanup_ok=true
 run_root_owned=0
 run_root_identity=""
@@ -124,12 +126,8 @@ readonly EMULATOR="$android_sdk/emulator/emulator"
 [ -x "$ADB" ] && [ -x "$EMULATOR" ] || fail android-sdk
 
 avd="${OXID_ANDROID_AVD:-}"
-[[ "$avd" =~ ^[A-Za-z0-9._-]+$ ]] || fail explicit-avd
-avd_found=false
-for avd_ini in "${ANDROID_AVD_HOME:-}/$avd.ini" "${ANDROID_SDK_HOME:-}/avd/$avd.ini" "$HOME/.android/avd/$avd.ini"; do
-  if [ -f "$avd_ini" ] && [ ! -L "$avd_ini" ]; then avd_found=true; break; fi
-done
-[ "$avd_found" = true ] || fail avd-definition
+if [ -z "$avd" ]; then avd="$(oxid_android_discover_avd "$EMULATOR")" || fail simulator-capability; fi
+oxid_android_avd_definition_exists "$avd" || fail avd-definition
 
 run_deadline() {
   local seconds="$1" remaining status
@@ -332,6 +330,7 @@ write_evidence() {
       portal:{integrationCommit:"25499870f84d77173c46e4af3021311decfb840b",integrationTree:"2d845d2293603dfd8adce5362c8a9941e6ba78a9",provenanceSha256:"63d2dd182f1a315d8fe7677ae6481aecebd2fd9cff709cc438b6c0261a3cf4c7"},
       deployment:{manifestSchema:"oxid-portal-deployment-v3",authoritySchema:"oxid-app-profile-authority-v2"},
       platform:{kind:"android_emulator",osFamily:"android",apiLevel:$api,architecture:$architecture},
+      applicationState:{install:"fresh",restart:"preserved",migration:"not_exercised"},
       artifactSha256:$artifact,scenarios:$scenarios,totalCounters:$counters,
       offer:{triggerOnly:true,capabilityMode0600:$capabilityMode,capabilityHex64:$capabilityHex,
         stagedAtomically:$staged,burnedBeforeNetwork:$burned,oneShotReadyThenEmpty:$oneShot,
@@ -360,7 +359,14 @@ write_evidence() {
 cleanup() {
   local incoming=$? current package_path after_portal project_ids emulator_status=0
   local build_receipt_path build_receipt_identity
-  if [ "$cleanup_running" -eq 1 ]; then exit "$incoming"; fi
+  if [ "${BASHPID:-$$}" != "$cleanup_owner_pid" ] || [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
+  if [ "$cleanup_running" -eq 1 ]; then
+    trap - EXIT INT TERM HUP
+    exit "$incoming"
+  fi
   cleanup_running=1
   journey_deadline=0
   trap - EXIT INT TERM HUP
@@ -409,7 +415,9 @@ cleanup() {
   fi
 
   if [ -n "$emulator_pid" ]; then
-    if oxid_job_is_running "$emulator_pid"; then
+    if [ -f "$EMULATOR_RECEIPT" ]; then
+      if oxid_terminate_emulator_receipt "$EMULATOR_RECEIPT" "$emulator_pid" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then emulator_cleanup=true; else cleanup_ok=false; fi
+    elif oxid_job_is_running "$emulator_pid"; then
       if oxid_terminate_emulator_job "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT"; then emulator_cleanup=true; else cleanup_ok=false; fi
     else
       wait "$emulator_pid" >/dev/null 2>&1 || emulator_status=$?
@@ -511,8 +519,15 @@ for ((_attempt = 0; _attempt < 50; _attempt++)); do
   run_deadline 2 sleep 0.1
 done
 oxid_emulator_job_owned "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership
+for ((_attempt = 0; _attempt < 50; _attempt++)); do
+  oxid_emulator_owner_receipt_create "$EMULATOR_RECEIPT" "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" && break
+  run_deadline 2 sleep 0.1
+done
+oxid_emulator_owner_receipt_matches "$EMULATOR_RECEIPT" "$emulator_pid" "$EMULATOR" "$avd" "$EMULATOR_PORT" \
+  || fail emulator-receipt
 for ((_attempt = 0; _attempt < 300; _attempt++)); do
-  oxid_emulator_job_owned "$emulator_pid" "$$" "$EMULATOR" "$avd" "$EMULATOR_PORT" || fail emulator-ownership-lost
+  oxid_emulator_owner_receipt_refresh "$EMULATOR_RECEIPT" "$emulator_pid" "$EMULATOR" "$avd" "$EMULATOR_PORT" \
+    || fail emulator-ownership-lost
   inventory="$(oxid_adb_inventory_snapshot "$ADB" 2>/dev/null || true)"
   if oxid_adb_inventory_is_exact_online "$inventory" "$SERIAL" \
     && [ "$(adb_text shell getprop sys.boot_completed 2>/dev/null)" = 1 ]; then emulator_online=1; break; fi

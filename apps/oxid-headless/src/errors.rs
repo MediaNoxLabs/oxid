@@ -5,8 +5,8 @@ use oxid_credential_application::{
     CredentialVerificationError,
 };
 use oxid_identity_application::{
-    DidLifecyclePortError, DidOperationError, DidPublicationPortError, DidRecordRepositoryError,
-    DidResolutionPortError,
+    DidDeploymentUseCaseError, DidLifecyclePortError, DidOperationError, DidPublicationPortError,
+    DidRecordRepositoryError, DidResolutionPortError,
 };
 use oxid_passport_vault_application::{
     PassportVaultCallError, PassportVaultCallPortError, PassportVaultContractStateError,
@@ -27,6 +27,98 @@ use oxid_wallet_application::{
 };
 
 use crate::protocol::{Dispatch, Response};
+
+pub(super) fn did_deployment_error(
+    id: Option<String>,
+    error: DidDeploymentUseCaseError,
+) -> Response {
+    let (code, message) = match error {
+        DidDeploymentUseCaseError::Unavailable => (
+            "capability_unavailable",
+            "native ledger-backed DID deployment is not composed for this target",
+        ),
+        DidDeploymentUseCaseError::InvalidRequest => (
+            "invalid_argument",
+            "ledger-backed DID deployment request is invalid",
+        ),
+        DidDeploymentUseCaseError::Integrity => (
+            "integrity_failure",
+            "ledger-backed DID deployment state failed integrity validation",
+        ),
+        DidDeploymentUseCaseError::Persistence => (
+            "persistence_unavailable",
+            "ledger-backed DID deployment progress could not be persisted",
+        ),
+        DidDeploymentUseCaseError::Composition => (
+            "composition_unavailable",
+            "ledger-backed DID deployment could not be composed",
+        ),
+        DidDeploymentUseCaseError::Transaction => (
+            "transaction_failed",
+            "ledger-backed DID deployment transaction failed",
+        ),
+        DidDeploymentUseCaseError::Resolution => (
+            "resolution_failed",
+            "deployed DID could not be verified by live resolution",
+        ),
+    };
+    Response::error(id, code, message)
+}
+
+#[cfg(test)]
+mod did_deployment_tests {
+    use super::*;
+
+    #[test]
+    fn every_deployment_failure_has_a_closed_public_error() {
+        let cases = [
+            (
+                DidDeploymentUseCaseError::Unavailable,
+                "capability_unavailable",
+                "native ledger-backed DID deployment is not composed for this target",
+            ),
+            (
+                DidDeploymentUseCaseError::InvalidRequest,
+                "invalid_argument",
+                "ledger-backed DID deployment request is invalid",
+            ),
+            (
+                DidDeploymentUseCaseError::Integrity,
+                "integrity_failure",
+                "ledger-backed DID deployment state failed integrity validation",
+            ),
+            (
+                DidDeploymentUseCaseError::Persistence,
+                "persistence_unavailable",
+                "ledger-backed DID deployment progress could not be persisted",
+            ),
+            (
+                DidDeploymentUseCaseError::Composition,
+                "composition_unavailable",
+                "ledger-backed DID deployment could not be composed",
+            ),
+            (
+                DidDeploymentUseCaseError::Transaction,
+                "transaction_failed",
+                "ledger-backed DID deployment transaction failed",
+            ),
+            (
+                DidDeploymentUseCaseError::Resolution,
+                "resolution_failed",
+                "deployed DID could not be verified by live resolution",
+            ),
+        ];
+
+        for (error, code, message) in cases {
+            let response =
+                serde_json::to_value(did_deployment_error(Some("deployment".to_owned()), error))
+                    .expect("serializable response");
+            assert_eq!(response["id"], "deployment");
+            assert_eq!(response["error"]["code"], code);
+            assert_eq!(response["error"]["message"], message);
+        }
+    }
+}
 
 pub(super) fn identity_request_routing_error(
     id: Option<String>,
@@ -72,6 +164,18 @@ pub(super) fn credential_issuance_error(
             "failed_precondition",
             "credential issuance session is not awaiting this operation",
         ),
+        CredentialIssuanceError::ActivityCapacityExhausted => (
+            "resource_exhausted",
+            "too many credential issuances are pending for this profile; retry this prepared offer after one finishes, or restart and prepare it again",
+        ),
+        CredentialIssuanceError::Approval(error) => (
+            match error {
+                oxid_protocol_application::AcceptedFlowApprovalError::Unavailable => {
+                    "approval_unavailable"
+                }
+            },
+            "trusted credential issuance approval is unavailable or invalid",
+        ),
         CredentialIssuanceError::Protocol(protocol) => (
             protocol.code(),
             "credential issuer protocol rejected or could not complete the request",
@@ -86,6 +190,27 @@ pub(super) fn credential_issuance_error(
         ),
     };
     Response::error(id, code, message)
+}
+
+#[cfg(test)]
+mod issuance_capacity_tests {
+    use super::*;
+
+    #[test]
+    fn capacity_refusal_has_a_distinct_retryable_headless_error() {
+        let response = serde_json::to_value(credential_issuance_error(
+            Some("capacity".to_owned()),
+            CredentialIssuanceError::ActivityCapacityExhausted,
+        ))
+        .expect("serializable response");
+        assert_eq!(response["error"]["code"], "resource_exhausted");
+        assert!(
+            response["error"]["message"]
+                .as_str()
+                .expect("message")
+                .contains("retry this prepared offer")
+        );
+    }
 }
 
 pub(super) fn credential_presentation_error(
@@ -112,6 +237,14 @@ pub(super) fn credential_presentation_error(
         CredentialPresentationError::InvalidState => (
             "failed_precondition",
             "credential presentation session is not awaiting this operation",
+        ),
+        CredentialPresentationError::Approval(error) => (
+            match error {
+                oxid_presentation_application::CredentialPresentationApprovalError::Unavailable => {
+                    "approval_unavailable"
+                }
+            },
+            "credential presentation approval is unavailable or invalid",
         ),
         CredentialPresentationError::Protocol(protocol) => (
             protocol.code(),
@@ -149,6 +282,14 @@ pub(super) fn self_issued_authentication_error(
         SelfIssuedAuthenticationError::InvalidState => (
             "failed_precondition",
             "self-issued authentication session is not awaiting this operation",
+        ),
+        SelfIssuedAuthenticationError::Approval(error) => (
+            match error {
+                oxid_protocol_application::AcceptedFlowApprovalError::Unavailable => {
+                    "approval_unavailable"
+                }
+            },
+            "self-issued authentication approval is unavailable or invalid",
         ),
         SelfIssuedAuthenticationError::Protocol(protocol) => (
             protocol.code(),
@@ -280,6 +421,50 @@ pub(super) fn did_error(id: Option<String>, error: DidOperationError) -> Respons
                 "valid explicit confirmation is required",
             )
         }
+        DidOperationError::Approval(error) => Response::error(
+            id,
+            match error {
+                oxid_identity_application::DidApprovalError::Unavailable => "approval_unavailable",
+                oxid_identity_application::DidApprovalError::Denied => "approval_denied",
+                _ => "approval_invalid",
+            },
+            "Trusted DID approval is unavailable or invalid",
+        ),
+        DidOperationError::CredentialIssuance(error) => Response::error(
+            id,
+            match error {
+                oxid_identity_application::CredentialIssuanceFlowError::Unavailable => {
+                    "approval_unavailable"
+                }
+                _ => "approval_invalid",
+            },
+            "Trusted credential issuance approval is unavailable or invalid",
+        ),
+        DidOperationError::CredentialPresentation(error) => Response::error(
+            id,
+            match error {
+                oxid_identity_application::CredentialPresentationFlowError::Unavailable => {
+                    "approval_unavailable"
+                }
+                _ => "approval_invalid",
+            },
+            "Trusted credential presentation approval is unavailable or invalid",
+        ),
+        DidOperationError::SelfIssuedAuthentication(error) => Response::error(
+            id,
+            match error {
+                oxid_identity_application::SelfIssuedAuthenticationFlowError::Unavailable => {
+                    "approval_unavailable"
+                }
+                _ => "approval_invalid",
+            },
+            "Trusted self-issued authentication approval is unavailable or invalid",
+        ),
+        DidOperationError::RetainedRecordChanged => Response::error(
+            id,
+            "did_record_changed",
+            "Retained DID record changed during approval",
+        ),
         DidOperationError::Publication(error) => {
             let code = match error {
                 DidPublicationPortError::Unavailable
@@ -402,6 +587,9 @@ pub(super) fn transaction_error(id: Option<String>, error: WalletTransactionErro
             "invalid_argument",
             "confirmation title and summary must be non-empty and bounded",
         ),
+        WalletTransactionError::Approval(error) => {
+            Response::error(id, "approval_unavailable", error.to_string())
+        }
         WalletTransactionError::Clock(_) => Response::error(
             id,
             "platform_unavailable",
@@ -433,6 +621,14 @@ pub(super) fn dust_registration_error(
             "invalid_argument",
             "confirmation title and summary must be non-empty and bounded",
         ),
+        WalletDustRegistrationError::DevelopmentAuthorityUnavailable => Response::error(
+            id,
+            "capability_unavailable",
+            "automatic DUST registration is unavailable for this realm",
+        ),
+        WalletDustRegistrationError::Approval(error) => {
+            Response::error(id, "approval_unavailable", error.to_string())
+        }
         WalletDustRegistrationError::Clock(_) => Response::error(
             id,
             "platform_unavailable",
@@ -816,6 +1012,9 @@ pub(super) fn sensitive_error(
             "invalid_argument",
             "confirmation title and summary must be non-empty and bounded",
         ),
+        SensitiveWalletOperationError::Approval(error) => {
+            Response::error(id, "approval_denied", error.to_string())
+        }
         SensitiveWalletOperationError::Operation(error) => security_port_error(id, error),
     }
 }

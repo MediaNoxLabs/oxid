@@ -1,0 +1,31 @@
+appId: io.medianox.oxid
+name: settings security backup entry
+---
+- runFlow: ../subflows/launch-clean.yaml
+- runFlow: ../subflows/demo-profile.yaml
+- runFlow: ../subflows/open-menu.yaml
+- tapOn: "Settings"
+- assertVisible: "Settings"
+- tapOn: "Open Security"
+- assertVisible: "Security"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: "Go back"
+- assertVisible: "Settings"
+- scrollUntilVisible:
+    element:
+      text: "Open Backup"
+    direction: DOWN
+    speed: 40
+    timeout: 20000
+    centerElement: true
+- tapOn: "Open Backup"
+- assertVisible: "One encrypted wallet document"
+# Backup actions and recovery content are deliberately not entered.

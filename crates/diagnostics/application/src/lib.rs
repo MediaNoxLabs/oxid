@@ -4,6 +4,21 @@
 
 use std::{error::Error, fmt, sync::Arc};
 
+mod support_journal;
+
+pub use support_journal::{
+    MAX_SUPPORT_JOURNAL_CAPTURE_HOURS, MAX_SUPPORT_JOURNAL_DURABLE_BYTES,
+    MAX_SUPPORT_JOURNAL_DURABLE_RECORDS, MAX_SUPPORT_JOURNAL_EXPORT_BYTES,
+    MAX_SUPPORT_JOURNAL_FLUSH_BATCH, MAX_SUPPORT_JOURNAL_FLUSH_LATENCY_SECONDS,
+    MAX_SUPPORT_JOURNAL_PAGE_RECORDS, MAX_SUPPORT_JOURNAL_PENDING_RECORDS,
+    MAX_SUPPORT_JOURNAL_RECORDS_PER_MINUTE, MAX_SUPPORT_JOURNAL_RECORDS_PER_SECOND,
+    MAX_SUPPORT_JOURNAL_RETENTION_DAYS, NoopSupportJournalSink, SUPPORT_JOURNAL_SCHEMA_VERSION,
+    SupportJournalActionToken, SupportJournalCode, SupportJournalEvent,
+    SupportJournalEventSinkPort, SupportJournalOutcome, SupportJournalRecordResult,
+    SupportJournalSessionEpoch, SupportJournalSeverity, SupportJournalStage,
+    SupportJournalSubsystem,
+};
+
 /// Exact confirmation required before an incoming adapter clears the local
 /// diagnostic buffer.
 pub const CLEAR_LOCAL_DIAGNOSTICS_INTENT: &str = "CLEAR_LOCAL_DIAGNOSTICS";
@@ -20,6 +35,10 @@ pub const MAX_DIAGNOSTIC_CAPACITY: usize = 1_024;
 pub enum DiagnosticCode {
     HeadlessRequestRejected,
     HeadlessMethodNotFound,
+    IdentityOffchainDidCreationSucceeded,
+    IdentityOffchainDidCreationFailed,
+    IdentityOffchainDidResolutionSucceeded,
+    IdentityOffchainDidResolutionFailed,
     MidnightDustSyncFailed,
     MidnightDustSyncWorkerPanicked,
     MidnightDustSyncWorkerSpawnFailed,
@@ -29,6 +48,10 @@ pub enum DiagnosticCode {
     MidnightTransferWorkerTerminated,
     MidnightTransferWorkerSpawnFailed,
     MidnightContractCallWorkerPanicked,
+    WalletLifecycleSuspended,
+    WalletLifecycleResumed,
+    WalletReceiveAccountReadFailed,
+    WalletReceiveAddressesUnavailable,
     ScreenPrivacyActivationFailed,
 }
 
@@ -39,6 +62,14 @@ impl DiagnosticCode {
         match self {
             Self::HeadlessRequestRejected => "headless.request.rejected",
             Self::HeadlessMethodNotFound => "headless.method.not_found",
+            Self::IdentityOffchainDidCreationSucceeded => {
+                "identity.did.offchain.creation.succeeded"
+            }
+            Self::IdentityOffchainDidCreationFailed => "identity.did.offchain.creation.failed",
+            Self::IdentityOffchainDidResolutionSucceeded => {
+                "identity.did.offchain.resolution.succeeded"
+            }
+            Self::IdentityOffchainDidResolutionFailed => "identity.did.offchain.resolution.failed",
             Self::MidnightDustSyncFailed => "midnight.dust.sync.failed",
             Self::MidnightDustSyncWorkerPanicked => "midnight.dust.sync.worker_panicked",
             Self::MidnightDustSyncWorkerSpawnFailed => "midnight.dust.sync.worker_spawn_failed",
@@ -50,6 +81,10 @@ impl DiagnosticCode {
             Self::MidnightTransferWorkerTerminated => "midnight.transfer.worker_terminated",
             Self::MidnightTransferWorkerSpawnFailed => "midnight.transfer.worker_spawn_failed",
             Self::MidnightContractCallWorkerPanicked => "midnight.vault_call.worker_panicked",
+            Self::WalletLifecycleSuspended => "wallet.lifecycle.suspended",
+            Self::WalletLifecycleResumed => "wallet.lifecycle.resumed",
+            Self::WalletReceiveAccountReadFailed => "wallet.receive.account_read_failed",
+            Self::WalletReceiveAddressesUnavailable => "wallet.receive.addresses_unavailable",
             Self::ScreenPrivacyActivationFailed => "platform.screen_privacy.activation_failed",
         }
     }
@@ -58,6 +93,7 @@ impl DiagnosticCode {
 /// Stable severity without a free-form logging level or target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DiagnosticSeverity {
+    Info,
     Warning,
     Error,
 }
@@ -67,6 +103,7 @@ impl DiagnosticSeverity {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Info => "info",
             Self::Warning => "warning",
             Self::Error => "error",
         }
@@ -393,9 +430,26 @@ mod tests {
             "midnight.dust.sync.worker_panicked"
         );
         assert_eq!(DiagnosticSeverity::Error.as_str(), "error");
+        assert_eq!(DiagnosticSeverity::Info.as_str(), "info");
         assert_eq!(
             DiagnosticCode::ScreenPrivacyActivationFailed.as_str(),
             "platform.screen_privacy.activation_failed"
+        );
+        assert_eq!(
+            DiagnosticCode::WalletLifecycleSuspended.as_str(),
+            "wallet.lifecycle.suspended"
+        );
+        assert_eq!(
+            DiagnosticCode::WalletLifecycleResumed.as_str(),
+            "wallet.lifecycle.resumed"
+        );
+        assert_eq!(
+            DiagnosticCode::WalletReceiveAccountReadFailed.as_str(),
+            "wallet.receive.account_read_failed"
+        );
+        assert_eq!(
+            DiagnosticCode::WalletReceiveAddressesUnavailable.as_str(),
+            "wallet.receive.addresses_unavailable"
         );
     }
 }

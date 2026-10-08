@@ -77,6 +77,46 @@ fn derives_and_binds_a_midnight_account_without_secret_protocol_fields() {
             .as_str()
             .is_some_and(|value| value.starts_with("mn_shield-addr_undeployed1"))
     );
+    let receive_address = derived["receiveAddress"]["value"]
+        .as_str()
+        .expect("unshielded address is returned");
+    let receive_imports = execute_with_wallet(
+        &wallet,
+        &format!(
+            "{}\n{}\n{}\n{}",
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "receive-versioned",
+                "method": "wallet.receive_request.import",
+                "params": {"receiveRequest": format!("midnight-receive:v1|network=undeployed|asset=NIGHT|address={receive_address}")}
+            }),
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "receive-raw",
+                "method": "wallet.receive_request.import",
+                "params": {"receiveRequest": receive_address}
+            }),
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "receive-wrong-network",
+                "method": "wallet.receive_request.import",
+                "params": {"receiveRequest": format!("midnight-receive:v1|network=preprod|asset=NIGHT|address={receive_address}")}
+            }),
+            json!({
+                "protocol": PROTOCOL_VERSION,
+                "id": "receive-wrong-asset",
+                "method": "wallet.receive_request.import",
+                "params": {"receiveRequest": format!("midnight-receive:v1|network=undeployed|asset=DUST|address={receive_address}")}
+            }),
+        ),
+    );
+    assert_eq!(
+        receive_imports[0]["result"]["recipient"]["format"],
+        "versioned"
+    );
+    assert_eq!(receive_imports[1]["result"]["recipient"]["format"], "raw");
+    assert_eq!(receive_imports[2]["error"]["code"], "unsupported_network");
+    assert_eq!(receive_imports[3]["error"]["code"], "unsupported_asset");
     let key_ref = derived["transactionKeyRef"]
         .as_str()
         .expect("opaque key reference is returned");
@@ -106,14 +146,7 @@ fn derives_and_binds_a_midnight_account_without_secret_protocol_fields() {
         flowed[0]["result"]["account"]["accountId"],
         "midnight_account_0_0"
     );
-    assert_eq!(flowed[1]["result"]["algorithm"], "secp256k1-schnorr");
-    assert_eq!(
-        flowed[1]["result"]["signatureHex"]
-            .as_str()
-            .expect("signature is encoded")
-            .len(),
-        128
-    );
+    assert_eq!(flowed[1]["error"]["code"], "approval_unavailable");
     assert_eq!(flowed[3]["error"]["code"], "wallet_locked");
 
     let out_of_bounds = execute_with_wallet(
@@ -131,8 +164,81 @@ fn derives_and_binds_a_midnight_account_without_secret_protocol_fields() {
 }
 
 #[test]
-fn completes_an_exact_unshielded_transfer_without_exposing_material() {
+fn legacy_inputs_cannot_mint_transfer_or_registration_approval() {
     let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let created = execute_with_wallet(
+        &wallet,
+        r#"{"protocol":"oxid.headless.v1","id":"create","method":"wallet.profile.create","params":{"displayName":"Denied movement"}}"#,
+    );
+    let profile = created[0]["result"]["profile"]["id"].as_str().unwrap();
+    let setup = execute_with_wallet(
+        &wallet,
+        &format!(
+            "{}\n{}\n{}\n{}",
+            json!({"protocol":PROTOCOL_VERSION,"id":"select","method":"wallet.profile.select","params":{"profileId":profile}}),
+            r#"{"protocol":"oxid.headless.v1","id":"init","method":"wallet.security.initialize","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"derive","method":"wallet.account.derive","params":{}}"#,
+            r#"{"protocol":"oxid.headless.v1","id":"sync","method":"wallet.connect","params":{}}"#
+        ),
+    );
+    let recipient = setup[2]["result"]["account"]["receiveAddress"]["value"]
+        .as_str()
+        .unwrap();
+    for (prepare, params, key, authorize, submit) in [
+        (
+            "wallet.transaction.prepare_unshielded",
+            json!({"recipientAddress":recipient,"amountAtomicUnits":"1000000"}),
+            "transfer",
+            "wallet.transaction.authorize_unshielded",
+            "wallet.transaction.submit_unshielded",
+        ),
+        (
+            "wallet.dust.registration.prepare",
+            json!({}),
+            "registration",
+            "wallet.dust.registration.authorize",
+            "wallet.dust.registration.submit",
+        ),
+    ] {
+        let prepared = execute_with_wallet(
+            &wallet,
+            &json!({"protocol":PROTOCOL_VERSION,"id":"prepare","method":prepare,"params":params})
+                .to_string(),
+        );
+        let draft = prepared[0]["result"][key]["draftId"].as_str().unwrap();
+        let challenge = prepared[0]["result"][key]["authorizationChallenge"]
+            .as_str()
+            .unwrap();
+        for confirmed in [false, true] {
+            let confirmation =
+                json!({"title":"private-prose","summary":"private-payload","confirmed":confirmed});
+            for (method, mut params) in [
+                (
+                    authorize,
+                    json!({"draftId":draft,"authorizationChallenge":challenge,"confirmation":confirmation}),
+                ),
+                (submit, json!({"draftId":draft,"confirmation":confirmation})),
+            ] {
+                for forged in [false, true] {
+                    if forged {
+                        params["approval"] = json!("private-token");
+                    }
+                    let response = execute_with_wallet(&wallet, &json!({"protocol":PROTOCOL_VERSION,"id":"denied","method":method,"params":params}).to_string());
+                    assert_eq!(response[0]["ok"], false, "{response:?}");
+                    if method == authorize && confirmed && !forged {
+                        assert_eq!(response[0]["error"]["code"], "approval_unavailable");
+                    }
+                    assert!(response[0].get("result").is_none());
+                    assert!(!response[0].to_string().contains("private-"));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn completes_an_exact_unshielded_transfer_without_exposing_material() {
+    let wallet = super::support::trusted_movement_wallet();
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"transfer-create","method":"wallet.profile.create","params":{"displayName":"Transfer flow"}}"#,
@@ -489,7 +595,7 @@ fn completes_an_exact_unshielded_transfer_without_exposing_material() {
 
 #[test]
 fn starts_cancels_and_retries_a_submission_through_the_headless_protocol() {
-    let wallet = HeadlessWallet::new(oxid_composition::compose_in_memory());
+    let wallet = super::support::trusted_movement_wallet();
     let created = execute_with_wallet(
         &wallet,
         r#"{"protocol":"oxid.headless.v1","id":"cancel-create","method":"wallet.profile.create","params":{"displayName":"Cancellation flow"}}"#,

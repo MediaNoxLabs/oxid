@@ -155,6 +155,7 @@ fn managed_claim_contract_state() -> Vec<u8> {
 #[test]
 fn native_vault_context_is_joined_only_inside_composition() {
     let services = compose_in_memory();
+    let activity = Arc::clone(&services.passport_vault_activity);
     let source = ComposedPassportVaultCallContextSource {
         wallet: Arc::clone(&services.midnight_public_call_context),
         chain: Arc::new(FixedVaultChainContext),
@@ -191,6 +192,21 @@ fn native_vault_context_is_joined_only_inside_composition() {
     )
     .expect("native adapter wiring");
     assert_eq!(services.passport_vault_call_mode(), "native_settlement");
+    assert!(Arc::ptr_eq(&activity, &services.passport_vault_activity));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn simulated_call_replacement_preserves_the_standalone_activity_store() {
+    let services = compose_in_memory();
+    let activity = Arc::clone(&services.passport_vault_activity);
+    let services = with_simulated_passport_vault_calls(services);
+
+    assert_eq!(
+        services.passport_vault_call_mode(),
+        "deterministic_simulation"
+    );
+    assert!(Arc::ptr_eq(&activity, &services.passport_vault_activity));
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -200,7 +216,7 @@ fn standalone_managed_claim_composes_and_settles_through_the_native_stack() {
     let composer = std::env::var_os("OXID_PASSPORT_VAULT_COMPOSER")
         .expect("OXID_PASSPORT_VAULT_COMPOSER is supplied by the Nix conformance lane");
     let composer = std::fs::canonicalize(composer).expect("packaged composer");
-    let services = compose_in_memory();
+    let services = crate::compose_in_memory_with_development_did_approval();
     let profile = services
         .create_wallet_profile()
         .execute(CreateWalletProfileCommand {

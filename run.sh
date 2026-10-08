@@ -47,16 +47,31 @@ run_repository() {
   node --test tests/repository/contribution-policy-contract.test.mjs
   node --test tests/repository/local-git-hooks-contract.test.mjs
   node --test tests/repository/factory-metrics-contract.test.mjs
+  node --test tests/repository/factory-issue-contract.test.mjs
   node --test tests/repository/pi-factory-policy-contract.test.mjs
+  node --test tests/repository/resource-admission-contract.test.mjs
   node --test tests/repository/integration-delivery-contract.test.mjs
+  node --test tests/repository/release-qualification-contract.test.mjs
   node --test tests/repository/sccache-diagnostics-contract.test.mjs
   node --test tests/repository/streaming-delivery-contract.test.mjs
   node --test tests/repository/bootstrap-dev-loop-contract.test.mjs
   node --test tests/repository/claude-capability-grammar.test.mjs
   node --test tests/repository/dev-loop-stability-contract.test.mjs
   node --test tests/repository/desktop-test-profile-contract.test.mjs
+  node --test tests/repository/desktop-live-profile-contract.test.mjs
+  node --test tests/repository/ios-wallet-lifecycle-simulator-contract.test.mjs
+  node --test tests/repository/ios-xcode-supervisor-contract.test.mjs
+  node --test tests/repository/host-mobile-admission-contract.test.mjs
+  node --test tests/repository/sanctioned-command-wrappers-contract.test.mjs
+  node --test tests/repository/maestro-mobile-pilot-contract.test.mjs
+  node --test tests/repository/ios-maestro-focused-contract.test.mjs
   node --test tests/repository/passport-vault-conformance-contract.test.mjs
   node --test scripts/app-artifact-receipt.test.mjs
+  node --test scripts/e2e/android-emulator-owner-receipt.test.mjs
+  node --test scripts/android-verify-16k.test.mjs
+  node --test scripts/lib/android-java.test.mjs
+  node --test scripts/build-android-release-candidate.test.mjs
+  node --test tests/mobile/android-profile-smoke-contract.test.mjs
   node --test tests/repository/tailnet-identity-demo-kit-contract.test.mjs
   node --test tests/repository/demo-inventory-contract.test.mjs
   node --test scripts/e2e/portal-tailnet-manual-lifecycle.test.mjs
@@ -69,7 +84,37 @@ run_repository() {
   node --test tests/repository/coverage-contract.test.mjs
   node --test tests/repository/worktree-lifecycle-contract.test.mjs
   node --test tests/repository/managed-child-process-contract.test.mjs
+  node --test tests/repository/docker-engine-health-contract.test.mjs
   node --test tests/repository/supervised-delivery-contract.test.mjs
+  node --test tests/repository/transport-trust-contract.test.mjs
+  node --test tests/repository/support-journal-adr-contract.test.mjs
+  node --test tests/repository/support-journal-segment-contract.test.mjs
+  node --test tests/repository/support-journal-store-contract.test.mjs
+  node --test tests/repository/wallet-approval-boundary-contract.test.mjs
+  node --test tests/repository/identity-approval-boundary-contract.test.mjs
+  node --test tests/repository/application-navigation-contract.test.mjs
+  node --test tests/repository/bootstrap-nix-discovery-contract.test.mjs
+  node --test tests/repository/coverage-policy-contract.test.mjs
+  node --test tests/repository/dev-loop-admission-contract.test.mjs
+  node --test tests/repository/edit-issue-contract.test.mjs
+  node --test tests/repository/ios-maestro-evidence-behavior.test.mjs
+  node --test tests/repository/ios-standalone-local-acceptance-contract.test.mjs
+  node --test tests/repository/maestro-ios-lane.test.mjs
+  node --test tests/repository/mobile-receive-sheet-contract.test.mjs
+  node --test tests/repository/oxid-size-budget-compatibility.test.mjs
+  node --test tests/repository/pi-observability-contract.test.mjs
+  node --test tests/repository/portal-ios-fixture-contract.test.mjs
+  node --test tests/repository/portal-manual-phases-command-contract.test.mjs
+  node --test tests/repository/portal-mobile-phase-parity-contract.test.mjs
+  node --test tests/repository/portal-services-lifecycle-command-contract.test.mjs
+  node --test tests/repository/midnight-integration-compatibility-contract.test.mjs
+  node --test tests/repository/taskflow-conformance.test.mjs
+  node --test tests/repository/ui-page-hierarchy-contract.test.mjs
+  node --test tests/repository/ui-source-scan-contract.test.mjs
+  node --test tests/repository/release-version-contract.test.mjs
+  node --test tests/repository/repository-test-inventory-contract.test.mjs
+  node scripts/ci/check-repository-test-inventory.mjs
+  ./scripts/check-transport-trust.sh
 }
 
 run_basic() {
@@ -137,6 +182,9 @@ run_coverage_excluded_tests() {
 }
 
 run_ui() {
+  if [[ "${1:-}" != "--repository-contracts-covered" ]]; then
+    node --test tests/repository/ui-source-scan-contract.test.mjs
+  fi
   ./scripts/check-brand-packs.sh
   ./scripts/check-ui-css-classes.sh
   ./scripts/check-ui-design-tokens.sh
@@ -177,11 +225,30 @@ run_headless_integration() {
     --test portal_live_flow \
     --test portal_profile_flow \
     --test protocol_contract
+  # Positive persistence journeys require an explicit compile-time approval
+  # fixture. Keep the ordinary executable fail-closed and name every approved
+  # test so this lane cannot silently broaden production authority.
+  local approval_fixture=(
+    cargo test -p oxid-headless --features development-did-approval-fixture
+  )
+  "${approval_fixture[@]}" --test persistent_profile_flow \
+    executable_restores_encrypted_credentials_in_a_new_process -- --exact
+  "${approval_fixture[@]}" --test persistent_profile_flow \
+    executable_restores_standalone_vault_accounting_and_claim_replay_in_a_new_process -- --exact
+  "${approval_fixture[@]}" --test persistent_profile_flow \
+    executable_restores_managed_did_ownership_after_restart -- --exact
+  "${approval_fixture[@]}" --test portal_profile_flow \
+    portal_standalone_profile_issues_encrypts_restores_and_reverifies_in_a_new_process -- --exact
+  cargo test -p oxid-headless --features standalone-faucet \
+    --test standalone_faucet_live
 }
 
 run_coverage() {
   require_command node
-  node scripts/coverage/run.mjs --base "${OXID_COVERAGE_BASE:-}"
+  local args=(node scripts/coverage/run.mjs --base "${OXID_COVERAGE_BASE:-}")
+  # Strict coverage is required evidence; measurement remains the explicit non-strict mode.
+  if $strict; then args+=(--enforce); fi
+  "${args[@]}"
 }
 
 require_command() {
@@ -208,7 +275,7 @@ run_quality() {
 case "$target" in
   all)
     run_core --skip-workspace-tests
-    run_ui
+    run_ui --repository-contracts-covered
     run_ui_release
     run_headless
     run_coverage_excluded_tests

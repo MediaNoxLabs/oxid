@@ -46,7 +46,10 @@ test("resource admission keeps the pressure decision fail-closed and lane-bounde
 });
 
 test("resource-monitor evidence is fresh, normalized, and alert-aware", () => {
-  const now = new Date("2026-09-30T13:13:30+08:00").getTime();
+  // Resource-monitor timestamps intentionally describe the host's local time.
+  // Keep the test clock local too so the contract is independent of the CI
+  // runner's timezone.
+  const now = new Date("2026-09-30T13:13:30").getTime();
   const resources = [
     "2026-09-30 13:11:06 | swap=25000MB docker_krun=4616MB qemu=1978MB | 95G used, 555M unused. | top: docker",
     "2026-09-30 13:13:17 | swap=25008MB docker_krun=4477MB qemu=1945MB | 94G used, 3G unused. | top: docker",

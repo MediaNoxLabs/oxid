@@ -1,8 +1,8 @@
 # Midnight Git source policy
 
 - Status: source policy enforced; canonical transaction, standalone submission, Digital Passport commitment, and exact Compact issuance-proof packages selected by issues #9/#11/#26/#29
-- Reviewed: 2026-08-12
-- Repositories: `midnightntwrk/midnight-ledger`, `midnightntwrk/midnight-zk`
+- Reviewed: 2026-10-07
+- Repositories: `MediaNoxLabs/midnight-ledger`, `MediaNoxLabs/midnight-zk`
 - ADR: [ADR-0015](../adr/0015-midnight-library-selection.md)
 
 ## Current state
@@ -20,7 +20,7 @@ types. Those packages are now direct Git dependencies at the selected revision
 and are present in `Cargo.lock`; the target-specific dependency section keeps
 them out of `wasm32`. Issue #11 enables the ledger's `proving` feature for DUST
 spends and adds `midnight-onchain-runtime` from the same immutable Git revision.
-Issue #12 adds `midnight-zkir 2.1.0` directly from that same official Git source
+Issue #12 adds `midnight-zkir` directly from that same reviewed Git source
 and revision with default features disabled.
 Issue #18 adds `midnight-zswap 8.2.0-rc.1` as a direct native-only dependency
 from the same immutable revision for canonical public-key derivation and the
@@ -40,10 +40,13 @@ ADR-0047 also uses those already pinned packages in `adapters/did-midnight` to
 decode the canonical compressed public key into the official little-endian
 EC/Jubjub JWK coordinates. Holder-bound standalone issuance therefore adds no
 repository, revision, path dependency, or floating source.
-The feature resolves published `midnight-proofs`, `midnight-circuits`, and
-`midnight-zk-stdlib` releases transitively. There is no direct `midnight-zk`
-dependency because the compatible proof crates are already selected by the
-immutable ledger/ZKIR graph.
+The selected Ledger8 workspace requires `midnight-proofs 0.7.3` from
+`MediaNoxLabs/midnight-zk@083c82824dc5979fd7d509229e6f6b362d5b1ebf`
+for its native `disk-spill` feature. Cargo does not propagate the root
+`[patch.crates-io]` table of a Git dependency, so Oxid repeats that exact
+immutable upstream patch. It is not a local path, branch, or downstream source
+substitution. `midnight-circuits` and `midnight-zk-stdlib` remain registry
+dependencies selected transitively by the Ledger8 graph.
 
 The reviewed prototype at commit
 `074b1a4bccbfee1740ee188374b606a022ecef42` used paths relative to the
@@ -54,14 +57,14 @@ form is valid in this standalone public repository.
 
 ## Required source form
 
-For an M2 adapter, use the official public HTTPS repository and a full
+For an M2 adapter, use the reviewed public HTTPS repository and a full
 immutable Git commit:
 
 ```toml
-midnight-ledger = { git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", default-features = false }
-midnight-zkir = { git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", default-features = false }
-midnight-zswap = { git = "https://github.com/midnightntwrk/midnight-ledger.git", rev = "d9414884db9da9e9b1f6f3a7f742d79a5732f817", default-features = false }
-midnight-proofs = { git = "https://github.com/midnightntwrk/midnight-zk.git", rev = "cd2c27b2659de157409a9b96dba0dbaf1218f00b" }
+midnight-ledger = { git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", default-features = false }
+midnight-zkir = { git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", default-features = false }
+midnight-zswap = { git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65", default-features = false }
+midnight-proofs = { git = "https://github.com/MediaNoxLabs/midnight-zk", rev = "083c82824dc5979fd7d509229e6f6b362d5b1ebf" }
 ```
 
 The ledger monorepo is also the source of its `midnight-zkir` crate; the
@@ -69,20 +72,20 @@ similarly named `midnight-zk` repository is the source of proof-system crates.
 Do not replace `rev` with a branch or a floating tag. `Cargo.lock` then records
 the resolved source commit, but the manifest pin remains the reviewable intent.
 
-As of the review date, both official GitHub repositories were reachable. Their
-reviewed branches resolved to:
+As of the review date, both reviewed GitHub repositories were reachable. Their
+selected revisions resolved to:
 
-- `midnight-ledger`, `ledger-8`:
-  `d9414884db9da9e9b1f6f3a7f742d79a5732f817`;
-- `midnight-zk`, `main`:
-  `cd2c27b2659de157409a9b96dba0dbaf1218f00b`.
+- `midnight-ledger`, reviewed Ledger8 compatibility revision:
+  `b85f5d8e503fd1d7a1b128bbc1d7156baf823a65`;
+- `midnight-zk`, the Ledger8 root patch:
+  `083c82824dc5979fd7d509229e6f6b362d5b1ebf`.
 
-ADR-0015 selects these as the initial compatibility baseline. The ledger
+ADR-0015 selects these as the current compatibility baseline. The ledger
 revision is selected for canonical transaction authorization and both remote
 and local DUST proof orchestration. `midnight-zkir` supplies the local provider
-from that repository. The separate `midnight-zk` revision remains absent
-because the compatible published proof crates are already selected by the
-immutable ledger graph. Registry proof crates reached through the selected
+from that repository. The exact `midnight-proofs` Git patch above mirrors the
+selected ledger workspace's own root patch; no other direct `midnight-zk`
+dependency is added. Registry proof crates reached through the selected
 ledger/ZKIR graph are lockfile-pinned transitive inputs. Each direct use must still validate
 its exact feature set, license graph, security posture, and Tier-1 native target
 builds.

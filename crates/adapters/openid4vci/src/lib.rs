@@ -17,23 +17,28 @@ use oxid_credential_application::{
     ImportVerifiedCredentialCommand, ImportVerifiedCredentialUseCase,
 };
 use oxid_identity_application::{
-    DidLifecyclePortError, DidOperationConfirmation, DidOperationError, DidRecordQuery,
-    DidRecordRepositoryError, GetDidRecordUseCase, SignDidPayloadCommand, SignDidPayloadUseCase,
+    DidKeyAlgorithm, DidLifecyclePortError, DidOperationError, DidRecordQuery,
+    DidRecordRepositoryError, GetDidRecordUseCase, SignCredentialIssuancePayloadCommand,
+    SignCredentialIssuancePayloadUseCase,
 };
 use oxid_platform_ports::ClockPort;
 use oxid_protocol_application::{
     CredentialHolderProofPort, CredentialIssuanceProtocolPort, HolderProofError, HolderProofFuture,
-    HolderProofRequest, IssuanceProtocolError, IssueCredentialPortFuture, IssuedCredentialBytes,
-    IssuedCredentialSinkError, IssuedCredentialSinkPort, PrepareIssuancePortFuture,
-    PrepareIssuanceRequest, PreparedCredentialOffer, ProtocolIssueRequest,
-    StoreIssuedCredentialFuture, StoreIssuedCredentialRequest, StoredCredential,
+    HolderProofJwt, HolderProofRequest, IssuanceProtocolError, IssueCredentialPortFuture,
+    IssuedCredentialBytes, IssuedCredentialSinkError, IssuedCredentialSinkPort,
+    OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID, PrepareIssuancePortFuture, PrepareIssuanceRequest,
+    PreparedCredentialOffer, ProtocolIssueRequest, StoreIssuedCredentialFuture,
+    StoreIssuedCredentialRequest, StoredCredential,
 };
 use oxid_protocol_domain::{CredentialIssuanceId, CredentialOfferPreview};
 use p256::ecdsa::{Signature as P256Signature, VerifyingKey as P256Key};
-use serde::{Deserialize, Deserializer, de};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::{Map, Number, Value, json};
 use url::Url;
 use zeroize::Zeroizing;
+
+mod secret_json;
+use secret_json::decode_json_string;
 
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -73,6 +78,140 @@ const MAX_JSON_DEPTH: usize = 16;
 const MAX_PROTOCOL_RESPONSE_BYTES: usize = 1024 * 1024 + 32 * 1024;
 const MAX_SECRET_CHARACTERS: usize = 4_096;
 const MAX_ENDPOINT_CHARACTERS: usize = 2_048;
+
+#[derive(Serialize)]
+struct HolderProofClaims<'a> {
+    aud: &'a str,
+    iat: u64,
+    nonce: &'a str,
+}
+
+struct BorrowedHolderProofClaims<'a> {
+    audience: &'a serde_json::value::RawValue,
+    issued_at: u64,
+    nonce: &'a serde_json::value::RawValue,
+    has_issuer: bool,
+}
+
+impl<'de> Deserialize<'de> for BorrowedHolderProofClaims<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ClaimsVisitor;
+
+        impl<'de> de::Visitor<'de> for ClaimsVisitor {
+            type Value = BorrowedHolderProofClaims<'de>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a holder proof claims object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::MapAccess<'de>,
+            {
+                let mut audience = None;
+                let mut issued_at = None;
+                let mut nonce = None;
+                let mut has_issuer = false;
+                while let Some(key) = map.next_key::<&str>()? {
+                    match key {
+                        "aud" if audience.is_none() => audience = Some(map.next_value()?),
+                        "iat" if issued_at.is_none() => issued_at = Some(map.next_value()?),
+                        "nonce" if nonce.is_none() => nonce = Some(map.next_value()?),
+                        "iss" if !has_issuer => {
+                            has_issuer = true;
+                            map.next_value::<de::IgnoredAny>()?;
+                        }
+                        "aud" | "iat" | "nonce" | "iss" => {
+                            return Err(de::Error::custom("duplicate holder proof claim"));
+                        }
+                        _ => return Err(de::Error::unknown_field(key, &["aud", "iat", "nonce"])),
+                    }
+                }
+                Ok(BorrowedHolderProofClaims {
+                    audience: audience.ok_or_else(|| de::Error::missing_field("aud"))?,
+                    issued_at: issued_at.ok_or_else(|| de::Error::missing_field("iat"))?,
+                    nonce: nonce.ok_or_else(|| de::Error::missing_field("nonce"))?,
+                    has_issuer,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(ClaimsVisitor)
+    }
+}
+
+#[derive(Serialize)]
+struct JwtProofs<'a> {
+    jwt: [&'a str; 1],
+}
+
+#[derive(Serialize)]
+struct StandaloneCredentialRequest<'a> {
+    credential_configuration_id: &'a str,
+    proofs: JwtProofs<'a>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BorrowedCredentialRequest<'a> {
+    #[serde(borrow)]
+    credential_configuration_id: &'a serde_json::value::RawValue,
+    #[serde(borrow)]
+    proofs: BorrowedJwtProofs<'a>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BorrowedJwtProofs<'a> {
+    #[serde(borrow)]
+    jwt: [&'a serde_json::value::RawValue; 1],
+}
+
+#[derive(Serialize)]
+struct PortalMidnightRequest<'a> {
+    #[serde(rename = "holderBindingMethod")]
+    holder_binding_method: &'a str,
+}
+
+#[derive(Serialize)]
+struct PortalCredentialRequest<'a> {
+    credential_configuration_id: &'a str,
+    midnight: PortalMidnightRequest<'a>,
+    proofs: JwtProofs<'a>,
+}
+
+fn serialize_sensitive_json<T: Serialize + ?Sized>(
+    value: &T,
+) -> Result<Zeroizing<Vec<u8>>, serde_json::Error> {
+    let mut bytes = Zeroizing::new(Vec::new());
+    serde_json::to_writer(&mut *bytes, value)?;
+    Ok(bytes)
+}
+
+fn encode_sensitive_base64(input: &[u8]) -> Zeroizing<String> {
+    let mut encoded = Zeroizing::new(String::new());
+    general_purpose::URL_SAFE_NO_PAD.encode_string(input, &mut encoded);
+    encoded
+}
+
+struct ZeroizingHolderProofJwt(Zeroizing<String>);
+
+impl HolderProofJwt for ZeroizingHolderProofJwt {
+    fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl std::fmt::Debug for ZeroizingHolderProofJwt {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ZeroizingHolderProofJwt([REDACTED])")
+    }
+}
+
+impl zeroize::ZeroizeOnDrop for ZeroizingHolderProofJwt {}
 
 /// Public, non-secret offer used by the deterministic standalone issuer.
 #[must_use]
@@ -314,16 +453,22 @@ impl CredentialIssuanceProtocolPort for StandaloneOid4vciIssuer {
                     holder_did: proof_did.clone(),
                     method_id: proof_method.clone(),
                     audience: secret.issuer,
-                    nonce: nonce.to_string(),
+                    nonce: nonce.as_str(),
+                    flow_id: OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+                    session_id: request.issuance_id.as_str().to_owned(),
+                    authority: request.authority,
                 })
                 .await
                 .map_err(map_holder_proof_error)?;
-            let credential_request = json!({
-                "credential_configuration_id": secret.configuration_id,
-                "proofs": {"jwt": [proof]}
-            });
+            let credential_request = serialize_sensitive_json(&StandaloneCredentialRequest {
+                credential_configuration_id: &secret.configuration_id,
+                proofs: JwtProofs {
+                    jwt: [proof.as_str()],
+                },
+            })
+            .map_err(|_| IssuanceProtocolError::InvalidProof)?;
             validate_credential_request(
-                credential_request.to_string().as_bytes(),
+                &credential_request,
                 STANDALONE_CONFIGURATION_ID,
                 &proof_method,
                 nonce.as_str(),
@@ -338,7 +483,7 @@ impl CredentialIssuanceProtocolPort for StandaloneOid4vciIssuer {
                 &proof_profile,
                 &proof_did,
                 &proof_method,
-                &proof,
+                proof.as_str(),
             )?;
             let holder_bound_request = match &self.credential_source {
                 CredentialSource::Static { .. } => None,
@@ -703,26 +848,29 @@ fn validate_credential_request(
     expected_nonce: &str,
     current_time_seconds: u64,
 ) -> Result<(), IssuanceProtocolError> {
-    let value = parse_strict_json(bytes)?;
-    let object = value
-        .as_object()
-        .ok_or(IssuanceProtocolError::InvalidProof)?;
-    if required_string(object, "credential_configuration_id", 256)? != expected_configuration
-        || object.contains_key("credential_identifier")
-    {
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let request = BorrowedCredentialRequest::deserialize(&mut deserializer)
+        .map_err(|_| IssuanceProtocolError::InvalidProof)?;
+    deserializer
+        .end()
+        .map_err(|_| IssuanceProtocolError::InvalidProof)?;
+    let configuration = decode_json_string(
+        request.credential_configuration_id.get().as_bytes(),
+        256,
+        true,
+    )
+    .map_err(|_| IssuanceProtocolError::InvalidProof)?;
+    if configuration.as_str() != expected_configuration {
         return Err(IssuanceProtocolError::InvalidProof);
     }
-    let proofs = object
-        .get("proofs")
-        .and_then(Value::as_object)
-        .ok_or(IssuanceProtocolError::InvalidProof)?;
-    let jwt = proofs
-        .get("jwt")
-        .and_then(Value::as_array)
-        .filter(|proofs| proofs.len() == 1)
-        .and_then(|proofs| proofs[0].as_str())
-        .ok_or(IssuanceProtocolError::InvalidProof)?;
-    validate_key_proof(jwt, expected_method, expected_nonce, current_time_seconds)
+    let jwt = decode_json_string(request.proofs.jwt[0].get().as_bytes(), 64 * 1024, true)
+        .map_err(|_| IssuanceProtocolError::InvalidProof)?;
+    validate_key_proof(
+        jwt.as_str(),
+        expected_method,
+        expected_nonce,
+        current_time_seconds,
+    )
 }
 
 fn validate_key_proof(
@@ -741,9 +889,11 @@ fn validate_key_proof(
     let header = general_purpose::URL_SAFE_NO_PAD
         .decode(parts[0])
         .map_err(|_| IssuanceProtocolError::InvalidProof)?;
-    let payload = general_purpose::URL_SAFE_NO_PAD
-        .decode(parts[1])
-        .map_err(|_| IssuanceProtocolError::InvalidProof)?;
+    let payload = Zeroizing::new(
+        general_purpose::URL_SAFE_NO_PAD
+            .decode(parts[1])
+            .map_err(|_| IssuanceProtocolError::InvalidProof)?,
+    );
     let signature = general_purpose::URL_SAFE_NO_PAD
         .decode(parts[2])
         .map_err(|_| IssuanceProtocolError::InvalidProof)?;
@@ -763,19 +913,25 @@ fn validate_key_proof(
     {
         return Err(IssuanceProtocolError::InvalidProof);
     }
-    let payload = parse_strict_json(&payload)?;
-    let payload = payload
-        .as_object()
-        .ok_or(IssuanceProtocolError::InvalidProof)?;
-    let issued_at = payload
-        .get("iat")
-        .and_then(Value::as_u64)
-        .ok_or(IssuanceProtocolError::InvalidProof)?;
-    if required_string(payload, "aud", MAX_ENDPOINT_CHARACTERS)? != STANDALONE_CREDENTIAL_ISSUER
-        || required_string(payload, "nonce", MAX_SECRET_CHARACTERS)? != expected_nonce
-        || issued_at > current_time_seconds.saturating_add(60)
-        || current_time_seconds.saturating_sub(issued_at) > 300
-        || payload.contains_key("iss")
+    let mut payload_deserializer = serde_json::Deserializer::from_slice(&payload);
+    let payload = BorrowedHolderProofClaims::deserialize(&mut payload_deserializer)
+        .map_err(|_| IssuanceProtocolError::InvalidProof)?;
+    payload_deserializer
+        .end()
+        .map_err(|_| IssuanceProtocolError::InvalidProof)?;
+    let audience = decode_json_string(
+        payload.audience.get().as_bytes(),
+        MAX_ENDPOINT_CHARACTERS,
+        true,
+    )
+    .map_err(|_| IssuanceProtocolError::InvalidProof)?;
+    let nonce = decode_json_string(payload.nonce.get().as_bytes(), MAX_SECRET_CHARACTERS, true)
+        .map_err(|_| IssuanceProtocolError::InvalidProof)?;
+    if audience.as_str() != STANDALONE_CREDENTIAL_ISSUER
+        || nonce.as_str() != expected_nonce
+        || payload.issued_at > current_time_seconds.saturating_add(60)
+        || current_time_seconds.saturating_sub(payload.issued_at) > 300
+        || payload.has_issuer
     {
         return Err(IssuanceProtocolError::InvalidProof);
     }
@@ -823,7 +979,11 @@ fn verify_key_proof_signature(
     let signature = general_purpose::URL_SAFE_NO_PAD
         .decode(parts[2])
         .map_err(|_| IssuanceProtocolError::InvalidProof)?;
-    let signing_input = format!("{}.{}", parts[0], parts[1]);
+    let mut signing_input =
+        Zeroizing::new(String::with_capacity(parts[0].len() + parts[1].len() + 1));
+    signing_input.push_str(parts[0]);
+    signing_input.push('.');
+    signing_input.push_str(parts[1]);
     let verified = match (
         method.public_key_jwk.key_type.as_str(),
         method.public_key_jwk.curve.as_str(),
@@ -1099,7 +1259,7 @@ fn json_depth(value: &Value, depth: usize) -> usize {
 /// lifecycle without exposing opaque key handles to the protocol adapter.
 pub struct DidCredentialHolderProof {
     get_did: Arc<dyn GetDidRecordUseCase>,
-    sign: Arc<dyn SignDidPayloadUseCase>,
+    sign: Arc<dyn SignCredentialIssuancePayloadUseCase>,
     clock: Arc<dyn ClockPort>,
 }
 
@@ -1107,7 +1267,7 @@ impl DidCredentialHolderProof {
     #[must_use]
     pub fn new(
         get_did: Arc<dyn GetDidRecordUseCase>,
-        sign: Arc<dyn SignDidPayloadUseCase>,
+        sign: Arc<dyn SignCredentialIssuancePayloadUseCase>,
         clock: Arc<dyn ClockPort>,
     ) -> Self {
         Self {
@@ -1119,7 +1279,7 @@ impl DidCredentialHolderProof {
 }
 
 impl CredentialHolderProofPort for DidCredentialHolderProof {
-    fn create<'a>(&'a self, request: HolderProofRequest) -> HolderProofFuture<'a> {
+    fn create<'a>(&'a self, request: HolderProofRequest<'a>) -> HolderProofFuture<'a> {
         Box::pin(async move {
             let record = self
                 .get_did
@@ -1145,9 +1305,9 @@ impl CredentialHolderProofPort for DidCredentialHolderProof {
             {
                 return Err(HolderProofError::MethodNotAuthorized);
             }
-            let algorithm = match method.public_key_jwk.curve.as_str() {
-                "Ed25519" => "EdDSA",
-                "P-256" => "ES256",
+            let (algorithm, did_algorithm) = match method.public_key_jwk.curve.as_str() {
+                "Ed25519" => ("EdDSA", DidKeyAlgorithm::Ed25519),
+                "P-256" => ("ES256", DidKeyAlgorithm::P256),
                 _ => return Err(HolderProofError::UnsupportedAlgorithm),
             };
             let issued_at = self
@@ -1161,29 +1321,34 @@ impl CredentialHolderProofPort for DidCredentialHolderProof {
                 "kid": request.method_id,
                 "typ": "openid4vci-proof+jwt"
             });
-            let payload = json!({
-                "aud": request.audience,
-                "iat": issued_at,
-                "nonce": request.nonce
-            });
+            let payload = HolderProofClaims {
+                aud: &request.audience,
+                iat: issued_at,
+                nonce: request.nonce,
+            };
             let protected = general_purpose::URL_SAFE_NO_PAD
                 .encode(serde_json::to_vec(&header).map_err(|_| HolderProofError::Rejected)?);
-            let claims = general_purpose::URL_SAFE_NO_PAD
-                .encode(serde_json::to_vec(&payload).map_err(|_| HolderProofError::Rejected)?);
-            let signing_input = format!("{protected}.{claims}");
+            let payload =
+                serialize_sensitive_json(&payload).map_err(|_| HolderProofError::Rejected)?;
+            let claims = encode_sensitive_base64(&payload);
+            let mut signing_input =
+                Zeroizing::new(String::with_capacity(protected.len() + claims.len() + 1));
+            signing_input.push_str(&protected);
+            signing_input.push('.');
+            signing_input.push_str(&claims);
+            let mut signing_payload = Zeroizing::new(Vec::with_capacity(signing_input.len()));
+            signing_payload.extend_from_slice(signing_input.as_bytes());
             let signature = self
                 .sign
-                .execute(SignDidPayloadCommand {
+                .execute(SignCredentialIssuancePayloadCommand {
                     profile_id: request.profile_id.as_str().to_owned(),
                     did: request.holder_did,
                     method_id: request.method_id,
-                    payload: signing_input.as_bytes().to_vec(),
-                    confirmation: DidOperationConfirmation {
-                        title: "Issue credential".to_owned(),
-                        summary: "Bind the accepted credential issuance to this DID method."
-                            .to_owned(),
-                        confirmed: true,
-                    },
+                    algorithm: did_algorithm,
+                    flow_id: request.flow_id.to_owned(),
+                    session_id: request.session_id,
+                    payload: &signing_payload,
+                    authority: request.authority,
                 })
                 .map_err(map_sign_error)?;
             if signature.signature_bytes.len() != 64
@@ -1194,10 +1359,10 @@ impl CredentialHolderProofPort for DidCredentialHolderProof {
             {
                 return Err(HolderProofError::Rejected);
             }
-            Ok(format!(
-                "{signing_input}.{}",
-                general_purpose::URL_SAFE_NO_PAD.encode(signature.signature_bytes)
-            ))
+            signing_input.push('.');
+            general_purpose::URL_SAFE_NO_PAD
+                .encode_string(signature.signature_bytes, &mut signing_input);
+            Ok(Box::new(ZeroizingHolderProofJwt(signing_input)) as Box<dyn HolderProofJwt>)
         })
     }
 }
@@ -1303,6 +1468,18 @@ mod laceid_portal_contract_tests;
 
 #[cfg(test)]
 mod tests {
+    struct ApprovalClock;
+    impl oxid_identity_application::DidApprovalClockPort for ApprovalClock {
+        fn now(
+            &self,
+        ) -> Result<
+            oxid_foundation::UnixTimestampMillis,
+            oxid_identity_application::DidApprovalClockError,
+        > {
+            Ok(oxid_foundation::UnixTimestampMillis::new(0))
+        }
+    }
+
     use super::*;
     use oxid_adapter_did_midnight::{StandaloneDidLifecycle, StandaloneDidResolver};
     use oxid_adapter_platform_system::{OsRandom, SystemClock};
@@ -1311,8 +1488,11 @@ mod tests {
         InMemoryDidRecordRepository, InMemoryWalletProfileRepository,
     };
     use oxid_identity_application::{
-        CreateDidCommand, CreateDidUseCase, DidRecordRepository, DidService,
+        AcceptedCredentialIssuanceContext, AcceptedCredentialIssuanceFlow, CreateDidCommand,
+        CreateDidUseCase, CredentialIssuanceAuthorityPort, CredentialIssuanceFlowService,
+        DidRecordRepository, DidService,
     };
+    use oxid_identity_domain::{IdentityProfileId, MidnightDid};
     use oxid_protocol_application::{CredentialIssuanceProtocolPort, PrepareIssuanceRequest};
     use oxid_protocol_domain::ProtocolProfileId;
     use oxid_wallet_application::{
@@ -1339,6 +1519,25 @@ mod tests {
         did: String,
         method: String,
         holder_binding_method: String,
+        authority: Arc<CredentialIssuanceFlowService>,
+    }
+
+    fn mint_authority(
+        authority: &CredentialIssuanceFlowService,
+        profile_id: &str,
+        did: &str,
+        method: &str,
+        session_id: &str,
+    ) -> AcceptedCredentialIssuanceFlow {
+        authority
+            .mint(AcceptedCredentialIssuanceContext::new(
+                IdentityProfileId::parse(profile_id.to_owned()).expect("identity profile"),
+                MidnightDid::parse(did).expect("holder DID"),
+                method,
+                OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+                session_id,
+            ))
+            .expect("issuance authority")
     }
 
     fn proof_fixture() -> ProofFixture {
@@ -1365,11 +1564,22 @@ mod tests {
         .expect("security should initialize");
         let keys: Arc<dyn WalletKeyOperationPort> = security;
         let repository: Arc<dyn DidRecordRepository> = Arc::new(InMemoryDidRecordRepository::new());
-        let identity = Arc::new(DidService::from_ports(
-            repository,
-            Arc::new(StandaloneDidResolver),
-            Arc::new(StandaloneDidLifecycle::new(keys)),
-        ));
+        let authority = Arc::new(CredentialIssuanceFlowService::new(clock.clone()));
+        let identity = Arc::new(
+            DidService::from_ports(
+                repository,
+                Arc::new(StandaloneDidResolver),
+                Arc::new(StandaloneDidLifecycle::new(keys)),
+            )
+            .with_approvals(
+                oxid_identity_application::development_did_approvals(Arc::new(ApprovalClock)),
+                Arc::new(oxid_adapter_platform_system::SystemSha256),
+            )
+            .with_credential_issuance_authority(
+                authority.clone(),
+                Arc::new(oxid_adapter_platform_system::SystemSha256),
+            ),
+        );
         let did = CreateDidUseCase::execute(
             identity.as_ref(),
             CreateDidCommand {
@@ -1394,7 +1604,7 @@ mod tests {
             .map(|method| method.id.clone())
             .expect("Jubjub holder-binding method should exist");
         let get: Arc<dyn GetDidRecordUseCase> = identity.clone();
-        let sign: Arc<dyn SignDidPayloadUseCase> = identity;
+        let sign: Arc<dyn SignCredentialIssuancePayloadUseCase> = identity;
         let proof_clock: Arc<dyn ClockPort> = clock.clone();
         ProofFixture {
             proof: Arc::new(DidCredentialHolderProof::new(Arc::clone(&get), sign, clock)),
@@ -1404,6 +1614,7 @@ mod tests {
             did: did.document.id,
             method,
             holder_binding_method,
+            authority,
         }
     }
 
@@ -1489,20 +1700,31 @@ mod tests {
             did,
             method,
             holder_binding_method,
+            authority,
         } = proof_fixture();
         let profile = ProtocolProfileId::parse(profile_id).expect("fixture profile id is valid");
+        let proof_authority = mint_authority(
+            &authority,
+            profile.as_str(),
+            &did,
+            &method,
+            "issuance-proof-test",
+        );
         let jwt = block_on(proof.create(HolderProofRequest {
             profile_id: profile.clone(),
             holder_did: did.clone(),
             method_id: method.clone(),
             audience: STANDALONE_CREDENTIAL_ISSUER.to_owned(),
-            nonce: "nonce-1".to_owned(),
+            nonce: "nonce-1",
+            flow_id: OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+            session_id: "issuance-proof-test".to_owned(),
+            authority: proof_authority,
         }));
         let jwt = jwt.expect("active authentication method should produce a proof");
         let now = clock.now().expect("clock").value() / 1_000;
-        validate_key_proof(&jwt, &method, "nonce-1", now)
+        validate_key_proof(jwt.as_str(), &method, "nonce-1", now)
             .expect("generated proof should match the final OID4VCI shape");
-        verify_key_proof_signature(get_did.as_ref(), &profile, &did, &method, &jwt)
+        verify_key_proof_signature(get_did.as_ref(), &profile, &did, &method, jwt.as_str())
             .expect("issuer should verify the generated proof signature");
         let binding =
             resolve_holder_binding(get_did.as_ref(), &profile, &did, &holder_binding_method)
@@ -1516,7 +1738,8 @@ mod tests {
             Err(IssuanceProtocolError::InvalidProof)
         );
 
-        let mut tampered = jwt.into_bytes();
+        let mut tampered = Zeroizing::new(Vec::with_capacity(jwt.as_str().len()));
+        tampered.extend_from_slice(jwt.as_str().as_bytes());
         let signature_start = tampered
             .iter()
             .rposition(|byte| *byte == b'.')
@@ -1527,9 +1750,9 @@ mod tests {
         } else {
             b'A'
         };
-        let tampered = String::from_utf8(tampered).expect("ASCII proof");
+        let tampered = std::str::from_utf8(&tampered).expect("ASCII proof");
         assert_eq!(
-            verify_key_proof_signature(get_did.as_ref(), &profile, &did, &method, &tampered),
+            verify_key_proof_signature(get_did.as_ref(), &profile, &did, &method, tampered),
             Err(IssuanceProtocolError::InvalidProof)
         );
     }
@@ -1544,6 +1767,7 @@ mod tests {
             did,
             method,
             holder_binding_method,
+            authority,
         } = proof_fixture();
         let adapter = StandaloneOid4vciIssuer::new(proof, get_did, clock);
         let profile = ProtocolProfileId::parse(profile_id).expect("fixture profile id is valid");
@@ -1552,12 +1776,16 @@ mod tests {
             offer: standalone_credential_offer(),
         }))
         .expect("offer should prepare");
+        let session_id = prepared.id.as_str().to_owned();
+        let issuance_authority =
+            mint_authority(&authority, profile.as_str(), &did, &method, &session_id);
         let issued = block_on(adapter.issue(ProtocolIssueRequest {
             profile_id: profile,
             issuance_id: prepared.id,
             holder_did: did,
             method_id: method,
             holder_binding_method_id: holder_binding_method,
+            authority: issuance_authority,
         }))
         .expect("valid managed proof should issue");
         let expected = general_purpose::STANDARD
@@ -1574,26 +1802,66 @@ mod tests {
     fn standalone_protocol_prepares_refuses_and_rejects_bad_proofs() {
         struct BadProof;
         impl CredentialHolderProofPort for BadProof {
-            fn create<'a>(&'a self, _: HolderProofRequest) -> HolderProofFuture<'a> {
-                Box::pin(async { Ok("bad.proof.value".to_owned()) })
+            fn create<'a>(&'a self, _: HolderProofRequest<'a>) -> HolderProofFuture<'a> {
+                Box::pin(async {
+                    Ok(Box::new(ZeroizingHolderProofJwt(Zeroizing::new(
+                        "bad.proof.value".to_owned(),
+                    ))) as Box<dyn HolderProofJwt>)
+                })
             }
         }
-        let ProofFixture { get_did, clock, .. } = proof_fixture();
+        let ProofFixture {
+            get_did,
+            clock,
+            profile_id,
+            did,
+            method,
+            holder_binding_method,
+            authority,
+            ..
+        } = proof_fixture();
         let adapter = StandaloneOid4vciIssuer::new(Arc::new(BadProof), get_did, clock);
-        let profile = ProtocolProfileId::parse("profile_1").expect("profile id is valid");
+        let profile = ProtocolProfileId::parse(profile_id).expect("profile id is valid");
         let prepared = block_on(adapter.prepare(PrepareIssuanceRequest {
             profile_id: profile.clone(),
             offer: standalone_credential_offer(),
         }))
         .expect("offer should prepare");
+        let session_id = prepared.id.as_str().to_owned();
+        let issuance_authority =
+            mint_authority(&authority, profile.as_str(), &did, &method, &session_id);
         let error = block_on(adapter.issue(ProtocolIssueRequest {
             profile_id: profile,
             issuance_id: prepared.id,
-            holder_did: "did:midnight:undeployed:holder".to_owned(),
-            method_id: "did:midnight:undeployed:holder#auth-1".to_owned(),
-            holder_binding_method_id: "did:midnight:undeployed:holder#holder-jubjub-1".to_owned(),
+            holder_did: did,
+            method_id: method,
+            holder_binding_method_id: holder_binding_method,
+            authority: issuance_authority,
         }))
         .expect_err("malformed proof must fail");
         assert_eq!(error, IssuanceProtocolError::InvalidProof);
+    }
+
+    struct FailingSensitiveSerialization;
+
+    impl Serialize for FailingSensitiveSerialization {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            use serde::ser::SerializeMap as _;
+
+            let mut map = serializer.serialize_map(Some(2))?;
+            map.serialize_entry("nonce", "sensitive-nonce")?;
+            Err(serde::ser::Error::custom("rejected"))
+        }
+    }
+
+    #[test]
+    fn holder_proof_serialization_failures_are_payload_free() {
+        let error = serialize_sensitive_json(&FailingSensitiveSerialization)
+            .expect_err("fixture serializer must reject after writing sensitive bytes");
+        let public_surface = format!("{error:?} {error}");
+        assert!(!public_surface.contains("sensitive-nonce"));
     }
 }

@@ -11,13 +11,14 @@ use futures::{SinkExt as _, StreamExt as _};
 use midnight_ledger::events::Event;
 use midnight_storage::DefaultDB;
 use midnight_zswap::{keys::SecretKeys, local::State as ZswapState};
+use oxid_adapter_platform_system::websocket_connector_for;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tokio::time::timeout;
-use tokio_tungstenite::{
-    connect_async_with_config,
-    tungstenite::{Message, client::IntoClientRequest as _, protocol::WebSocketConfig},
+use tokio_tungstenite::tungstenite::{
+    Message, client::IntoClientRequest as _, protocol::WebSocketConfig,
 };
+use url::Url;
 
 use crate::{
     shielded::{
@@ -131,9 +132,18 @@ pub(crate) async fn synchronize_shielded_with_control(
             let mut websocket_config = WebSocketConfig::default();
             websocket_config.max_message_size = Some(MAX_MESSAGE_BYTES);
             websocket_config.max_frame_size = Some(MAX_FRAME_BYTES);
+            let endpoint_url =
+                Url::parse(endpoint).map_err(|_| ShieldedTransportError::Unavailable)?;
+            let connector = websocket_connector_for(&endpoint_url)
+                .map_err(|_| ShieldedTransportError::Unavailable)?;
             let connected = timeout(
                 CONNECT_TIMEOUT,
-                connect_async_with_config(request, Some(websocket_config), false),
+                tokio_tungstenite::connect_async_tls_with_config(
+                    request,
+                    Some(websocket_config),
+                    false,
+                    connector,
+                ),
             )
             .await;
             ensure_active(cancellation)?;

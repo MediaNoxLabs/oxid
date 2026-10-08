@@ -4,15 +4,30 @@ use std::{error::Error, fmt};
 
 use oxid_foundation::OpaqueIdError;
 use oxid_identity_domain::{
-    DidRecord, DidResolution, IdentityProfileId, MidnightDid, MidnightDidError, MidnightNetwork,
-    VerificationRelationship,
+    DidPublicationState, DidRecord, DidResolution, IdentityProfileId, JwkCurve, MidnightDid,
+    MidnightDidError, MidnightNetwork, VerificationRelationship,
 };
 
 use crate::{DidOperationError, DidRecordRepositoryError, DidRecordView, DidService};
 
 pub const MAX_DID_SIGNING_PAYLOAD_BYTES: usize = 64 * 1024;
-const MAX_CONFIRMATION_TITLE_CHARACTERS: usize = 96;
-const MAX_CONFIRMATION_SUMMARY_CHARACTERS: usize = 512;
+mod intent;
+mod serialization;
+use crate::{
+    AcceptedCredentialIssuanceContext, AcceptedCredentialIssuanceFlow,
+    AcceptedCredentialPresentationContext, AcceptedCredentialPresentationFlow,
+    AcceptedSelfIssuedAuthenticationContext, AcceptedSelfIssuedAuthenticationFlow,
+    CanonicalCredentialIssuancePayloadDigest, CanonicalCredentialPresentationBundleDigest,
+    CanonicalSelfIssuedAuthenticationPayloadDigest, CredentialIssuanceFlowError,
+    CredentialIssuanceFlowService, CredentialPresentationFlowError,
+    CredentialPresentationFlowService, DidApprovalCapability, DidApprovalError,
+    DidApprovalOperation, DidApprovalRequest, DidApprovalService,
+    SelfIssuedAuthenticationFlowError, SelfIssuedAuthenticationFlowService,
+};
+use intent::{
+    canonical_component_id, deactivate_request, normalize_update, sign_request, update_request,
+};
+use serialization::operation_lock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidKeyAlgorithm {
@@ -75,13 +90,6 @@ pub enum DidUpdate {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DidOperationConfirmation {
-    pub title: String,
-    pub summary: String,
-    pub confirmed: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CreateDidCommand {
     pub profile_id: String,
     pub network: String,
@@ -92,23 +100,32 @@ pub struct UpdateDidCommand {
     pub profile_id: String,
     pub did: String,
     pub operation: DidUpdate,
-    pub confirmation: DidOperationConfirmation,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeactivateDidCommand {
     pub profile_id: String,
     pub did: String,
-    pub confirmation: DidOperationConfirmation,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SignDidPayloadCommand {
+#[derive(Clone, PartialEq, Eq)]
+pub struct SignDidPayloadCommand<'a> {
     pub profile_id: String,
     pub did: String,
     pub method_id: String,
-    pub payload: Vec<u8>,
-    pub confirmation: DidOperationConfirmation,
+    pub payload: &'a [u8],
+}
+
+impl fmt::Debug for SignDidPayloadCommand<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SignDidPayloadCommand")
+            .field("profile_id", &self.profile_id)
+            .field("did", &self.did)
+            .field("method_id", &self.method_id)
+            .field("payload", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,8 +157,126 @@ pub trait DeactivateDidUseCase: Send + Sync {
 pub trait SignDidPayloadUseCase: Send + Sync {
     fn execute(
         &self,
-        command: SignDidPayloadCommand,
+        command: SignDidPayloadCommand<'_>,
     ) -> Result<DidSignatureView, DidOperationError>;
+}
+
+/// Exact JWS signing input plus the accepted issuance authority that permits
+/// this one holder-proof signature. The authority is deliberately moved.
+pub struct SignCredentialIssuancePayloadCommand<'a> {
+    pub profile_id: String,
+    pub did: String,
+    pub method_id: String,
+    pub algorithm: DidKeyAlgorithm,
+    pub flow_id: String,
+    pub session_id: String,
+    pub payload: &'a [u8],
+    pub authority: AcceptedCredentialIssuanceFlow,
+}
+
+impl fmt::Debug for SignCredentialIssuancePayloadCommand<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SignCredentialIssuancePayloadCommand")
+            .field("profile_id", &self.profile_id)
+            .field("did", &self.did)
+            .field("method_id", &self.method_id)
+            .field("algorithm", &self.algorithm)
+            .field("flow_id", &self.flow_id)
+            .field("session_id", &self.session_id)
+            .field("payload", &"[REDACTED]")
+            .field("authority", &"[REDACTED]")
+            .finish()
+    }
+}
+
+pub trait SignCredentialIssuancePayloadUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: SignCredentialIssuancePayloadCommand<'_>,
+    ) -> Result<DidSignatureView, DidOperationError>;
+}
+
+/// Exact canonical SIOPv2 ID-token JWS signing input plus its moved authority.
+pub struct SignSelfIssuedAuthenticationPayloadCommand<'a> {
+    pub profile_id: String,
+    pub did: String,
+    pub method_id: String,
+    pub algorithm: DidKeyAlgorithm,
+    pub flow_id: String,
+    pub session_id: String,
+    pub payload: &'a [u8],
+    pub authority: AcceptedSelfIssuedAuthenticationFlow,
+}
+
+impl fmt::Debug for SignSelfIssuedAuthenticationPayloadCommand<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SignSelfIssuedAuthenticationPayloadCommand")
+            .field("profile_id", &self.profile_id)
+            .field("did", &self.did)
+            .field("method_id", &self.method_id)
+            .field("algorithm", &self.algorithm)
+            .field("flow_id", &self.flow_id)
+            .field("session_id", &self.session_id)
+            .field("payload", &"[REDACTED]")
+            .field("authority", &"[REDACTED]")
+            .finish()
+    }
+}
+
+pub trait SignSelfIssuedAuthenticationPayloadUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: SignSelfIssuedAuthenticationPayloadCommand<'_>,
+    ) -> Result<DidSignatureView, DidOperationError>;
+}
+
+pub struct SignCredentialPresentationBundleCommand<'a> {
+    pub profile_id: String,
+    pub did: String,
+    pub method_id: String,
+    pub flow_id: String,
+    pub session_id: String,
+    pub credential_id: String,
+    pub verifier: String,
+    pub authorization_payload: [u8; 32],
+    pub presentation_root: [u8; 32],
+    pub verifier_challenge_hash: [u8; 32],
+    pub created_at_seconds: u64,
+    pub expected_public_key: [u8; 32],
+    pub derive_challenge: &'a mut DidJubjubChallengeDeriver<'a>,
+    pub authority: AcceptedCredentialPresentationFlow,
+}
+
+impl fmt::Debug for SignCredentialPresentationBundleCommand<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SignCredentialPresentationBundleCommand")
+            .field("profile_id", &self.profile_id)
+            .field("did", &self.did)
+            .field("method_id", &self.method_id)
+            .field("flow_id", &self.flow_id)
+            .field("session_id", &self.session_id)
+            .field("credential_id", &self.credential_id)
+            .field("verifier", &self.verifier)
+            .field("inputs", &"[REDACTED]")
+            .field("authority", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CredentialPresentationSignatureBundle {
+    pub authorization: DidSignatureView,
+    pub holder_proof: DidJubjubChallengeSignature,
+}
+
+pub trait SignCredentialPresentationBundleUseCase: Send + Sync {
+    fn execute(
+        &self,
+        command: SignCredentialPresentationBundleCommand<'_>,
+    ) -> Result<CredentialPresentationSignatureBundle, DidOperationError>;
 }
 
 /// Mutable DID boundary. A live adapter may prove and submit Compact calls;
@@ -312,45 +447,128 @@ fn parse_did(value: String) -> Result<MidnightDid, DidOperationError> {
     MidnightDid::parse(value).map_err(DidOperationError::InvalidDid)
 }
 
-fn validate_confirmation(value: &DidOperationConfirmation) -> Result<(), DidOperationError> {
-    if !value.confirmed {
-        return Err(DidOperationError::ConfirmationRequired);
-    }
-    let title = value.title.trim();
-    let summary = value.summary.trim();
-    if title.is_empty()
-        || summary.is_empty()
-        || title.chars().count() > MAX_CONFIRMATION_TITLE_CHARACTERS
-        || summary.chars().count() > MAX_CONFIRMATION_SUMMARY_CHARACTERS
-        || title.chars().any(char::is_control)
-        || summary.chars().any(char::is_control)
+fn hash(service: &DidService) -> Result<&dyn oxid_platform_ports::Sha256Port, DidOperationError> {
+    service
+        .approvals
+        .as_ref()
+        .map(|(_, hash)| hash.as_ref())
+        .ok_or(DidOperationError::Approval(DidApprovalError::Unavailable))
+}
+
+fn approvals(service: &DidService) -> Result<&DidApprovalService, DidOperationError> {
+    service
+        .approvals
+        .as_ref()
+        .map(|(approval, _)| approval.as_ref())
+        .ok_or(DidOperationError::Approval(DidApprovalError::Unavailable))
+}
+
+fn credential_issuance(
+    service: &DidService,
+) -> Result<
+    (
+        &CredentialIssuanceFlowService,
+        &dyn oxid_platform_ports::Sha256Port,
+    ),
+    DidOperationError,
+> {
+    service
+        .credential_issuance
+        .as_ref()
+        .map(|(authority, hash)| (authority.as_ref(), hash.as_ref()))
+        .ok_or(DidOperationError::CredentialIssuance(
+            CredentialIssuanceFlowError::Unavailable,
+        ))
+}
+
+fn self_issued_authentication(
+    service: &DidService,
+) -> Result<
+    (
+        &SelfIssuedAuthenticationFlowService,
+        &dyn oxid_platform_ports::Sha256Port,
+    ),
+    DidOperationError,
+> {
+    service
+        .self_issued_authentication
+        .as_ref()
+        .map(|(authority, hash)| (authority.as_ref(), hash.as_ref()))
+        .ok_or(DidOperationError::SelfIssuedAuthentication(
+            SelfIssuedAuthenticationFlowError::Unavailable,
+        ))
+}
+
+fn credential_presentation(
+    service: &DidService,
+) -> Result<
+    (
+        &CredentialPresentationFlowService,
+        &dyn oxid_platform_ports::Sha256Port,
+        &dyn DidJubjubChallengeSigningPort,
+    ),
+    DidOperationError,
+> {
+    service
+        .credential_presentation
+        .as_ref()
+        .map(|authority| {
+            (
+                authority.flow.as_ref(),
+                authority.hash.as_ref(),
+                authority.challenge_signing.as_ref(),
+            )
+        })
+        .ok_or(DidOperationError::CredentialPresentation(
+            CredentialPresentationFlowError::Unavailable,
+        ))
+}
+
+// The caller holds the profile/DID operation lock from this re-read through
+// the lifecycle effect and persistence. Approval callbacks run outside the lock.
+// Re-read after approval, then atomically spend the exact reconstructed intent.
+// No callback or other fallible work occurs between consumption and the effect.
+fn consume<O: DidApprovalOperation>(
+    service: &DidService,
+    prior: &DidRecord,
+    capability: &DidApprovalCapability<O>,
+    expected: &DidApprovalRequest<O>,
+) -> Result<(), DidOperationError> {
+    if current(
+        service,
+        prior.profile_id(),
+        prior.resolution().document().id(),
+    )? != *prior
     {
-        return Err(DidOperationError::InvalidConfirmation);
+        return Err(DidOperationError::RetainedRecordChanged);
     }
-    Ok(())
+    approvals(service)?
+        .consume(capability, expected)
+        .map_err(DidOperationError::Approval)
 }
 
 fn persist(
     service: &DidService,
     profile_id: IdentityProfileId,
     resolution: DidResolution,
+    publication_state: DidPublicationState,
 ) -> Result<DidRecordView, DidOperationError> {
+    let record = DidRecord::new(profile_id, resolution).with_publication_state(publication_state);
     service
         .repository
-        .upsert(DidRecord::new(profile_id.clone(), resolution.clone()))
+        .upsert(record.clone())
         .map_err(DidOperationError::Persistence)?;
-    Ok(super::record_view(service, &profile_id, &resolution))
+    Ok(super::record_view(service, &record))
 }
 
 fn current(
     service: &DidService,
     profile_id: &IdentityProfileId,
     did: &MidnightDid,
-) -> Result<DidResolution, DidOperationError> {
+) -> Result<DidRecord, DidOperationError> {
     service
         .repository
         .get(profile_id, did)
-        .map(DidRecord::into_resolution)
         .map_err(DidOperationError::Persistence)
 }
 
@@ -363,44 +581,75 @@ impl CreateDidUseCase for DidService {
             .lifecycle
             .create(&profile_id, network)
             .map_err(DidOperationError::Lifecycle)?;
-        persist(self, profile_id, resolution)
+        persist(
+            self,
+            profile_id,
+            resolution,
+            DidPublicationState::Unpublished,
+        )
     }
 }
 
 impl UpdateDidUseCase for DidService {
     fn execute(&self, command: UpdateDidCommand) -> Result<DidRecordView, DidOperationError> {
-        validate_confirmation(&command.confirmation)?;
         let profile_id = parse_profile(command.profile_id)?;
         let did = parse_did(command.did)?;
+        let operation = normalize_update(&did, command.operation)?;
+        approvals(self)?;
         let prior = current(self, &profile_id, &did)?;
+        let publication_state = prior.publication_state();
+        let request = update_request(hash(self)?, &profile_id, &did, &operation);
+        let capability = approvals(self)?
+            .request(&request)
+            .map_err(DidOperationError::Approval)?;
+        let lock = operation_lock(&profile_id, &did)?;
+        let _guard = lock.lock().map_err(|_| serialization::unavailable())?;
+        consume(
+            self,
+            &prior,
+            &capability,
+            &update_request(hash(self)?, &profile_id, &did, &operation),
+        )?;
         let resolution = self
             .lifecycle
-            .update(&profile_id, &prior, command.operation)
+            .update(&profile_id, prior.resolution(), operation)
             .map_err(DidOperationError::Lifecycle)?;
-        persist(self, profile_id, resolution)
+        persist(self, profile_id, resolution, publication_state)
     }
 }
 
 impl DeactivateDidUseCase for DidService {
     fn execute(&self, command: DeactivateDidCommand) -> Result<DidRecordView, DidOperationError> {
-        validate_confirmation(&command.confirmation)?;
         let profile_id = parse_profile(command.profile_id)?;
         let did = parse_did(command.did)?;
+        approvals(self)?;
         let prior = current(self, &profile_id, &did)?;
+        let publication_state = prior.publication_state();
+        let request = deactivate_request(hash(self)?, &profile_id, &did);
+        let capability = approvals(self)?
+            .request(&request)
+            .map_err(DidOperationError::Approval)?;
+        let lock = operation_lock(&profile_id, &did)?;
+        let _guard = lock.lock().map_err(|_| serialization::unavailable())?;
+        consume(
+            self,
+            &prior,
+            &capability,
+            &deactivate_request(hash(self)?, &profile_id, &did),
+        )?;
         let resolution = self
             .lifecycle
-            .deactivate(&profile_id, &prior)
+            .deactivate(&profile_id, prior.resolution())
             .map_err(DidOperationError::Lifecycle)?;
-        persist(self, profile_id, resolution)
+        persist(self, profile_id, resolution, publication_state)
     }
 }
 
 impl SignDidPayloadUseCase for DidService {
     fn execute(
         &self,
-        command: SignDidPayloadCommand,
+        command: SignDidPayloadCommand<'_>,
     ) -> Result<DidSignatureView, DidOperationError> {
-        validate_confirmation(&command.confirmation)?;
         if command.payload.is_empty() {
             return Err(DidOperationError::EmptyPayload);
         }
@@ -409,20 +658,265 @@ impl SignDidPayloadUseCase for DidService {
         }
         let profile_id = parse_profile(command.profile_id)?;
         let did = parse_did(command.did)?;
+        let method_id = canonical_component_id(&did, &command.method_id)?;
+        approvals(self)?;
         let prior = current(self, &profile_id, &did)?;
+        let request = sign_request(hash(self)?, &profile_id, &did, &method_id, command.payload);
+        let capability = approvals(self)?
+            .request(&request)
+            .map_err(DidOperationError::Approval)?;
+        let lock = operation_lock(&profile_id, &did)?;
+        let _guard = lock.lock().map_err(|_| serialization::unavailable())?;
+        consume(
+            self,
+            &prior,
+            &capability,
+            &sign_request(hash(self)?, &profile_id, &did, &method_id, command.payload),
+        )?;
         self.lifecycle
-            .sign(
-                &profile_id,
-                &prior,
-                command.method_id.trim(),
-                &command.payload,
-            )
+            .sign(&profile_id, prior.resolution(), &method_id, command.payload)
             .map(|signature| DidSignatureView {
                 method_id: signature.method_id,
                 algorithm: signature.algorithm.as_str().to_owned(),
                 signature_bytes: signature.signature_bytes,
             })
             .map_err(DidOperationError::Lifecycle)
+    }
+}
+
+impl SignCredentialIssuancePayloadUseCase for DidService {
+    fn execute(
+        &self,
+        command: SignCredentialIssuancePayloadCommand<'_>,
+    ) -> Result<DidSignatureView, DidOperationError> {
+        if command.payload.is_empty() {
+            return Err(DidOperationError::EmptyPayload);
+        }
+        if command.payload.len() > MAX_DID_SIGNING_PAYLOAD_BYTES {
+            return Err(DidOperationError::PayloadTooLarge);
+        }
+        let profile_id = parse_profile(command.profile_id)?;
+        let did = parse_did(command.did)?;
+        let method_id = canonical_component_id(&did, &command.method_id)?;
+        let (issuance, hash) = credential_issuance(self)?;
+        let lock = operation_lock(&profile_id, &did)?;
+        let _guard = lock.lock().map_err(|_| serialization::unavailable())?;
+
+        // This is the authoritative read: the current retained DID and exact
+        // authentication method are checked under the same lock held through
+        // capability consumption and the custody signing effect.
+        let prior = current(self, &profile_id, &did)?;
+        let document = prior.resolution().document();
+        let method = document
+            .verification_methods()
+            .iter()
+            .find(|method| method.id() == method_id)
+            .ok_or(DidOperationError::Lifecycle(
+                DidLifecyclePortError::NotFound,
+            ))?;
+        let current_algorithm = match method.public_key_jwk().curve() {
+            JwkCurve::Ed25519 => DidKeyAlgorithm::Ed25519,
+            JwkCurve::P256 => DidKeyAlgorithm::P256,
+            _ => {
+                return Err(DidOperationError::Lifecycle(
+                    DidLifecyclePortError::UnsupportedAlgorithm,
+                ));
+            }
+        };
+        if current_algorithm != command.algorithm
+            || method.controller() != &did
+            || !document.relationships().iter().any(|relationship| {
+                relationship.relationship() == VerificationRelationship::Authentication
+                    && relationship.method_ids().iter().any(|id| id == &method_id)
+            })
+        {
+            return Err(DidOperationError::CredentialIssuance(
+                CredentialIssuanceFlowError::FlowMismatch,
+            ));
+        }
+        let context = AcceptedCredentialIssuanceContext::new(
+            profile_id.clone(),
+            did.clone(),
+            method_id.clone(),
+            command.flow_id,
+            command.session_id,
+        );
+        issuance
+            .bind_and_consume_for_signing(&command.authority, &context, || {
+                CanonicalCredentialIssuancePayloadDigest::from_sha256(hash.sha256(command.payload))
+            })
+            .map_err(DidOperationError::CredentialIssuance)?;
+        self.lifecycle
+            .sign(&profile_id, prior.resolution(), &method_id, command.payload)
+            .map(|signature| DidSignatureView {
+                method_id: signature.method_id,
+                algorithm: signature.algorithm.as_str().to_owned(),
+                signature_bytes: signature.signature_bytes,
+            })
+            .map_err(DidOperationError::Lifecycle)
+    }
+}
+
+impl SignSelfIssuedAuthenticationPayloadUseCase for DidService {
+    fn execute(
+        &self,
+        command: SignSelfIssuedAuthenticationPayloadCommand<'_>,
+    ) -> Result<DidSignatureView, DidOperationError> {
+        if command.payload.is_empty() {
+            return Err(DidOperationError::EmptyPayload);
+        }
+        if command.payload.len() > MAX_DID_SIGNING_PAYLOAD_BYTES {
+            return Err(DidOperationError::PayloadTooLarge);
+        }
+        let profile_id = parse_profile(command.profile_id)?;
+        let did = parse_did(command.did)?;
+        let method_id = canonical_component_id(&did, &command.method_id)?;
+        let (authentication, hash) = self_issued_authentication(self)?;
+        let lock = operation_lock(&profile_id, &did)?;
+        let _guard = lock.lock().map_err(|_| serialization::unavailable())?;
+
+        // The retained DID and exact authentication relationship are authoritative
+        // only when re-read under the lock held through consumption and signing.
+        let prior = current(self, &profile_id, &did)?;
+        let document = prior.resolution().document();
+        let method = document
+            .verification_methods()
+            .iter()
+            .find(|method| method.id() == method_id)
+            .ok_or(DidOperationError::Lifecycle(
+                DidLifecyclePortError::NotFound,
+            ))?;
+        let current_algorithm = match method.public_key_jwk().curve() {
+            JwkCurve::Ed25519 => DidKeyAlgorithm::Ed25519,
+            JwkCurve::P256 => DidKeyAlgorithm::P256,
+            _ => {
+                return Err(DidOperationError::Lifecycle(
+                    DidLifecyclePortError::UnsupportedAlgorithm,
+                ));
+            }
+        };
+        if current_algorithm != command.algorithm
+            || method.controller() != &did
+            || !document.relationships().iter().any(|relationship| {
+                relationship.relationship() == VerificationRelationship::Authentication
+                    && relationship.method_ids().iter().any(|id| id == &method_id)
+            })
+        {
+            return Err(DidOperationError::SelfIssuedAuthentication(
+                SelfIssuedAuthenticationFlowError::FlowMismatch,
+            ));
+        }
+        let context = AcceptedSelfIssuedAuthenticationContext::new(
+            profile_id.clone(),
+            did.clone(),
+            method_id.clone(),
+            command.flow_id,
+            command.session_id,
+        );
+        authentication
+            .bind_and_consume_for_signing(&command.authority, &context, || {
+                CanonicalSelfIssuedAuthenticationPayloadDigest::from_sha256(
+                    hash.sha256(command.payload),
+                )
+            })
+            .map_err(DidOperationError::SelfIssuedAuthentication)?;
+        self.lifecycle
+            .sign(&profile_id, prior.resolution(), &method_id, command.payload)
+            .map(|signature| DidSignatureView {
+                method_id: signature.method_id,
+                algorithm: signature.algorithm.as_str().to_owned(),
+                signature_bytes: signature.signature_bytes,
+            })
+            .map_err(DidOperationError::Lifecycle)
+    }
+}
+
+impl SignCredentialPresentationBundleUseCase for DidService {
+    fn execute(
+        &self,
+        command: SignCredentialPresentationBundleCommand<'_>,
+    ) -> Result<CredentialPresentationSignatureBundle, DidOperationError> {
+        let profile_id = parse_profile(command.profile_id)?;
+        let did = parse_did(command.did)?;
+        let method_id = canonical_component_id(&did, &command.method_id)?;
+        let (presentation, hash, challenge_signing) = credential_presentation(self)?;
+        let lock = operation_lock(&profile_id, &did)?;
+        let _guard = lock.lock().map_err(|_| serialization::unavailable())?;
+
+        let prior = current(self, &profile_id, &did)?;
+        let document = prior.resolution().document();
+        let method = document
+            .verification_methods()
+            .iter()
+            .find(|method| method.id() == method_id)
+            .ok_or(DidOperationError::Lifecycle(
+                DidLifecyclePortError::NotFound,
+            ))?;
+        let managed = self
+            .lifecycle
+            .managed_method_ids(&profile_id, prior.resolution())
+            .map_err(DidOperationError::Lifecycle)?;
+        if method.public_key_jwk().curve() != JwkCurve::Jubjub
+            || method.controller() != &did
+            || !managed.iter().any(|candidate| candidate == &method_id)
+            || !document.relationships().iter().any(|relationship| {
+                relationship.relationship() == VerificationRelationship::AssertionMethod
+                    && relationship.method_ids().iter().any(|id| id == &method_id)
+            })
+        {
+            return Err(DidOperationError::CredentialPresentation(
+                CredentialPresentationFlowError::FlowMismatch,
+            ));
+        }
+        let context = AcceptedCredentialPresentationContext::new(
+            profile_id.clone(),
+            command.flow_id,
+            command.session_id,
+            command.credential_id,
+        );
+        presentation
+            .bind_and_consume_for_signing(&command.authority, &context, || {
+                let mut canonical = Vec::with_capacity(32 * 5 + 8);
+                canonical.extend_from_slice(b"oxid:credential-presentation-bundle:v1\0");
+                canonical.extend_from_slice(&command.authorization_payload);
+                canonical.extend_from_slice(&command.presentation_root);
+                canonical.extend_from_slice(&command.verifier_challenge_hash);
+                canonical.extend_from_slice(&command.created_at_seconds.to_be_bytes());
+                canonical.extend_from_slice(&command.expected_public_key);
+                canonical.extend_from_slice(command.verifier.as_bytes());
+                CanonicalCredentialPresentationBundleDigest::from_sha256(hash.sha256(&canonical))
+            })
+            .map_err(DidOperationError::CredentialPresentation)?;
+
+        // One closed, ordered operation: neither signature is returned unless
+        // both protected effects complete successfully.
+        let authorization = self
+            .lifecycle
+            .sign(
+                &profile_id,
+                prior.resolution(),
+                &method_id,
+                &command.authorization_payload,
+            )
+            .map(|signature| DidSignatureView {
+                method_id: signature.method_id,
+                algorithm: signature.algorithm.as_str().to_owned(),
+                signature_bytes: signature.signature_bytes,
+            })
+            .map_err(DidOperationError::Lifecycle)?;
+        let holder_proof = challenge_signing
+            .sign_jubjub_challenge(
+                &profile_id,
+                &did,
+                &method_id,
+                &command.expected_public_key,
+                command.derive_challenge,
+            )
+            .map_err(DidOperationError::Lifecycle)?;
+        Ok(CredentialPresentationSignatureBundle {
+            authorization,
+            holder_proof,
+        })
     }
 }
 
@@ -445,7 +939,8 @@ impl From<DidRecordRepositoryError> for DidOperationError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    mod approval_enforcement;
     use std::sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -458,6 +953,26 @@ mod tests {
 
     use super::*;
     use crate::{DidRecordRepository, DidResolutionPort, UnavailableDidResolver};
+
+    // Collision-free recording test double, not a cryptographic implementation.
+    // Production composition injects SystemSha256; framing is asserted separately.
+    #[derive(Default)]
+    pub(crate) struct TestHash(Mutex<Vec<Vec<u8>>>);
+    impl oxid_platform_ports::Sha256Port for TestHash {
+        fn sha256(&self, payload: &[u8]) -> [u8; 32] {
+            let mut frames = self.0.lock().expect("frames");
+            let index = frames
+                .iter()
+                .position(|frame| frame == payload)
+                .unwrap_or_else(|| {
+                    frames.push(payload.to_vec());
+                    frames.len() - 1
+                });
+            let mut digest = [0; 32];
+            digest[..8].copy_from_slice(&(index as u64).to_be_bytes());
+            digest
+        }
+    }
 
     const DID: &str =
         "did:midnight:undeployed:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -485,6 +1000,8 @@ mod tests {
     struct TestRepository {
         get_error: Option<DidRecordRepositoryError>,
         upsert_error: Option<DidRecordRepositoryError>,
+        drift: bool,
+        reads: AtomicUsize,
     }
 
     impl DidRecordRepository for TestRepository {
@@ -501,8 +1018,21 @@ mod tests {
             profile_id: &IdentityProfileId,
             _: &MidnightDid,
         ) -> Result<DidRecord, DidRecordRepositoryError> {
-            self.get_error
-                .map_or_else(|| Ok(DidRecord::new(profile_id.clone(), resolution())), Err)
+            self.get_error.map_or_else(
+                || {
+                    let changed = self.reads.fetch_add(1, Ordering::SeqCst) > 0 && self.drift;
+                    Ok(
+                        DidRecord::new(profile_id.clone(), resolution()).with_publication_state(
+                            if changed {
+                                DidPublicationState::Published
+                            } else {
+                                DidPublicationState::Unknown
+                            },
+                        ),
+                    )
+                },
+                Err,
+            )
         }
 
         fn remove(
@@ -523,6 +1053,8 @@ mod tests {
 
     struct TestLifecycle {
         error: Option<DidLifecyclePortError>,
+        update_calls: AtomicUsize,
+        updates: Mutex<Vec<DidUpdate>>,
         deactivate_calls: AtomicUsize,
         sign_calls: Mutex<Vec<SignCall>>,
     }
@@ -531,6 +1063,8 @@ mod tests {
         fn new(error: Option<DidLifecyclePortError>) -> Self {
             Self {
                 error,
+                update_calls: AtomicUsize::new(0),
+                updates: Mutex::new(Vec::new()),
                 deactivate_calls: AtomicUsize::new(0),
                 sign_calls: Mutex::new(Vec::new()),
             }
@@ -550,8 +1084,10 @@ mod tests {
             &self,
             _: &IdentityProfileId,
             current: &DidResolution,
-            _: DidUpdate,
+            operation: DidUpdate,
         ) -> Result<DidResolution, DidLifecyclePortError> {
+            self.updates.lock().unwrap().push(operation);
+            self.update_calls.fetch_add(1, Ordering::SeqCst);
             self.error.map_or_else(|| Ok(current.clone()), Err)
         }
 
@@ -600,10 +1136,16 @@ mod tests {
         let repository: Arc<dyn DidRecordRepository> = Arc::new(TestRepository {
             get_error: repository_error.0,
             upsert_error: repository_error.1,
+            drift: false,
+            reads: AtomicUsize::new(0),
         });
         let resolver: Arc<dyn DidResolutionPort> = Arc::new(UnavailableDidResolver);
         let lifecycle = Arc::new(TestLifecycle::new(lifecycle_error));
-        let service = DidService::from_ports(repository, resolver, lifecycle.clone());
+        let service = DidService::from_ports(repository, resolver, lifecycle.clone())
+            .with_approvals(
+                Arc::new(crate::approval::tests::service().0),
+                Arc::new(TestHash::default()),
+            );
         (service, lifecycle)
     }
 
@@ -617,137 +1159,22 @@ mod tests {
         service_with_lifecycle(repository_error, lifecycle_error).0
     }
 
-    fn confirmation(title: String, summary: String, confirmed: bool) -> DidOperationConfirmation {
-        DidOperationConfirmation {
-            title,
-            summary,
-            confirmed,
-        }
-    }
-
-    fn valid_confirmation() -> DidOperationConfirmation {
-        confirmation(
-            "Authorize DID operation".to_owned(),
-            "Review the public DID change".to_owned(),
-            true,
-        )
-    }
-
-    fn update_command(confirmation: DidOperationConfirmation) -> UpdateDidCommand {
+    fn update_command() -> UpdateDidCommand {
         UpdateDidCommand {
             profile_id: PROFILE.to_owned(),
             did: DID.to_owned(),
             operation: DidUpdate::AddAlsoKnownAs {
                 value: "https://example.test/identity".to_owned(),
             },
-            confirmation,
         }
     }
 
-    fn sign_command(payload: Vec<u8>) -> SignDidPayloadCommand {
+    fn sign_command(payload: &[u8]) -> SignDidPayloadCommand<'_> {
         SignDidPayloadCommand {
             profile_id: PROFILE.to_owned(),
             did: DID.to_owned(),
             method_id: format!("{DID}#auth-1"),
             payload,
-            confirmation: valid_confirmation(),
-        }
-    }
-
-    #[test]
-    fn confirmation_requires_explicit_intent_and_bounded_printable_text() {
-        let cases = [
-            (
-                confirmation("Title".to_owned(), "Summary".to_owned(), false),
-                DidOperationError::ConfirmationRequired,
-            ),
-            (
-                confirmation(" ".to_owned(), "Summary".to_owned(), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-            (
-                confirmation("Title".to_owned(), "\t".to_owned(), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-            (
-                confirmation("x".repeat(97), "Summary".to_owned(), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-            (
-                confirmation("Title".to_owned(), "x".repeat(513), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-            (
-                confirmation("Title\nInjected".to_owned(), "Summary".to_owned(), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-        ];
-        let service = service((None, None), None);
-        for (confirmation, expected) in cases {
-            assert_eq!(
-                UpdateDidUseCase::execute(&service, update_command(confirmation)),
-                Err(expected)
-            );
-        }
-    }
-
-    #[test]
-    fn confirmation_accepts_exact_character_bounds() {
-        let result = UpdateDidUseCase::execute(
-            &service((None, None), None),
-            update_command(confirmation("t".repeat(96), "s".repeat(512), true)),
-        );
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn deactivate_rejects_unconfirmed_and_invalid_confirmation_without_forwarding() {
-        for (confirmation, expected) in [
-            (
-                confirmation("Title".to_owned(), "Summary".to_owned(), false),
-                DidOperationError::ConfirmationRequired,
-            ),
-            (
-                confirmation("Title\nInjected".to_owned(), "Summary".to_owned(), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-        ] {
-            let (service, lifecycle) = service_with_lifecycle((None, None), None);
-            assert_eq!(
-                DeactivateDidUseCase::execute(
-                    &service,
-                    DeactivateDidCommand {
-                        profile_id: PROFILE.to_owned(),
-                        did: DID.to_owned(),
-                        confirmation,
-                    }
-                ),
-                Err(expected)
-            );
-            assert_eq!(lifecycle.deactivate_calls.load(Ordering::Relaxed), 0);
-        }
-    }
-
-    #[test]
-    fn signing_rejects_unconfirmed_and_invalid_confirmation_without_forwarding() {
-        for (confirmation, expected) in [
-            (
-                confirmation("Title".to_owned(), "Summary".to_owned(), false),
-                DidOperationError::ConfirmationRequired,
-            ),
-            (
-                confirmation("Title".to_owned(), "\t".to_owned(), true),
-                DidOperationError::InvalidConfirmation,
-            ),
-        ] {
-            let (service, lifecycle) = service_with_lifecycle((None, None), None);
-            let mut command = sign_command(b"challenge".to_vec());
-            command.confirmation = confirmation;
-            assert_eq!(
-                SignDidPayloadUseCase::execute(&service, command),
-                Err(expected)
-            );
-            assert!(lifecycle.sign_calls.lock().expect("sign calls").is_empty());
         }
     }
 
@@ -776,7 +1203,7 @@ mod tests {
                 Err(DidOperationError::InvalidNetwork)
             );
         }
-        let mut command = update_command(valid_confirmation());
+        let mut command = update_command();
         command.did = "did:example:not-midnight".to_owned();
         assert!(matches!(
             UpdateDidUseCase::execute(&service, command),
@@ -795,16 +1222,16 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                SignDidPayloadUseCase::execute(&service, sign_command(payload)),
+                SignDidPayloadUseCase::execute(&service, sign_command(&payload)),
                 Err(expected)
             );
         }
         assert!(lifecycle.sign_calls.lock().expect("sign calls").is_empty());
 
-        let payload = (0..MAX_DID_SIGNING_PAYLOAD_BYTES)
+        let payload: Vec<u8> = (0..MAX_DID_SIGNING_PAYLOAD_BYTES)
             .map(|index| (index % 251) as u8)
             .collect();
-        assert!(SignDidPayloadUseCase::execute(&service, sign_command(payload)).is_ok());
+        assert!(SignDidPayloadUseCase::execute(&service, sign_command(&payload)).is_ok());
 
         let calls = lifecycle.sign_calls.lock().expect("sign calls");
         assert_eq!(calls.len(), 1);
@@ -839,7 +1266,7 @@ mod tests {
         assert_eq!(
             UpdateDidUseCase::execute(
                 &service((None, None), Some(DidLifecyclePortError::Conflict)),
-                update_command(valid_confirmation())
+                update_command()
             ),
             Err(DidOperationError::Lifecycle(
                 DidLifecyclePortError::Conflict
@@ -848,7 +1275,7 @@ mod tests {
         assert_eq!(
             SignDidPayloadUseCase::execute(
                 &service((None, None), Some(DidLifecyclePortError::Locked)),
-                sign_command(b"challenge".to_vec())
+                sign_command(b"challenge")
             ),
             Err(DidOperationError::Lifecycle(DidLifecyclePortError::Locked))
         );
@@ -862,7 +1289,6 @@ mod tests {
                 DeactivateDidCommand {
                     profile_id: PROFILE.to_owned(),
                     did: DID.to_owned(),
-                    confirmation: valid_confirmation(),
                 }
             ),
             Err(DidOperationError::Persistence(
@@ -887,10 +1313,12 @@ mod tests {
     }
 
     #[test]
-    fn signing_failures_do_not_echo_payload_or_confirmation_text() {
+    fn signing_failures_do_not_echo_payload() {
         let payload = b"private-signing-payload-sentinel".to_vec();
-        let mut command = sign_command(payload.clone());
-        command.confirmation.summary = "private-confirmation-sentinel".to_owned();
+        let command = sign_command(&payload);
+        let command_debug = format!("{command:?}");
+        assert!(command_debug.contains("[REDACTED]"));
+        assert!(!command_debug.contains("private-signing-payload-sentinel"));
         let error = SignDidPayloadUseCase::execute(
             &service((None, None), Some(DidLifecyclePortError::Locked)),
             command,
@@ -898,7 +1326,6 @@ mod tests {
         .expect_err("locked signing must fail");
         let diagnostic = format!("{error:?} {error}");
         assert!(!diagnostic.contains(std::str::from_utf8(&payload).expect("UTF-8 sentinel")));
-        assert!(!diagnostic.contains("private-confirmation-sentinel"));
         assert_eq!(
             error,
             DidOperationError::Lifecycle(DidLifecyclePortError::Locked)

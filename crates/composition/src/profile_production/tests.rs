@@ -7,7 +7,7 @@ use oxid_credential_application::{
 };
 use oxid_identity_application::{DidOperationError, DidRecordRepositoryError, ListDidRecordsQuery};
 use oxid_wallet_application::{
-    WalletAccountQuery, WalletDustSyncCommand, WalletProfileSecurityCommand,
+    WalletAccountQuery, WalletAccountSource, WalletDustSyncCommand, WalletProfileSecurityCommand,
     WalletShieldedSyncCommand,
 };
 
@@ -53,7 +53,7 @@ fn production_facing_composition_fails_closed_without_native_custody() {
             })
             .expect("unavailable account state is safe")
             .source,
-        "unavailable"
+        WalletAccountSource::Unavailable
     );
     assert_eq!(
         services

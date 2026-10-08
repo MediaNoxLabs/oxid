@@ -30,10 +30,10 @@ use oxid_wallet_application::{
     PrepareWalletTransferCommand, ReconcileWalletDustRegistrationSubmissionCommand,
     SelectWalletNetworkCommand, SensitiveOperationConfirmation,
     SubmitWalletDustRegistrationCommand, SubmitWalletTransferCommand, WalletAccountQuery,
-    WalletDustRegistrationError, WalletDustRegistrationPortError,
+    WalletAccountSource, WalletDustRegistrationError, WalletDustRegistrationPortError,
     WalletDustRegistrationPreviewView, WalletDustSyncCommand, WalletDustSyncView,
     WalletHdPathComponent, WalletProfileSecurityCommand, WalletProtectionPort,
-    WalletShieldedSyncCommand, WalletShieldedSyncView, WalletTransactionError,
+    WalletShieldedSyncCommand, WalletShieldedSyncView, WalletSyncState, WalletTransactionError,
     WalletTransactionPortError, WalletTransferDraftQuery, WalletTransferSubmissionQuery,
 };
 use zeroize::Zeroizing;
@@ -791,8 +791,8 @@ fn live_night_balance(application: &ApplicationServices, profile_id: &str) -> u1
         },
     ))
     .expect("live account synchronization");
-    assert_eq!(account.source, "live");
-    assert_eq!(account.sync.state, "synced");
+    assert_eq!(account.source, WalletAccountSource::Live);
+    assert_eq!(account.sync.state, WalletSyncState::Synced);
     account
         .balances
         .iter()
@@ -884,11 +884,11 @@ fn await_preprod_registration_preview(
 ) -> WalletDustRegistrationPreviewView {
     let deadline = Instant::now() + Duration::from_secs(15 * 60);
     loop {
-        match application.prepare_wallet_dust_registration().execute(
+        match futures::executor::block_on(application.prepare_wallet_dust_registration().execute(
             PrepareWalletDustRegistrationCommand {
                 profile_id: profile_id.to_owned(),
             },
-        ) {
+        )) {
             Ok(preview) => return preview,
             Err(WalletDustRegistrationError::Operation(
                 WalletDustRegistrationPortError::InsufficientRegistrationAllowance,
@@ -908,11 +908,11 @@ fn observe_registration_readiness(
     application: &ApplicationServices,
     profile_id: &str,
 ) -> (&'static str, Option<u16>, Option<String>) {
-    match application.prepare_wallet_dust_registration().execute(
+    match futures::executor::block_on(application.prepare_wallet_dust_registration().execute(
         PrepareWalletDustRegistrationCommand {
             profile_id: profile_id.to_owned(),
         },
-    ) {
+    )) {
         Ok(preview) => (
             "prepared",
             Some(preview.input_count),
@@ -1324,6 +1324,11 @@ fn preprod_deterministic_funding_manifest_exposes_public_addresses_only() {
 #[test]
 #[ignore = "requires explicit preprod opt-in, an out-of-band master seed, and live indexer reads"]
 fn preprod_funding_observation_is_read_only() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("PreProd observation runtime builds");
+    let _runtime_guard = runtime.enter();
     assert_eq!(
         std::env::var(PREPROD_ENABLE_ENV).ok().as_deref(),
         Some("1"),
@@ -1489,6 +1494,11 @@ fn preprod_funding_observation_is_read_only() {
 #[test]
 #[ignore = "requires funded PreProd A/B accounts, public-prover acknowledgement, and explicit opt-in"]
 fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("PreProd registration runtime builds");
+    let _runtime_guard = runtime.enter();
     assert_eq!(
         std::env::var(PREPROD_ENABLE_ENV).ok().as_deref(),
         Some("1"),
@@ -1583,11 +1593,11 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
         "wallet B must begin with no public NIGHT funding"
     );
     assert_eq!(
-        wallet_b
-            .prepare_wallet_dust_registration()
-            .execute(PrepareWalletDustRegistrationCommand {
+        futures::executor::block_on(wallet_b.prepare_wallet_dust_registration().execute(
+            PrepareWalletDustRegistrationCommand {
                 profile_id: wallet_b_profile_id.clone(),
-            }),
+            }
+        ),),
         Err(WalletDustRegistrationError::Operation(
             WalletDustRegistrationPortError::NoEligibleNight
         )),
@@ -1657,18 +1667,20 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
     );
     assert_eq!(prepared.fee_state, "requires_balancing");
 
-    let authorized = wallet_a
-        .authorize_wallet_dust_registration()
-        .execute(AuthorizeWalletDustRegistrationCommand {
-            profile_id: wallet_a_profile_id.clone(),
-            draft_id: prepared.draft_id.clone(),
-            authorization_challenge: prepared.authorization_challenge.clone(),
-            confirmation: SensitiveOperationConfirmation {
-                title: "Authorize PreProd DUST registration".to_owned(),
-                summary: "Register wallet A's exact reviewed NIGHT for DUST generation".to_owned(),
-                confirmed: true,
+    let authorized =
+        futures::executor::block_on(wallet_a.authorize_wallet_dust_registration().execute(
+            AuthorizeWalletDustRegistrationCommand {
+                profile_id: wallet_a_profile_id.clone(),
+                draft_id: prepared.draft_id.clone(),
+                authorization_challenge: prepared.authorization_challenge.clone(),
+                confirmation: SensitiveOperationConfirmation {
+                    title: "Authorize PreProd DUST registration".to_owned(),
+                    summary:
+                        "Register wallet A's exact reviewed NIGHT for DUST generation".to_owned(),
+                    confirmed: true,
+                },
             },
-        })
+        ))
         .expect("explicit DUST registration authorization");
     assert_eq!(authorized.state, "authorized");
     assert!(authorized.submission_ready);
@@ -1693,12 +1705,13 @@ fn preprod_funded_registration_observes_dust_and_spends_shielded_night() {
     assert!(!submitted.transaction_id.is_empty());
     assert!(!submitted.block_id.is_empty());
 
-    let included = wallet_a
-        .get_wallet_dust_registration_status()
-        .execute(GetWalletDustRegistrationStatusCommand {
-            profile_id: wallet_a_profile_id.clone(),
-            draft_id: prepared.draft_id.clone(),
-        })
+    let included =
+        futures::executor::block_on(wallet_a.get_wallet_dust_registration_status().execute(
+            GetWalletDustRegistrationStatusCommand {
+                profile_id: wallet_a_profile_id.clone(),
+                draft_id: prepared.draft_id.clone(),
+            },
+        ))
         .expect("included registration status");
     assert_eq!(included.state, "included");
     assert_eq!(included.registration_observation, "included");

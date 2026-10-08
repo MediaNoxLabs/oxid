@@ -8,8 +8,43 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+development-did-approval-fixture = ["oxid-composition/development-did-approval"]
+development-movement-approval-fixture = ["oxid-composition/development-movement-approval"]
+standalone-faucet = ["oxid-composition/standalone-development"]
+
+[[bin]]
+name = "oxid-headless"
+path = "src/main.rs"
+
+[[bin]]
+name = "oxid-standalone-faucet"
+path = "src/faucet_main.rs"
+required-features = ["standalone-faucet"]
+
+[[bin]]
+name = "oxid-standalone-faucet-http"
+path = "src/faucet_http_main.rs"
+required-features = ["standalone-faucet"]
+
+[[bin]]
+name = "oxid-headless-development-did-approval-fixture"
+path = "tests/support/development_did_approval_fixture_main.rs"
+required-features = ["development-did-approval-fixture"]
+test = false
+bench = false
+
+[[bin]]
+name = "oxid-headless-development-movement-approval-fixture"
+path = "tests/support/development_movement_approval_fixture_main.rs"
+required-features = ["development-movement-approval-fixture"]
+test = false
+bench = false
+
 [dependencies]
 futures.workspace = true
+futures-timer.workspace = true
 oxid-capabilities-application.workspace = true
 oxid-composition = { workspace = true, features = ["headless-portal-local"] }
 oxid-credential-application.workspace = true
@@ -24,9 +59,12 @@ oxid-wallet-application.workspace = true
 oxid-wallet-domain.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
+oxid-composition = { workspace = true, features = ["development-did-approval"] }
 base64.workspace = true
+ed25519-dalek.workspace = true
 hex.workspace = true
 oxid-adapter-did-midnight.workspace = true
 oxid-adapter-openid4vci.workspace = true
@@ -34,7 +72,6 @@ oxid-adapter-platform-system.workspace = true
 oxid-adapter-siopv2.workspace = true
 oxid-adapter-vc-midnight.workspace = true
 sha2.workspace = true
-tokio.workspace = true
 url.workspace = true
 tokio-tungstenite.workspace = true
 

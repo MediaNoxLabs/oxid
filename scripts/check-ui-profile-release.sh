@@ -5,7 +5,10 @@ set -euo pipefail
 
 failure_log="$(mktemp)"
 feature_graph_log="$(mktemp)"
-trap 'rm -f "$failure_log" "$feature_graph_log"' EXIT
+cleanup() {
+  rm -f "$failure_log" "$feature_graph_log"
+}
+trap cleanup EXIT
 
 load_feature_graph() {
   local label="$1"
@@ -347,15 +350,21 @@ cargo check -p oxid-app --no-default-features \
   --features desktop,developer-proof-benchmark
 
 # The physical launcher owns service selection. Keep the current laptop
-# MagicDNS lookup and the complete route set in one process; the app receives
-# no runtime discovery input.
+# MagicDNS lookup and receipt-scoped route set in one process; the app receives
+# no runtime discovery input. The receipt ports are intentionally dynamic so
+# concurrent Tailscale Serve users do not contend for a fixed global route.
 for launcher_contract in \
   'status="$(tailscale status --json)"' \
   "tailnet_dns_name=\"\$(jq -r '.Self.DNSName | rtrimstr(\".\")' <<<\"\$status\")\"" \
-  'export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$tailnet_dns_name:8443/api/v4/graphql/ws"' \
-  'export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$tailnet_dns_name:8443/api/v4/graphql"' \
-  'export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$tailnet_dns_name:10000"' \
-  'export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name"' \
+  'route_receipt="$repository_root/target/standalone-tailnet-routes/receipt.json"' \
+  '"$repository_root/scripts/standalone-tailnet-routes.sh" status' \
+  'indexer_port="$(jq -r '\''.routes[] | select(.name == "indexer") | .port'\'' "$route_receipt")"' \
+  'node_port="$(jq -r '\''.routes[] | select(.name == "node") | .port'\'' "$route_receipt")"' \
+  'proof_port="$(jq -r '\''.routes[] | select(.name == "proof") | .port'\'' "$route_receipt")"' \
+  'export OXID_BUILD_MIDNIGHT_INDEXER_WS_URL="wss://$tailnet_dns_name:$indexer_port/api/v4/graphql/ws"' \
+  'export OXID_BUILD_MIDNIGHT_INDEXER_HTTP_URL="https://$tailnet_dns_name:$indexer_port/api/v4/graphql"' \
+  'export OXID_BUILD_MIDNIGHT_NODE_WS_URL="wss://$tailnet_dns_name:$node_port"' \
+  'export OXID_BUILD_MIDNIGHT_PROOF_SERVER_URL="https://$tailnet_dns_name:$proof_port"' \
   'exec "$repository_root/scripts/run-android-emulator.sh"'; do
   if ! rg -qF "$launcher_contract" scripts/run-android-tailnet.sh; then
     echo "physical Tailnet launcher contract drifted: $launcher_contract" >&2
@@ -365,6 +374,7 @@ done
 
 if [ "$(uname -s)-$(uname -m)" = "Darwin-arm64" ]; then
   cargo check -p oxid-app --no-default-features --features desktop-portal-test
+  cargo check -p oxid-app --no-default-features --features desktop-developer-pager-test
 else
   if cargo check -p oxid-app --no-default-features \
     --features desktop-portal-test >"$failure_log" 2>&1; then
@@ -373,6 +383,16 @@ else
   fi
   if ! rg -q 'desktop-portal-test is available only on ARM64 macOS' "$failure_log"; then
     echo "desktop-portal-test failed for an unexpected reason" >&2
+    sed -n '1,120p' "$failure_log" >&2
+    exit 1
+  fi
+  if cargo check -p oxid-app --no-default-features \
+    --features desktop-developer-pager-test >"$failure_log" 2>&1; then
+    echo "desktop-developer-pager-test compiled outside ARM64 macOS" >&2
+    exit 1
+  fi
+  if ! rg -q 'desktop-developer-pager-test is available only on ARM64 macOS' "$failure_log"; then
+    echo "desktop-developer-pager-test failed for an unexpected reason" >&2
     sed -n '1,120p' "$failure_log" >&2
     exit 1
   fi
@@ -426,6 +446,7 @@ app_portal_members="$(awk '
 ' apps/oxid/Cargo.toml | sort)"
 expected_app_portal_members="$(printf '%s\n' \
   mobile \
+  oxid-composition/development-did-approval \
   oxid-composition/mobile-portal \
   standalone-development \
   standalone-local | sort)"
@@ -539,7 +560,7 @@ if cargo check -p oxid-app --no-default-features \
   echo "standalone-portal compiled for a non-mobile host" >&2
   exit 1
 fi
-if ! rg -q 'standalone-portal requires repository virtual-device profile authority|standalone-portal is available only on iOS and Android|mobile-portal is available only on iOS and Android' "$failure_log"; then
+if ! rg -q 'standalone-portal is available only on iOS and Android' "$failure_log"; then
   echo "standalone-portal host rejection failed for an unexpected reason" >&2
   sed -n '1,120p' "$failure_log" >&2
   exit 1
@@ -551,7 +572,9 @@ for conflicting_profile in standalone-tailnet standalone-native-custody; do
     echo "standalone-portal compiled with $conflicting_profile" >&2
     exit 1
   fi
-  if ! rg -q 'standalone-portal requires repository virtual-device profile authority|standalone-portal is incompatible with tailnet and native custody|mobile-portal is available only on iOS and Android' "$failure_log"; then
+  if ! rg -q \
+    'standalone-portal is incompatible with tailnet and native custody|mobile-portal is available only on iOS and Android' \
+    "$failure_log"; then
     echo "standalone-portal/$conflicting_profile failed for an unexpected reason" >&2
     sed -n '1,120p' "$failure_log" >&2
     exit 1
@@ -636,6 +659,12 @@ if rg -a -q \
   echo "normal release binary contains the ARM64 desktop test profile" >&2
   exit 1
 fi
+if rg -a -q \
+  'OXID_DEVELOPER_PAGER_VIEWPORT|Developer Pager Test|developer-pager-test' \
+  "$release_binary"; then
+  echo "normal release binary contains the developer pager test profile" >&2
+  exit 1
+fi
 standalone_local_release_values=(
   'OXID_STANDALONE_LOCAL_PROFILE'
   'ws://127.0.0.1:8088/api/v4/graphql/ws' # nosemgrep: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
@@ -650,7 +679,7 @@ for forbidden_value in "${standalone_local_release_values[@]}"; do
   fi
 done
 if rg -a -q \
-  'OXID_STANDALONE_FUNDER_SEED_HEX|OXID_ENABLE_LIVE_STANDALONE_FUNDING|Ephemeral funded recipient|Standalone funding authority|Ephemeral shielded recipient|Standalone shielded funding authority' \
+  'OXID_STANDALONE_FUNDER_SEED_HEX|OXID_ENABLE_LIVE_STANDALONE_FUNDING|OXID_ENABLE_STANDALONE_FAUCET|oxid\.standalone-faucet\.v1|Ephemeral funded recipient|Standalone funding authority|Ephemeral shielded recipient|Standalone shielded funding authority' \
   "$release_binary"; then
   echo "normal release binary contains the standalone funding harness" >&2
   exit 1

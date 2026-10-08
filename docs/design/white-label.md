@@ -20,9 +20,10 @@ ADR-0092 delivers the first pack without changing the default product:
   named default app, a root check, and one auto-enumerated check per pack.
 
 The repository currently has one release brand and therefore one thin app.
-App icons, splash resources, another partner app, compile-time licensed feature
-removal, and a user-selectable light theme remain later work; a pack directory
-alone is not a distributable application.
+The default brand supplies bundled Android, iOS, and desktop icons from a
+single fingerprint-crescent mark. Splash resources, another partner app,
+compile-time licensed feature removal, and a user-selectable light theme
+remain later work; a pack directory alone is not a distributable application.
 
 ## Architecture: brand packs + thin per-brand app crates
 

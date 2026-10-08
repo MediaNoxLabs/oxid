@@ -1,0 +1,39 @@
+appId: io.medianox.oxid
+name: DID inventory and public identifier copy
+---
+- runFlow: ../subflows/launch-clean.yaml
+- runFlow: ../subflows/demo-profile.yaml
+- tapOn: "Documents"
+- scrollUntilVisible:
+    element:
+      text: "Manage identities"
+    direction: DOWN
+    speed: 40
+    timeout: 20000
+    centerElement: true
+- tapOn: "Manage identities"
+- scrollUntilVisible:
+    element:
+      text: "Create a DID"
+    direction: DOWN
+    speed: 40
+    timeout: 20000
+- assertVisible: "Resolve a DID"
+- tapOn: "Create a DID"
+- scrollUntilVisible:
+    element:
+      text: "Create off-chain demo identity"
+    direction: DOWN
+    speed: 40
+    timeout: 20000
+- tapOn: "Create off-chain demo identity"
+- assertVisible: "DID details"
+- scrollUntilVisible:
+    element:
+      text: "Resolved locally from the self-contained public state above.*"
+    direction: DOWN
+    speed: 40
+    timeout: 20000
+- assertVisible: "Copy DID"
+- tapOn: "Copy DID"
+- assertVisible: "DID copied to the clipboard."

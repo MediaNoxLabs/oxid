@@ -7,6 +7,66 @@ pub(super) const fn profile_switch_is_allowed(route: Route) -> bool {
 }
 
 #[component]
+pub(super) fn ProfilePage(
+    active_profile: WalletProfileView,
+    on_selected: EventHandler<WalletProfileView>,
+) -> Element {
+    let services = consume_context::<WalletUiServices>();
+    let mut profiles = use_signal(|| ProfileListState::Loading);
+    use_effect(move || {
+        let service = services.list_wallet_profiles();
+        spawn(async move {
+            let result = run_ui_blocking(move || service.execute()).await;
+            profiles.set(match result {
+                Ok(Ok(profiles)) => ProfileListState::Ready(profiles),
+                Ok(Err(error)) => ProfileListState::Failed(error.to_string()),
+                Err(error) => ProfileListState::Failed(error.to_string()),
+            });
+        });
+    });
+
+    let view_state = match &*profiles.read() {
+        ProfileListState::Loading => "loading",
+        ProfileListState::Ready(loaded) if loaded.is_empty() => "empty",
+        ProfileListState::Ready(_) => "ready",
+        ProfileListState::Failed(_) => "error",
+    };
+    let content = match profiles.read().clone() {
+        ProfileListState::Loading => rsx! {
+            section { class: "gateway-state surface-card", role: "status", aria_busy: "true", "data-ui-primitive": "Skeleton",
+                span { class: "loading-mark", aria_hidden: "true" }
+                strong { "Loading profiles" }
+            }
+        },
+        ProfileListState::Ready(loaded) => rsx! {
+            ProfileManager {
+                profiles: loaded,
+                active_profile_id: Some(active_profile.id),
+                onboarding: false,
+                allow_public_fixture: true,
+                on_selected,
+            }
+        },
+        ProfileListState::Failed(message) => rsx! {
+            section { class: "result error", role: "alert", "data-ui-primitive": "ErrorState",
+                strong { "Profiles could not be loaded" }
+                p { "{message}" }
+            }
+        },
+    };
+
+    rsx! {
+        div { "data-screen": "profile-management", "data-view-state": "{view_state}",
+            section { class: "page-heading profile-heading",
+                p { class: "eyebrow", "Wallet profile" }
+                p { "Choose the active public wallet context or add another. Account keys, DIDs, and credentials remain behind separate protected capabilities." }
+            }
+            {content}
+        }
+    }
+}
+
+#[component]
 pub(super) fn ProfileSwitcherMenu(
     active_profile: WalletProfileView,
     profile_monogram: String,
@@ -18,6 +78,7 @@ pub(super) fn ProfileSwitcherMenu(
         nav {
             id: "profile-switcher-menu",
             class: "profile-sheet",
+            "data-ui-primitive": "Sheet",
             aria_label: "Switch wallet profile",
             div { class: "profile-sheet__identity",
                 span { class: "profile-avatar", aria_hidden: "true", "{profile_monogram}" }
@@ -73,13 +134,13 @@ pub(super) fn ProfileQuickSwitcher(
 
     match profiles.read().clone() {
         ProfileListState::Loading => rsx! {
-            div { class: "profile-sheet__state", role: "status", aria_busy: "true",
+            div { class: "profile-sheet__state", role: "status", aria_busy: "true", "data-ui-primitive": "Skeleton",
                 span { class: "loading-mark", aria_hidden: "true" }
                 span { "Loading profiles…" }
             }
         },
         ProfileListState::Failed(message) => rsx! {
-            div { class: "profile-sheet__state profile-sheet__state--critical", role: "alert",
+            div { class: "profile-sheet__state profile-sheet__state--critical", role: "alert", "data-ui-primitive": "ErrorState",
                 span { "Profiles unavailable: {message}" }
             }
         },
@@ -87,7 +148,7 @@ pub(super) fn ProfileQuickSwitcher(
             let alternatives = switchable_profiles(&active_profile.id, loaded);
             rsx! {
                 if alternatives.is_empty() {
-                    p { class: "profile-sheet__hint", "No other profiles on this device." }
+                    p { class: "profile-sheet__hint", "data-ui-primitive": "EmptyState", "No other profiles on this device." }
                 } else {
                     p { class: "profile-sheet__hint", "Switch wallet context" }
                     for profile in alternatives {
@@ -99,6 +160,7 @@ pub(super) fn ProfileQuickSwitcher(
                             rsx! {
                                 button {
                                     class: "profile-sheet__profile",
+                                    "data-ui-primitive": "ListRow",
                                     key: "{profile_id}",
                                     r#type: "button",
                                     aria_label: "Switch to {profile_name}",

@@ -13,35 +13,44 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose};
 use futures::StreamExt as _;
+use oxid_adapter_platform_system::http_client_builder_for;
 use oxid_identity_application::GetDidRecordUseCase;
 use oxid_protocol_application::{
     CredentialHolderProofPort, CredentialIssuanceProtocolPort, HolderProofRequest,
     IssuanceProtocolError, IssueCredentialPortFuture, IssuedCredentialBytes,
-    PrepareIssuancePortFuture, PrepareIssuanceRequest, PreparedCredentialOffer,
-    ProtocolIssueRequest,
+    OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID, PrepareIssuancePortFuture, PrepareIssuanceRequest,
+    PreparedCredentialOffer, ProtocolIssueRequest,
 };
 use oxid_protocol_domain::{CredentialIssuanceId, CredentialOfferPreview};
 use reqwest::{
-    Certificate, Client, Response, StatusCode,
+    Client, Response, StatusCode,
     header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE},
     redirect::Policy,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
 use url::Url;
-use webpki_root_certs::TLS_SERVER_ROOT_CERTS;
 use zeroize::Zeroizing;
 
 use super::{
-    EndpointPolicy, ParsedOffer, host_is_loopback, map_get_did_error, map_holder_proof_error,
+    EndpointPolicy, JwtProofs, ParsedOffer, PortalCredentialRequest, PortalMidnightRequest,
+    decode_json_string, host_is_loopback, map_get_did_error, map_holder_proof_error,
     parse_issuer_metadata, parse_offer, parse_strict_json, required_object, required_string,
-    required_unique_strings, resolve_holder_binding, validate_endpoint,
+    required_unique_strings, resolve_holder_binding, serialize_sensitive_json, validate_endpoint,
 };
 
 #[path = "portal_response.rs"]
 mod response;
 use response::*;
+
+struct SensitiveHttpBody(Zeroizing<Vec<u8>>);
+
+impl AsRef<[u8]> for SensitiveHttpBody {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
 
 pub const PORTAL_INTEGRATION_COMMIT: &str = "25499870f84d77173c46e4af3021311decfb840b";
 pub const PORTAL_INTEGRATION_TREE: &str = "2d845d2293603dfd8adce5362c8a9941e6ba78a9";
@@ -503,9 +512,10 @@ impl PortalOid4vciClientFactory {
     ) -> Result<Self, PortalDeploymentManifestError> {
         deployment.validate()?;
         let runtime = Arc::new(PortalRuntime::new()?);
+        let client = build_portal_http_client(&deployment)?;
         Ok(Self {
             deployment,
-            client: build_portal_http_client()?,
+            client,
             runtime,
         })
     }
@@ -535,21 +545,19 @@ impl PortalOid4vciClientFactory {
     }
 }
 
-fn build_portal_http_client() -> Result<Client, PortalDeploymentManifestError> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let roots = TLS_SERVER_ROOT_CERTS
-        .iter()
-        .map(|certificate| Certificate::from_der(certificate.as_ref()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| PortalDeploymentManifestError::ClientUnavailable)?;
-    Client::builder()
+fn build_portal_http_client(
+    deployment: &PortalDeploymentManifest,
+) -> Result<Client, PortalDeploymentManifestError> {
+    let endpoint = Url::parse(deployment.issuer_origin())
+        .map_err(|_| PortalDeploymentManifestError::InvalidOrigin)?;
+    http_client_builder_for(&endpoint)
+        .map_err(|_| PortalDeploymentManifestError::ClientUnavailable)?
         .no_proxy()
         .redirect(Policy::none())
         .retry(reqwest::retry::never())
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(REQUEST_TIMEOUT)
         .user_agent("oxid-portal-openid4vci/0.1")
-        .tls_certs_only(roots)
         .build()
         .map_err(|_| PortalDeploymentManifestError::ClientUnavailable)
 }
@@ -720,7 +728,7 @@ impl PortalOid4vciClient {
             .await
             .map_err(|_| IssuanceProtocolError::Unavailable)?;
         let token_bytes = read_json_response(token_response, MAX_TOKEN_BYTES).await?;
-        let access_token = Zeroizing::new(parse_token_response(&token_bytes)?);
+        let access_token = parse_token_response(&token_bytes)?;
 
         validate_portal_endpoint(
             &secret.nonce_endpoint,
@@ -734,35 +742,50 @@ impl PortalOid4vciClient {
             .await
             .map_err(|_| IssuanceProtocolError::Unavailable)?;
         let nonce_bytes = read_json_response(nonce_response, MAX_NONCE_BYTES).await?;
-        let nonce = Zeroizing::new(parse_nonce_response(&nonce_bytes)?);
+        let nonce = parse_nonce_response(&nonce_bytes)?;
 
-        let proof = Zeroizing::new(
-            self.proof
-                .create(HolderProofRequest {
-                    profile_id: request.profile_id,
-                    holder_did: request.holder_did.clone(),
-                    method_id: request.method_id,
-                    audience: secret.issuer.clone(),
-                    nonce: nonce.to_string(),
-                })
-                .await
-                .map_err(map_holder_proof_error)?,
-        );
-        let credential_request = json!({
-            "credential_configuration_id": secret.configuration_id,
-            "midnight": {"holderBindingMethod": request.holder_binding_method_id},
-            "proofs": {"jwt": [proof.as_str()]}
-        });
+        let proof = self
+            .proof
+            .create(HolderProofRequest {
+                profile_id: request.profile_id,
+                holder_did: request.holder_did.clone(),
+                method_id: request.method_id,
+                audience: secret.issuer.clone(),
+                nonce: nonce.as_str(),
+                flow_id: OID4VCI_CREDENTIAL_ISSUANCE_FLOW_ID,
+                session_id: request.issuance_id.as_str().to_owned(),
+                authority: request.authority,
+            })
+            .await
+            .map_err(map_holder_proof_error)?;
+        let credential_request = serialize_sensitive_json(&PortalCredentialRequest {
+            credential_configuration_id: &secret.configuration_id,
+            midnight: PortalMidnightRequest {
+                holder_binding_method: &request.holder_binding_method_id,
+            },
+            proofs: JwtProofs {
+                jwt: [proof.as_str()],
+            },
+        })
+        .map_err(|_| IssuanceProtocolError::InvalidProof)?;
         validate_portal_endpoint(
             &secret.credential_endpoint,
             self.deployment.issuer_origin(),
             "/api/issuer/credentials",
         )?;
+        let request_length = credential_request.len();
+        let request_body = reqwest::Body::wrap_stream(futures::stream::once(async move {
+            Result::<_, std::convert::Infallible>::Ok(bytes::Bytes::from_owner(SensitiveHttpBody(
+                credential_request,
+            )))
+        }));
         let credential_response = self
             .client
             .post(&secret.credential_endpoint)
             .bearer_auth(access_token.as_str())
-            .json(&credential_request)
+            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_LENGTH, request_length)
+            .body(request_body)
             .send()
             .await
             .map_err(|_| IssuanceProtocolError::Unavailable)?;

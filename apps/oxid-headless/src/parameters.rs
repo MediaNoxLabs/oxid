@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use oxid_identity_application::{DidKeyAlgorithm, DidOperationConfirmation, DidUpdate};
+use oxid_identity_application::{DidKeyAlgorithm, DidUpdate};
 use oxid_identity_domain::VerificationRelationship;
 use oxid_passport_vault_application::PreparePassportVaultCallAction;
 use oxid_wallet_application::SensitiveOperationConfirmation;
@@ -149,6 +149,12 @@ pub(super) struct PrepareTransferParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ImportReceiveRequestParams {
+    pub(super) receive_request: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct PrepareShieldedTransferParams {
     pub(super) recipient_address: String,
     pub(super) token_type: String,
@@ -168,6 +174,12 @@ pub(super) struct AuthorizeTransferParams {
 pub(super) struct AuthorizeDustRegistrationParams {
     pub(super) draft_id: String,
     pub(super) authorization_challenge: String,
+    pub(super) confirmation: ConfirmationParams,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct AuthorizeDustSettlementParams {
     pub(super) confirmation: ConfirmationParams,
 }
 
@@ -208,33 +220,6 @@ impl From<ConfirmationParams> for SensitiveOperationConfirmation {
             confirmed: value.confirmed,
         }
     }
-}
-
-impl From<ConfirmationParams> for DidOperationConfirmation {
-    fn from(value: ConfirmationParams) -> Self {
-        Self {
-            title: value.title,
-            summary: value.summary,
-            confirmed: value.confirmed,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct SignParams {
-    #[serde(rename = "keyRef")]
-    pub(super) key_reference: String,
-    pub(super) payload_hex: String,
-    pub(super) confirmation: ConfirmationParams,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct DeleteKeyParams {
-    #[serde(rename = "keyRef")]
-    pub(super) key_reference: String,
-    pub(super) confirmation: ConfirmationParams,
 }
 
 #[derive(Deserialize)]
@@ -357,6 +342,15 @@ pub(super) struct CreateDidParams {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct DeployDidParams {
+    #[serde(default = "undeployed_network")]
+    pub(super) network: String,
+    #[serde(default)]
+    pub(super) account_index: u32,
+}
+
+#[derive(Deserialize)]
 #[serde(
     tag = "operation",
     rename_all = "camelCase",
@@ -367,60 +361,50 @@ pub(super) enum DidUpdateParams {
     AddAlsoKnownAs {
         did: String,
         value: String,
-        confirmation: ConfirmationParams,
     },
     RemoveAlsoKnownAs {
         did: String,
         value: String,
-        confirmation: ConfirmationParams,
     },
     AddVerificationMethod {
         did: String,
         fragment: String,
         algorithm: String,
-        confirmation: ConfirmationParams,
     },
     UpdateVerificationMethod {
         did: String,
         method_id: String,
         algorithm: String,
-        confirmation: ConfirmationParams,
     },
     RemoveVerificationMethod {
         did: String,
         method_id: String,
-        confirmation: ConfirmationParams,
     },
     AddVerificationRelationship {
         did: String,
         relationship: String,
         method_id: String,
-        confirmation: ConfirmationParams,
     },
     RemoveVerificationRelationship {
         did: String,
         relationship: String,
         method_id: String,
-        confirmation: ConfirmationParams,
     },
     AddService {
         did: String,
         id: String,
         service_type: String,
         endpoint: String,
-        confirmation: ConfirmationParams,
     },
     UpdateService {
         did: String,
         id: String,
         service_type: String,
         endpoint: String,
-        confirmation: ConfirmationParams,
     },
     RemoveService {
         did: String,
         id: String,
-        confirmation: ConfirmationParams,
     },
 }
 
@@ -430,105 +414,74 @@ pub(super) struct SignDidParams {
     pub(super) did: String,
     pub(super) method_id: String,
     pub(super) payload_hex: String,
-    pub(super) confirmation: ConfirmationParams,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct DeactivateDidParams {
     pub(super) did: String,
-    pub(super) confirmation: ConfirmationParams,
 }
 
-pub(super) fn did_update(
-    params: DidUpdateParams,
-) -> Option<(String, DidUpdate, DidOperationConfirmation)> {
+pub(super) fn did_update(params: DidUpdateParams) -> Option<(String, DidUpdate)> {
     let value = match params {
-        DidUpdateParams::AddAlsoKnownAs {
-            did,
-            value,
-            confirmation,
-        } => (
-            did,
-            DidUpdate::AddAlsoKnownAs { value },
-            confirmation.into(),
-        ),
-        DidUpdateParams::RemoveAlsoKnownAs {
-            did,
-            value,
-            confirmation,
-        } => (
-            did,
-            DidUpdate::RemoveAlsoKnownAs { value },
-            confirmation.into(),
-        ),
+        DidUpdateParams::AddAlsoKnownAs { did, value } => {
+            (did, DidUpdate::AddAlsoKnownAs { value })
+        }
+        DidUpdateParams::RemoveAlsoKnownAs { did, value } => {
+            (did, DidUpdate::RemoveAlsoKnownAs { value })
+        }
         DidUpdateParams::AddVerificationMethod {
             did,
             fragment,
             algorithm,
-            confirmation,
         } => (
             did,
             DidUpdate::AddVerificationMethod {
                 fragment,
                 algorithm: did_key_algorithm(&algorithm)?,
             },
-            confirmation.into(),
         ),
         DidUpdateParams::UpdateVerificationMethod {
             did,
             method_id,
             algorithm,
-            confirmation,
         } => (
             did,
             DidUpdate::UpdateVerificationMethod {
                 method_id,
                 algorithm: did_key_algorithm(&algorithm)?,
             },
-            confirmation.into(),
         ),
-        DidUpdateParams::RemoveVerificationMethod {
-            did,
-            method_id,
-            confirmation,
-        } => (
-            did,
-            DidUpdate::RemoveVerificationMethod { method_id },
-            confirmation.into(),
-        ),
+        DidUpdateParams::RemoveVerificationMethod { did, method_id } => {
+            (did, DidUpdate::RemoveVerificationMethod { method_id })
+        }
         DidUpdateParams::AddVerificationRelationship {
             did,
             relationship,
             method_id,
-            confirmation,
         } => (
             did,
             DidUpdate::AddVerificationRelationship {
                 relationship: VerificationRelationship::parse(&relationship)?,
                 method_id,
             },
-            confirmation.into(),
         ),
         DidUpdateParams::RemoveVerificationRelationship {
             did,
             relationship,
             method_id,
-            confirmation,
         } => (
             did,
             DidUpdate::RemoveVerificationRelationship {
                 relationship: VerificationRelationship::parse(&relationship)?,
                 method_id,
             },
-            confirmation.into(),
         ),
         DidUpdateParams::AddService {
             did,
             id,
             service_type,
             endpoint,
-            confirmation,
         } => (
             did,
             DidUpdate::AddService {
@@ -536,14 +489,12 @@ pub(super) fn did_update(
                 service_type,
                 endpoint,
             },
-            confirmation.into(),
         ),
         DidUpdateParams::UpdateService {
             did,
             id,
             service_type,
             endpoint,
-            confirmation,
         } => (
             did,
             DidUpdate::UpdateService {
@@ -551,13 +502,8 @@ pub(super) fn did_update(
                 service_type,
                 endpoint,
             },
-            confirmation.into(),
         ),
-        DidUpdateParams::RemoveService {
-            did,
-            id,
-            confirmation,
-        } => (did, DidUpdate::RemoveService { id }, confirmation.into()),
+        DidUpdateParams::RemoveService { did, id } => (did, DidUpdate::RemoveService { id }),
     };
     Some(value)
 }

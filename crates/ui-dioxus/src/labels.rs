@@ -8,6 +8,7 @@
 //! of being echoed to the user.
 
 use oxid_protocol_application::IdentityRequestKind;
+use oxid_wallet_application::{WalletAccountSource, WalletSyncState};
 
 pub(crate) const NIGHT_DECIMALS: u8 = 6;
 pub(crate) const DUST_DECIMALS: u8 = 15;
@@ -20,23 +21,39 @@ pub(crate) fn identity_request_kind(value: IdentityRequestKind) -> &'static str 
     }
 }
 
-pub(crate) fn account_source(value: &str) -> &'static str {
+pub(crate) const fn account_source(value: WalletAccountSource) -> &'static str {
     match value {
-        "live" => "Live",
-        "cached" => "Saved",
-        "simulated" => "Simulated",
-        "unavailable" => "Not connected",
-        _ => "Source unavailable",
+        WalletAccountSource::Live => "Live",
+        WalletAccountSource::Cached => "Saved",
+        WalletAccountSource::Simulated => "Simulated",
+        WalletAccountSource::Unavailable => "Not connected",
     }
 }
 
-pub(crate) fn account_source_note(value: &str) -> &'static str {
+pub(crate) const fn account_source_note(value: WalletAccountSource) -> &'static str {
     match value {
-        "live" => "Live account state reported by the configured Midnight adapter.",
-        "cached" => "Showing local state from the most recent successful synchronization.",
-        "simulated" => "Development-only public fixture state; no chain was contacted.",
-        "unavailable" => "Native custody and a live Midnight account source are not connected yet.",
-        _ => "The account source could not be identified safely.",
+        WalletAccountSource::Live => {
+            "Live account state reported by the configured Midnight adapter."
+        }
+        WalletAccountSource::Cached => {
+            "Showing local state from the most recent successful synchronization."
+        }
+        WalletAccountSource::Simulated => {
+            "Development-only public fixture state; no chain was contacted."
+        }
+        WalletAccountSource::Unavailable => {
+            "Native custody and a live Midnight account source are not connected yet."
+        }
+    }
+}
+
+pub(crate) const fn account_sync_state(value: WalletSyncState) -> &'static str {
+    match value {
+        WalletSyncState::NeverSynced => "Not synced",
+        WalletSyncState::Syncing => "Syncing",
+        WalletSyncState::Synced => "Synced",
+        WalletSyncState::Stalled => "Needs attention",
+        WalletSyncState::Unavailable => "Unavailable",
     }
 }
 
@@ -199,6 +216,15 @@ pub(crate) fn address_purpose(value: &str) -> &'static str {
     }
 }
 
+pub(crate) fn receive_asset(value: &str) -> &'static str {
+    match value {
+        "unshielded" | "shielded" => "NIGHT",
+        "dust" => "DUST",
+        "reward" => "Reward",
+        _ => "Asset",
+    }
+}
+
 pub(crate) fn transaction_mark(value: &str) -> &'static str {
     match value {
         "incoming" => "↓",
@@ -238,13 +264,30 @@ pub(crate) fn did_source(value: &str) -> &'static str {
     }
 }
 
+pub(crate) fn activity_retention(value: &str) -> &'static str {
+    match value {
+        "process_local_bounded_not_backed_up" => "This session only; bounded and not backed up",
+        _ => "Retention unavailable",
+    }
+}
+
 pub(crate) fn midnight_network(value: &str) -> &'static str {
     match value {
         "mainnet" => "Mainnet",
         "preprod" => "Pre-production",
+        "preview" => "Preview",
         "devnet" => "Development network",
         "undeployed" => "Standalone development",
         _ => "Network unavailable",
+    }
+}
+
+#[cfg(feature = "standalone-deployment-profile")]
+pub(crate) fn deployment_route_class(value: &str) -> &'static str {
+    match value {
+        "local" => "Local loopback",
+        "tailnet" => "Private Tailnet HTTPS",
+        _ => "Route unavailable",
     }
 }
 
@@ -257,6 +300,20 @@ pub(crate) fn key_curve(value: &str) -> &'static str {
         "BLS12381G1" => "BLS12-381 G1",
         "BLS12381G2" => "BLS12-381 G2",
         _ => "Key type unavailable",
+    }
+}
+
+pub(crate) fn review_state(value: &str) -> &'static str {
+    match value {
+        "idle" => "idle",
+        "awaiting_consent" => "awaiting-consent",
+        "authenticating" | "issuing" | "presenting" | "cancellation_requested" => "in-progress",
+        "succeeded" => "succeeded",
+        "cancelled" => "cancelled",
+        "refused" => "refused",
+        "timed_out" => "timed-out",
+        "failed" => "failed",
+        _ => "unknown",
     }
 }
 
@@ -667,7 +724,6 @@ mod tests {
     fn unknown_machine_values_never_echo() {
         let raw = "future_machine_value";
         for label in [
-            account_source(raw),
             sync_state(raw),
             sync_failure(raw),
             submission_state(raw),
@@ -745,5 +801,12 @@ mod tests {
         assert_eq!(receive_address_tab("shielded"), "Private");
         assert_eq!(receive_address_tab("dust"), "Fee account");
         assert_eq!(receive_address_tab("future_kind"), "Address");
+        assert_eq!(midnight_network("preview"), "Preview");
+        assert_eq!(review_state("awaiting_consent"), "awaiting-consent");
+        assert_eq!(review_state("presenting"), "in-progress");
+        assert_eq!(review_state("cancelled"), "cancelled");
+        assert_eq!(review_state("refused"), "refused");
+        assert_eq!(review_state("timed_out"), "timed-out");
+        assert_eq!(review_state("unexpected"), "unknown");
     }
 }

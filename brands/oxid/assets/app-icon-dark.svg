@@ -1,0 +1,26 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Oxid fingerprint crescent">
+<defs>
+  <linearGradient id="tile" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop stop-color="#0F172A"/><stop offset="0.52" stop-color="#07090E"/>
+    <stop offset="1" stop-color="#22113E"/>
+  </linearGradient>
+  <linearGradient id="oval" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop stop-color="#38BDF8" stop-opacity="0.42"/>
+    <stop offset="0.55" stop-color="#0F172A" stop-opacity="0.70"/>
+    <stop offset="1" stop-color="#8B5CF6" stop-opacity="0.55"/>
+  </linearGradient>
+  <linearGradient id="mark" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop stop-color="#A5F3FC"/><stop offset="0.43" stop-color="#06B6D4"/>
+    <stop offset="1" stop-color="#8B5CF6"/>
+  </linearGradient>
+</defs>
+<rect width="1024" height="1024" fill="url(#tile)"/>
+<ellipse cx="512" cy="504" rx="346" ry="418" fill="url(#oval)" stroke="#38BDF8" stroke-opacity="0.27" stroke-width="3"/>
+<g transform="translate(35 -8) scale(2)">
+  <path d="M316 114 C263 102 205 122 159 164 C111 208 92 264 106 320 C120 383 180 422 248 428 C273 431 297 426 316 418" fill="none" stroke="url(#mark)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M349 178 C311 153 268 161 233 190 C197 220 181 260 187 302 C189 317 195 331 204 343" fill="none" stroke="url(#mark)" stroke-width="31" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M375 263 C357 228 329 214 301 216 C269 218 246 241 239 271 C231 302 244 329 269 348" fill="none" stroke="url(#mark)" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M353 351 C365 324 356 291 339 274 C325 260 305 258 290 269 C274 281 272 301 285 315" fill="none" stroke="url(#mark)" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</svg>
