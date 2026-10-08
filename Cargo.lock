@@ -2285,7 +2285,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2592,7 +2592,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4834,7 +4834,7 @@ dependencies = [
 [[package]]
 name = "midnight-did-domain"
 version = "0.5.0"
-source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=66a16882e549ca4d63cc0a7bd7edfebda47b441f#66a16882e549ca4d63cc0a7bd7edfebda47b441f"
+source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=b0bda1f179c5eed35f840f939f451ccee108e1d0#b0bda1f179c5eed35f840f939f451ccee108e1d0"
 dependencies = [
  "base64 0.22.1",
  "blake2",
@@ -4848,7 +4848,7 @@ dependencies = [
 [[package]]
 name = "midnight-did-jubjub-schnorr"
 version = "0.5.0"
-source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=66a16882e549ca4d63cc0a7bd7edfebda47b441f#66a16882e549ca4d63cc0a7bd7edfebda47b441f"
+source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=b0bda1f179c5eed35f840f939f451ccee108e1d0#b0bda1f179c5eed35f840f939f451ccee108e1d0"
 dependencies = [
  "hex",
  "midnight-transient-crypto",
@@ -4860,7 +4860,7 @@ dependencies = [
 [[package]]
 name = "midnight-did-method"
 version = "0.5.0"
-source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=66a16882e549ca4d63cc0a7bd7edfebda47b441f#66a16882e549ca4d63cc0a7bd7edfebda47b441f"
+source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=b0bda1f179c5eed35f840f939f451ccee108e1d0#b0bda1f179c5eed35f840f939f451ccee108e1d0"
 dependencies = [
  "blake2",
  "hex",
@@ -4874,7 +4874,7 @@ dependencies = [
 [[package]]
 name = "midnight-did-runtime"
 version = "0.5.0"
-source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=66a16882e549ca4d63cc0a7bd7edfebda47b441f#66a16882e549ca4d63cc0a7bd7edfebda47b441f"
+source = "git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=b0bda1f179c5eed35f840f939f451ccee108e1d0#b0bda1f179c5eed35f840f939f451ccee108e1d0"
 dependencies = [
  "async-trait",
  "blake2",
@@ -5427,7 +5427,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7174,7 +7174,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7714,7 +7714,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7794,7 +7794,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 1.0.9",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8594,7 +8594,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -9085,7 +9085,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9587,7 +9587,7 @@ checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
 dependencies = [
  "cfg-if",
  "digest 0.10.7",
- "rand 0.8.8",
+ "rand 0.7.3",
  "static_assertions",
 ]
 
@@ -10158,7 +10158,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

@@ -8,7 +8,7 @@
     "didToolchainPackageVersion": "0.4.0",
     "nativeDidRuntime": {
       "repository": "https://github.com/MediaNoxLabs/midnight-identity.git",
-      "revision": "66a16882e549ca4d63cc0a7bd7edfebda47b441f",
+      "revision": "b0bda1f179c5eed35f840f939f451ccee108e1d0",
       "packageVersion": "0.5.0",
       "artifactRelease": "0.5.0",
       "artifactGitSha": "a14267cec3c1ab7e00bb0f058a54267d913a321b"
