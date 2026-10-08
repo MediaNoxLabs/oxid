@@ -77,6 +77,7 @@
       "crates/composition/src/lib.rs"
     ],
     "testOnlySources": [
+      "crates/composition/src/development_movement_approval_fixture.rs",
       "crates/ui-dioxus/src/desktop_developer_pager_driver.rs",
       "crates/ui-dioxus/src/desktop_test_driver.rs"
     ],
