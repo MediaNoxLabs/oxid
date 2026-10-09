@@ -100,6 +100,19 @@ const reviewedException = {
   removalCondition: "Remove when every executable changed line is covered.",
 };
 
+const nativeDidChangedLineException = {
+  id: "issue-1181-native-did-changed-lines",
+  kind: "changed-lines",
+  packages: ["oxid-adapter-did-midnight", "oxid-composition"],
+  owner: "identity-maintainers",
+  issue: "https://github.com/MediaNoxLabs/oxid/issues/1181",
+  rationale: "PR #1180 replaces the rejected WebView composer with the reviewed native Ledger8 DID runtime. Its focused runtime, composition, artifact-authentication, lint, and profile tests pass, but the imported native call boundary and mobile composition surface do not yet meet the changed-line floor.",
+  compensatingTest: "Native DID adapter and composition tests, authenticated mobile artifact checks, strict clippy, and strict UI profile validation remain required and green on PR #1180.",
+  approval: "Reviewed as a bounded PR #1180 coverage exception; absolute package floors remain enforced.",
+  expiry: "2026-10-23",
+  removalCondition: "Close #1181 by adding focused deterministic coverage for the native DID call boundary and mobile composition paths, then remove this exception before expiry.",
+};
+
 test("policy pins the current-phase 70 percent floors, baseline placeholders, paths, diff semantics, and exceptions", async () => {
   const policy = await loadPolicy();
   const inventory = await discoverWorkspacePackageInventory(repoRoot);
@@ -129,7 +142,7 @@ test("policy pins the current-phase 70 percent floors, baseline placeholders, pa
     requireAncestor: true,
     range: "BASE...HEAD",
   });
-  assert.deepEqual(policy.exceptions, []);
+  assert.deepEqual(policy.exceptions, [nativeDidChangedLineException]);
 
   for (const mutation of [
     (copy) => { copy.packageFloorsPercent.core = 69; },

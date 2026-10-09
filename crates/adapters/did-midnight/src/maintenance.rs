@@ -10,7 +10,7 @@
 
 use std::{fmt, io::Cursor, sync::Arc};
 
-use midnight_base_crypto::{hash::HashOutput, signatures::SigningKey, time::Timestamp};
+use midnight_base_crypto::{hash::HashOutput, time::Timestamp};
 use midnight_coin_structure::contract::ContractAddress;
 use midnight_ledger::structure::{
     ContractOperationVersionedVerifierKey, Intent, MaintenanceUpdate, ProofPreimageMarker,
@@ -30,7 +30,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     custody::{maintenance_path, replay_randomness_path},
-    protected_randomness::{ProtectedDeterministicRng, derive_seed},
+    protected_randomness::{ProtectedDeterministicRng, derive_seed, maintenance_signing_key},
 };
 
 const MAINTENANCE_SEGMENT: u16 = 1;
@@ -219,8 +219,7 @@ impl NativeMidnightDidMaintenanceComposer {
         let mut signing_rng = ProtectedDeterministicRng::new(signing_seed);
         self.custody
             .use_derived_secret(&request.profile_id, &path, &mut |secret| {
-                let signing_key = SigningKey::from_bytes(secret)
-                    .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+                let signing_key = maintenance_signing_key(secret)?;
                 signed = Some(
                     update
                         .clone()

@@ -67,6 +67,27 @@ export function auditCompatibility({ portalSource, environment = process.env } =
   if (manifest.wallet.didToolchainPackageVersion !== manifest.contractRelease) {
     fail("wallet DID package release differs from the reviewed contract release");
   }
+  const nativeDid = manifest.wallet.nativeDidRuntime;
+  if (!nativeDid || nativeDid.repository !== "https://github.com/MediaNoxLabs/midnight-identity.git") {
+    fail("native DID runtime repository differs from the reviewed manifest");
+  }
+  const nativeDidDependencies = cargo.split("\n")
+    .filter((line) => line.includes(`git = "${nativeDid.repository}"`));
+  if (nativeDidDependencies.length !== 3) fail("native DID runtime dependency set is incomplete");
+  for (const line of nativeDidDependencies) {
+    if (!line.includes(`version = "=${nativeDid.packageVersion}"`)
+      || !line.includes(`rev = "${nativeDid.revision}"`)) {
+      fail("native DID runtime dependency differs from the reviewed manifest");
+    }
+  }
+  const didArtifacts = readFileSync(path.join(root, "nix", "packages", "midnight-did-compact-artifacts.nix"), "utf8");
+  for (const expected of [
+    `version = "${nativeDid.artifactRelease}"`,
+    `/v${nativeDid.artifactRelease}/midnight-did-zk-artifacts-${nativeDid.artifactRelease}.tar.gz`,
+    `test "$(jq -r .gitSha "$out/manifest.json")" = ${nativeDid.artifactGitSha}`,
+  ]) {
+    if (!didArtifacts.includes(expected)) fail("native DID artifact release differs from the reviewed manifest");
+  }
 
   const standalone = readFileSync(path.join(root, "scripts", "standalone-stack.yml"), "utf8");
   for (const [label, image] of [
@@ -117,7 +138,9 @@ export function auditCompatibility({ portalSource, environment = process.env } =
     state: "compatible",
     contractRelease: manifest.contractRelease,
     manifestSha256: sha256(manifestBytes),
-    demoReady: manifest.demoReadiness.nativeHolderDidImplemented === true,
+    demoReady: manifest.demoReadiness.nativeHolderDidImplemented === true
+      && manifest.demoReadiness.portalUnderstandsNativeDidRelease === true
+      && manifest.demoReadiness.exactTailnetIssuanceQualified === true,
   };
 }
 

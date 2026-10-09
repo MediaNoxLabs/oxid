@@ -6,8 +6,8 @@
 - Prototype source: `midnight-ledger` commit `074b1a4bccbfee1740ee188374b606a022ecef42`, `mobile-bench/wallet-core/src/did/`, `contracts/midnight-did/did.compact`, Dioxus DID operation builder, and headless wallet
 - Supersedes: ADR-0036 statements that DID create, update, and deactivate are queued
 - Amends: ADR-0007, ADR-0008, ADR-0011, ADR-0013, ADR-0017, ADR-0021, ADR-0023, ADR-0024, and ADR-0029
-- Implementation state: complete development-only standalone lifecycle, Ed25519/P-256/Jubjub signing, headless flow, and mobile operation builder implemented; Compact-backed live writes, durable native custody, and recovery remain queued
-- Amended by: ADR-0038, ADR-0040, ADR-0046
+- Implementation state: complete development-only standalone lifecycle, Ed25519/P-256/Jubjub signing, headless flow, and mobile operation builder implemented; ADR-0122 adds native Ledger8 deployment and bootstrap-write composition while durable native custody and recovery remain queued
+- Amended by: ADR-0038, ADR-0040, ADR-0046, ADR-0122
 
 ## Context
 

@@ -17,9 +17,12 @@ use oxid_capabilities_application::{DeploymentProfileService, StandaloneDeployme
 
 #[cfg(all(
     not(target_arch = "wasm32"),
-    not(any(target_os = "ios", target_os = "android"))
+    any(
+        not(any(target_os = "ios", target_os = "android")),
+        feature = "mobile-portal"
+    )
 ))]
-use super::did_deployment::with_native_did_deployment;
+use super::did_deployment::{native_did_proving_material, with_native_did_deployment};
 
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -52,7 +55,7 @@ use oxid_adapter_midnight::MidnightStandaloneConfig;
         )
     )
 ))]
-use oxid_adapter_midnight::protected_standalone_midnight_wallet;
+use oxid_adapter_midnight::protected_standalone_midnight_wallet_with_checkpoint_options_and_proving_material;
 #[cfg(all(
     not(target_arch = "wasm32"),
     any(
@@ -745,11 +748,19 @@ where
     } = storage;
     let network_id = config.indexer().network_id().as_str().to_owned();
     let passport_vault_state_source = node_anchored_passport_vault_state_source(&config);
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let did_config = config.clone();
     let midnight = Arc::new(
-        protected_standalone_midnight_wallet(config, Arc::clone(&clock), Arc::clone(&security))
-            .with_profile_association_repository(profiles.clone()),
+        protected_standalone_midnight_wallet_with_checkpoint_options_and_proving_material(
+            config,
+            None,
+            None,
+            None,
+            None,
+            native_did_proving_material(),
+            Arc::clone(&clock),
+            Arc::clone(&security),
+        )
+        .with_profile_association_repository(profiles.clone()),
     );
     let services = compose_with_adapters_and_credential_profile_and_did_approvals(
         Arc::clone(&profiles),
@@ -770,9 +781,7 @@ where
         ),
         passport_vault_state_source,
     );
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    let services = with_native_did_deployment(services, &did_config, security, midnight);
-    services
+    with_native_did_deployment(services, &did_config, security, midnight)
 }
 
 #[cfg(all(

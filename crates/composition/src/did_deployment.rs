@@ -43,7 +43,6 @@ use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 const DEPLOYMENT_TTL_MILLIS: u64 = 60 * 60 * 1_000;
-const DID_CALL_COMPOSER_ENV: &str = "OXID_MIDNIGHT_DID_CALL_COMPOSER";
 
 struct NativeDidProvingMaterialSource {
     artifacts: MidnightDidCompactArtifacts,
@@ -73,12 +72,28 @@ impl MidnightRemoteProvingMaterialSource for NativeDidProvingMaterialSource {
 
 pub(super) fn native_did_proving_material() -> Option<Arc<dyn MidnightRemoteProvingMaterialSource>>
 {
-    let artifacts = std::env::var_os("OXID_MIDNIGHT_DID_ARTIFACTS_DIR")
-        .and_then(|root| MidnightDidCompactArtifacts::load(root).ok())?;
+    let artifacts = load_native_did_artifacts()?;
     Some(Arc::new(NativeDidProvingMaterialSource { artifacts }))
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
+fn load_native_did_artifacts() -> Option<MidnightDidCompactArtifacts> {
+    #[cfg(all(
+        feature = "mobile-did-compact-artifacts",
+        any(target_os = "ios", target_os = "android")
+    ))]
+    {
+        return MidnightDidCompactArtifacts::load_embedded_mobile().ok();
+    }
+    #[cfg(not(all(
+        feature = "mobile-did-compact-artifacts",
+        any(target_os = "ios", target_os = "android")
+    )))]
+    {
+        std::env::var_os("OXID_MIDNIGHT_DID_ARTIFACTS_DIR")
+            .and_then(|root| MidnightDidCompactArtifacts::load(root).ok())
+    }
+}
+
 pub(super) fn with_native_did_deployment<K, M>(
     mut services: super::services::ApplicationServices,
     config: &MidnightStandaloneConfig,
@@ -92,7 +107,7 @@ where
         + MidnightContractCallSubmissionPort
         + 'static,
 {
-    let Some(executable) = std::env::var_os(DID_CALL_COMPOSER_ENV) else {
+    let Some(artifacts) = load_native_did_artifacts() else {
         return services;
     };
     let wallet: Arc<dyn MidnightPublicCallContextSource> = midnight.clone();
@@ -102,10 +117,11 @@ where
     };
     let custody: Arc<dyn WalletDerivedSecretUsePort> = security.clone();
     let keys: Arc<dyn WalletKeyOperationPort> = security;
-    let calls = match NativeMidnightDidCallComposer::new(executable, Arc::clone(&custody), keys) {
-        Ok(calls) => Arc::new(calls) as Arc<dyn MidnightDidCallCompositionPort>,
-        Err(_) => return services,
-    };
+    let calls = Arc::new(NativeMidnightDidCallComposer::new(
+        Arc::clone(&custody),
+        keys,
+        artifacts,
+    )) as Arc<dyn MidnightDidCallCompositionPort>;
     let funding: Arc<dyn MidnightContractCallFundingPort> = midnight.clone();
     let submission: Arc<dyn MidnightContractCallSubmissionPort> = midnight;
     services.deploy_did = Arc::new(NativeDidDeploymentService::new(
@@ -239,6 +255,7 @@ impl DidDeploymentContextSource for NodeAnchoredDidDeploymentContextSource {
                 ledger_parameters: Some(chain.ledger_parameters().to_vec()),
                 network_id: wallet.network_id().as_str().to_owned(),
                 timestamp_millis,
+                expires_at_millis: request_expires_at(operation)?.value(),
                 coin_public_key: wallet.coin_public_key(),
                 encryption_public_key: wallet.encryption_public_key(),
             })
@@ -261,8 +278,7 @@ impl NativeDidDeploymentEffects {
         calls: Arc<dyn MidnightDidCallCompositionPort>,
         contexts: Arc<dyn DidDeploymentContextSource>,
     ) -> Self {
-        let artifacts = std::env::var_os("OXID_MIDNIGHT_DID_ARTIFACTS_DIR")
-            .and_then(|root| MidnightDidCompactArtifacts::load(root).ok());
+        let artifacts = load_native_did_artifacts();
         Self {
             deployment,
             maintenance,

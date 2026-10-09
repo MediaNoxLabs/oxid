@@ -8,11 +8,11 @@ import {
   validatePortalDidPackages,
 } from "../../scripts/check-midnight-integration-compatibility.mjs";
 
-test("reviewed wallet, Standalone, and Portal pins form one DID release line", () => {
+test("reviewed wallet, native DID runtime, Standalone, and Portal pins are explicit", () => {
   const result = auditCompatibility();
   assert.equal(result.state, "compatible");
   assert.equal(result.contractRelease, "0.4.0");
-  assert.equal(result.demoReady, false, "compatibility must not masquerade as native holder-DID readiness");
+  assert.equal(result.demoReady, false, "native composition must not masquerade as qualified Portal readiness");
   assert.match(result.manifestSha256, /^[0-9a-f]{64}$/u);
 });
 

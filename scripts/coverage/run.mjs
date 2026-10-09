@@ -61,10 +61,6 @@ const REQUIRED_COVERAGE_FIXTURES = Object.freeze([
     kind: "directory",
     sentinel: "manifest.json",
   }),
-  Object.freeze({
-    environment: "OXID_MIDNIGHT_DID_CALL_COMPOSER",
-    kind: "executable",
-  }),
 ]);
 
 function sha256(bytes) {
