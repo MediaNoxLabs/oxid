@@ -7,28 +7,22 @@
 //! remain owned by `oxid-adapter-midnight`. Controller and maintenance secrets
 //! are borrowed only inside the custody callback and never cross this adapter.
 
-use std::{fmt, sync::Arc};
+use std::{
+    fmt,
+    sync::{Arc, Mutex},
+};
 
-use midnight_base_crypto::{
-    fab::AlignedValue,
-    hash::{HashOutput, PersistentHashWriter},
-    repr::BinaryHashRepr,
-    signatures::{SigningKey, VerifyingKey},
-    time::Timestamp,
+use midnight_base_crypto::{hash::HashOutput, signatures::VerifyingKey, time::Timestamp};
+use midnight_compact_runtime::{ContractAddress, Fr, WitnessContext};
+use midnight_did_jubjub_schnorr::derive_public_key_from_seed;
+use midnight_did_runtime::{
+    BackendError, DidAuthorizationSigner, DidPrivateStateStore, GeneratedDidExecutor,
+    LedgerDeploymentConfig,
 };
-use midnight_ledger::structure::{
-    ContractDeploy, Intent, ProofPreimageMarker, StandardTransaction, Transaction,
-};
-use midnight_onchain_state::state::{
-    ChargedState, ContractMaintenanceAuthority, ContractOperation, ContractState, EntryPointBuf,
-    StateValue,
-};
-use midnight_storage::{
-    DefaultDB,
-    arena::Sp,
-    storage::{Array, HashMap as LedgerHashMap},
-};
-use midnight_transient_crypto::{commitment::PedersenRandomness, fab::ValueReprAlignedValue};
+use midnight_ledger::structure::{Intent, ProofPreimageMarker, StandardTransaction, Transaction};
+use midnight_onchain_state::state::ContractMaintenanceAuthority;
+use midnight_storage::{DefaultDB, storage::HashMap as LedgerHashMap};
+use midnight_transient_crypto::{commitment::PedersenRandomness, curve::EmbeddedGroupAffine};
 use oxid_identity_application::DidLifecyclePortError;
 use oxid_identity_domain::{MidnightDid, MidnightNetwork};
 use oxid_wallet_application::{
@@ -39,8 +33,8 @@ use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use crate::{
-    custody::{controller_path, maintenance_path, replay_randomness_path},
-    protected_randomness::{ProtectedDeterministicRng, derive_seed},
+    custody::{controller_path, maintenance_path, recovery_path, replay_randomness_path},
+    protected_randomness::{ProtectedDeterministicRng, derive_seed, maintenance_signing_key},
 };
 
 const DEPLOY_SEGMENT: u16 = 1;
@@ -205,23 +199,33 @@ impl NativeMidnightDidDeploymentComposer {
     ) -> Result<NativeMidnightDidDeploymentPlan, DidLifecyclePortError> {
         let controller_path = controller_path(request.account_index, request.controller_index)?;
         let maintenance_path = maintenance_path(request.account_index)?;
+        let recovery_path = recovery_path(request.account_index)?;
         let replay_path = replay_randomness_path(request.account_index)?;
 
         let mut controller_public_key = None;
         self.custody
             .use_derived_secret(&request.profile_id, &controller_path, &mut |secret| {
-                controller_public_key = Some(controller_public_key_for(secret));
+                controller_public_key = Some(derive_public_key_from_seed(secret));
                 Ok(())
             })
             .map_err(map_security_error)?;
         let controller_public_key =
             controller_public_key.ok_or(DidLifecyclePortError::ProtectionUnavailable)?;
 
+        let mut recovery_public_key = None;
+        self.custody
+            .use_derived_secret(&request.profile_id, &recovery_path, &mut |secret| {
+                recovery_public_key = Some(derive_public_key_from_seed(secret));
+                Ok(())
+            })
+            .map_err(map_security_error)?;
+        let recovery_public_key =
+            recovery_public_key.ok_or(DidLifecyclePortError::ProtectionUnavailable)?;
+
         let mut maintenance_key = None;
         self.custody
             .use_derived_secret(&request.profile_id, &maintenance_path, &mut |secret| {
-                let signing_key = SigningKey::from_bytes(secret)
-                    .map_err(|_| WalletSecurityPortError::InvalidOperation)?;
+                let signing_key = maintenance_signing_key(secret)?;
                 maintenance_key = Some(signing_key.verifying_key());
                 Ok(())
             })
@@ -236,6 +240,7 @@ impl NativeMidnightDidDeploymentComposer {
                 match compose_with_protected_randomness(
                     request,
                     controller_public_key,
+                    recovery_public_key,
                     maintenance_key.clone(),
                     secret,
                 ) {
@@ -257,7 +262,8 @@ impl NativeMidnightDidDeploymentComposer {
 
 fn compose_with_protected_randomness(
     request: &NativeMidnightDidDeploymentRequest,
-    controller_public_key: [u8; 32],
+    controller_public_key: EmbeddedGroupAffine,
+    recovery_public_key: EmbeddedGroupAffine,
     maintenance_key: VerifyingKey,
     replay_secret: &[u8; 32],
 ) -> Result<NativeMidnightDidDeploymentPlan, DidLifecyclePortError> {
@@ -265,12 +271,27 @@ fn compose_with_protected_randomness(
         .map_err(map_security_error)?;
     let intent_seed = derive_seed(replay_secret, DEPLOY_INTENT_DOMAIN, &request.intent_recipe)
         .map_err(map_security_error)?;
-    let deploy = compose_deploy(
+    let private_state = NativeDidPrivateState {
         controller_public_key,
-        request.created_at_millis,
-        *nonce,
-        vec![maintenance_key],
+        recovery_public_key,
+        timestamp_millis: request.created_at_millis,
+    };
+    let executor = GeneratedDidExecutor::new(
+        NativeDidWitnesses,
+        Arc::new(NativeDidPrivateStateStore(Mutex::new(private_state))),
+        Arc::new(ConstructorOnlySigner),
+        ContractAddress::default(),
     );
+    let deployment = executor.deployment_request().map_err(map_backend_error)?;
+    let deploy = deployment.to_contract_deploy(LedgerDeploymentConfig {
+        operations: LedgerHashMap::new(),
+        maintenance_authority: ContractMaintenanceAuthority {
+            threshold: 1,
+            committee: vec![maintenance_key],
+            counter: 0,
+        },
+        nonce: HashOutput(*nonce),
+    });
     let address = deploy.address().0.0;
     let did = MidnightDid::parse(format!(
         "did:midnight:{}:{}",
@@ -308,87 +329,100 @@ fn compose_with_protected_randomness(
     })
 }
 
-fn controller_public_key_for(secret: &[u8; 32]) -> [u8; 32] {
-    // `midnight-did` 0.4.0 calls Compact's persistentHash over a fixed vector
-    // containing this domain and the 32-byte controller secret. Reproduce the
-    // same FAB value-only encoding instead of treating the controller as a
-    // Jubjub signing key.
-    let domain = AlignedValue::from(*b"did:controller:pk\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0");
-    let secret = AlignedValue::from(*secret);
-    let input = AlignedValue::concat([&domain, &secret]);
-    let mut writer = PersistentHashWriter::default();
-    ValueReprAlignedValue(input).binary_repr(&mut writer);
-    writer.finalize().0
+#[derive(Clone)]
+struct NativeDidPrivateState {
+    controller_public_key: EmbeddedGroupAffine,
+    recovery_public_key: EmbeddedGroupAffine,
+    timestamp_millis: u64,
 }
 
-fn compose_deploy(
-    controller_public_key: [u8; 32],
-    timestamp_ms: u64,
-    nonce: [u8; 32],
-    committee: Vec<VerifyingKey>,
-) -> ContractDeploy<DefaultDB> {
-    ContractDeploy {
-        initial_state: compose_initial_state(controller_public_key, timestamp_ms, committee),
-        nonce: HashOutput(nonce),
+#[derive(Clone, Copy)]
+struct NativeDidWitnesses;
+
+impl midnight_did_runtime::contract::Witnesses<NativeDidPrivateState> for NativeDidWitnesses {
+    fn get_schnorr_reduction<'a>(
+        &self,
+        _: &WitnessContext<midnight_did_runtime::contract::Ledger<'a>, NativeDidPrivateState>,
+        _: Fr,
+    ) -> (NativeDidPrivateState, (u8, u128)) {
+        unreachable!("unreachable for the pinned Ledger8 DID Compact output")
+    }
+
+    fn local_controller_public_key<'a>(
+        &self,
+        context: &WitnessContext<midnight_did_runtime::contract::Ledger<'a>, NativeDidPrivateState>,
+    ) -> (NativeDidPrivateState, EmbeddedGroupAffine) {
+        (
+            context.private_state.clone(),
+            context.private_state.controller_public_key,
+        )
+    }
+
+    fn local_recovery_authority_public_key<'a>(
+        &self,
+        context: &WitnessContext<midnight_did_runtime::contract::Ledger<'a>, NativeDidPrivateState>,
+    ) -> (NativeDidPrivateState, EmbeddedGroupAffine) {
+        (
+            context.private_state.clone(),
+            context.private_state.recovery_public_key,
+        )
+    }
+
+    fn current_timestamp<'a>(
+        &self,
+        context: &WitnessContext<midnight_did_runtime::contract::Ledger<'a>, NativeDidPrivateState>,
+    ) -> (NativeDidPrivateState, u64) {
+        (
+            context.private_state.clone(),
+            context.private_state.timestamp_millis,
+        )
     }
 }
 
-fn compose_initial_state(
-    controller_public_key: [u8; 32],
-    timestamp_ms: u64,
-    committee: Vec<VerifyingKey>,
-) -> ContractState<DefaultDB> {
-    // This is the generated Compact `Ledger` schema for midnight-did 0.4.0.
-    // Keep the immutable and mutable arrays explicit so schema drift fails the
-    // conformance tests instead of silently writing values into stale slots.
-    let constants = state_array(vec![
-        cell(AlignedValue::from(1_u32)),
-        cell(AlignedValue::from(controller_public_key)),
-        cell(AlignedValue::from([0_u8; 32])),
-    ]);
-    let mutable = state_array(vec![
-        empty_map(),
-        cell(AlignedValue::from(0_u64)),
-        cell(AlignedValue::from(timestamp_ms)),
-        cell(AlignedValue::from(timestamp_ms)),
-        cell(AlignedValue::from(false)),
-        cell(AlignedValue::from(true)),
-        cell(AlignedValue::from(0_u64)),
-        empty_map(),
-        empty_map(),
-        empty_map(),
-        empty_map(),
-        empty_map(),
-        empty_map(),
-        empty_map(),
-        empty_map(),
-    ]);
-    ContractState {
-        data: ChargedState::new(state_array(vec![constants, mutable])),
-        operations: LedgerHashMap::<EntryPointBuf, ContractOperation, DefaultDB>::new(),
-        maintenance_authority: ContractMaintenanceAuthority {
-            threshold: if committee.is_empty() { 0 } else { 1 },
-            committee,
-            counter: 0,
-        },
-        balance: LedgerHashMap::new(),
+struct NativeDidPrivateStateStore(Mutex<NativeDidPrivateState>);
+
+impl DidPrivateStateStore<NativeDidPrivateState> for NativeDidPrivateStateStore {
+    fn load(&self) -> Result<NativeDidPrivateState, BackendError> {
+        self.0
+            .lock()
+            .map(|state| state.clone())
+            .map_err(|_| BackendError::Other("DID private-state lock poisoned".to_owned()))
+    }
+
+    fn store(&self, state: NativeDidPrivateState) -> Result<(), BackendError> {
+        *self
+            .0
+            .lock()
+            .map_err(|_| BackendError::Other("DID private-state lock poisoned".to_owned()))? =
+            state;
+        Ok(())
     }
 }
 
-fn state_array(values: Vec<StateValue<DefaultDB>>) -> StateValue<DefaultDB> {
-    let mut array = Array::new();
-    for value in values {
-        array = array.push(value);
+struct ConstructorOnlySigner;
+
+impl DidAuthorizationSigner for ConstructorOnlySigner {
+    fn sign_controller(
+        &self,
+        _: [Fr; 4],
+    ) -> Result<midnight_compact_runtime::SchnorrSignature, BackendError> {
+        Err(BackendError::Other(
+            "constructor must not request controller authorization".to_owned(),
+        ))
     }
-    StateValue::Array(array)
+
+    fn sign_recovery(
+        &self,
+        _: [Fr; 4],
+    ) -> Result<midnight_compact_runtime::SchnorrSignature, BackendError> {
+        Err(BackendError::Other(
+            "constructor must not request recovery authorization".to_owned(),
+        ))
+    }
 }
 
-fn empty_map() -> StateValue<DefaultDB> {
-    StateValue::Map(LedgerHashMap::new())
-}
-
-fn cell(value: AlignedValue) -> StateValue<DefaultDB> {
-    StateValue::Cell(Sp::new(value))
+fn map_backend_error(_: BackendError) -> DidLifecyclePortError {
+    DidLifecyclePortError::InvalidOperation
 }
 
 const fn map_security_error(error: WalletSecurityPortError) -> DidLifecyclePortError {
@@ -468,8 +502,8 @@ mod tests {
             "undeployed",
             2,
             4,
-            1_777_840_000_000,
-            1_777_843_600_000,
+            10_000,
+            3_610_000,
             [0x99; 32],
             [0x42; 32],
         )
@@ -493,7 +527,7 @@ mod tests {
             second.into_transaction().as_slice(),
             first_transaction.as_slice()
         );
-        assert_eq!(custody.paths.lock().expect("paths").len(), 6);
+        assert_eq!(custody.paths.lock().expect("paths").len(), 8);
     }
 
     #[test]
@@ -506,8 +540,9 @@ mod tests {
         let _ = composer.compose(&request).expect("plan");
         let paths = custody.paths.lock().expect("paths");
         assert_eq!(paths[0], controller_path(2, 8).expect("controller path"));
-        assert_eq!(paths[1], maintenance_path(2).expect("maintenance path"));
-        assert_eq!(paths[2], replay_randomness_path(2).expect("replay path"));
+        assert_eq!(paths[1], recovery_path(2).expect("recovery path"));
+        assert_eq!(paths[2], maintenance_path(2).expect("maintenance path"));
+        assert_eq!(paths[3], replay_randomness_path(2).expect("replay path"));
     }
 
     #[test]

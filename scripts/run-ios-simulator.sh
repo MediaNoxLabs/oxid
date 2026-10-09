@@ -160,6 +160,13 @@ case "$portal_profile" in
     ;;
 esac
 
+did_artifacts_dir=""
+if [ "$portal_profile" != "unavailable" ] && [ "$operation" != "deploy" ]; then
+  did_artifacts_dir="$(
+    nix build .#midnight-did-compact-artifacts --no-link --print-out-paths
+  )"
+fi
+
 ui_profile="${OXID_UI_PROFILE:-user}"
 case "$ui_profile" in
   user)
@@ -292,6 +299,7 @@ if [ "$operation" != "deploy" ]; then
     OXID_BUILD_PORTAL_DEPLOYMENT_MANIFEST_SHA256="$portal_manifest_sha256" \
     OXID_BUILD_PORTAL_PROFILE_AUTHORITY_PATH="$portal_profile_authority_path" \
     OXID_BUILD_PORTAL_PROFILE_AUTHORITY_SHA256="$portal_profile_authority_sha256" \
+    OXID_MIDNIGHT_DID_ARTIFACTS_DIR="$did_artifacts_dir" \
     OXID_PRESENTATION_ARTIFACTS_DIR="$presentation_artifacts_dir" \
     env -u SDKROOT \
     "$dioxus_cli" build \

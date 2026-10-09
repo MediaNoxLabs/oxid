@@ -36,6 +36,8 @@ unknown-git = "deny"
 # immutable revision; scripts/check-midnight-sources.sh validates every direct
 # Midnight package and revision separately.
 allow-git = [
+  "https://github.com/MediaNoxLabs/compact.git",
+  "https://github.com/MediaNoxLabs/midnight-identity.git",
   "https://github.com/MediaNoxLabs/midnight-ledger.git",
   "https://github.com/MediaNoxLabs/midnight-zk",
 ]

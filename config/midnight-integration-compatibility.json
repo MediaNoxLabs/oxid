@@ -2,10 +2,17 @@
   "schema": "oxid-midnight-integration-compatibility-v1",
   "contractRelease": "0.4.0",
   "wallet": {
-    "ledgerRevision": "b85f5d8e503fd1d7a1b128bbc1d7156baf823a65",
+    "ledgerRevision": "8655615e7c4cbf3a1187b3203bf72e69dc09b8dc",
     "ledgerVersion": "8.2.0-rc.1",
     "didToolchainRevision": "05b237a5e51f9c22853b424e7d4236dfa9384c24",
-    "didToolchainPackageVersion": "0.4.0"
+    "didToolchainPackageVersion": "0.4.0",
+    "nativeDidRuntime": {
+      "repository": "https://github.com/MediaNoxLabs/midnight-identity.git",
+      "revision": "fcf3c51cb9368a3e7574f06f82434f92386d0a2b",
+      "packageVersion": "0.5.0",
+      "artifactRelease": "0.5.0",
+      "artifactGitSha": "a14267cec3c1ab7e00bb0f058a54267d913a321b"
+    }
   },
   "standalone": {
     "networkId": "undeployed",
@@ -23,7 +30,9 @@
   },
   "demoReadiness": {
     "nativeHolderDidRequired": true,
-    "nativeHolderDidImplemented": false,
+    "nativeHolderDidImplemented": true,
+    "portalUnderstandsNativeDidRelease": false,
+    "exactTailnetIssuanceQualified": false,
     "outOfBandHolderPublicationAllowed": false
   }
 }

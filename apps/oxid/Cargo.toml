@@ -74,6 +74,7 @@ standalone-portal = [
   "standalone-development",
   "standalone-local",
   "oxid-composition/development-did-approval",
+  "oxid-composition/mobile-did-compact-artifacts",
   "oxid-composition/mobile-portal",
 ]
 # Physical Android Portal profile using compile-time authenticated Tailscale
@@ -82,6 +83,7 @@ standalone-portal-tailnet = [
   "mobile",
   "standalone-development",
   "standalone-tailnet",
+  "oxid-composition/mobile-did-compact-artifacts",
   "oxid-composition/mobile-portal-tailnet",
 ]
 # Opt-in physical-device route profile for a TLS-terminated standalone stack.

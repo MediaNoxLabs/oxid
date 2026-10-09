@@ -3,6 +3,7 @@
 //! Secret-bound deterministic randomness for crash-replayable DID operations.
 
 use hmac::{Hmac, Mac};
+use midnight_base_crypto::signatures::SigningKey;
 use rand::{CryptoRng, RngCore};
 use sha2::Sha256;
 use zeroize::{Zeroize, Zeroizing};
@@ -11,8 +12,16 @@ use oxid_wallet_application::WalletSecurityPortError;
 
 const DERIVATION_DOMAIN: &[u8] = b"oxid:did:protected-randomness:v1";
 const BLOCK_DOMAIN: &[u8] = b"oxid:did:protected-rng-block:v1";
+const MAINTENANCE_KEY_DOMAIN: &[u8] = b"oxid:did:maintenance-key:v1";
 
 type HmacSha256 = Hmac<Sha256>;
+
+pub(super) fn maintenance_signing_key(
+    protected_secret: &[u8; 32],
+) -> Result<SigningKey, WalletSecurityPortError> {
+    let seed = derive_seed(protected_secret, MAINTENANCE_KEY_DOMAIN, &[0; 32])?;
+    Ok(SigningKey::sample(ProtectedDeterministicRng::new(seed)))
+}
 
 pub(super) fn derive_seed(
     protected_secret: &[u8; 32],

@@ -8,10 +8,14 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-readonly ledger_revision="b85f5d8e503fd1d7a1b128bbc1d7156baf823a65"
+readonly ledger_revision="8655615e7c4cbf3a1187b3203bf72e69dc09b8dc"
 readonly ledger_source="git+https://github.com/MediaNoxLabs/midnight-ledger.git?rev=${ledger_revision}"
-readonly proofs_revision="083c82824dc5979fd7d509229e6f6b362d5b1ebf"
+readonly proofs_revision="532629b044a88473a7175f4a96c2511c91156136"
 readonly proofs_source="git+https://github.com/MediaNoxLabs/midnight-zk?rev=${proofs_revision}"
+readonly compact_revision="32e314770da10cc62dab30dcfeb340ec4c6bcb64"
+readonly compact_source="git+https://github.com/MediaNoxLabs/compact.git?rev=${compact_revision}"
+readonly identity_revision="fcf3c51cb9368a3e7574f06f82434f92386d0a2b"
+readonly identity_source="git+https://github.com/MediaNoxLabs/midnight-identity.git?rev=${identity_revision}"
 
 metadata_file="$(mktemp)"
 trap 'rm -f "$metadata_file"' EXIT
@@ -31,6 +35,12 @@ while IFS=$'\t' read -r package source path; do
       ;;
     midnight-proofs)
       expected_source="$proofs_source"
+      ;;
+    midnight-compact-runtime)
+      expected_source="$compact_source"
+      ;;
+    midnight-did-domain|midnight-did-jubjub-schnorr|midnight-did-runtime)
+      expected_source="$identity_source"
       ;;
     midnight-circuits|midnight-zk-stdlib|midnight-curves)
       expected_source="git+https://github.com/midnightntwrk/midnight-zk.git?rev="
@@ -74,6 +84,10 @@ done < <(
         "midnight-transient-crypto",
         "midnight-proof-server",
         "midnight-proofs",
+        "midnight-compact-runtime",
+        "midnight-did-domain",
+        "midnight-did-jubjub-schnorr",
+        "midnight-did-runtime",
         "midnight-circuits",
         "midnight-zk-stdlib",
         "midnight-curves"
@@ -125,6 +139,20 @@ if ! jq -e --arg source "$proofs_source" '
   | length == 1
 ' "$metadata_file" >/dev/null; then
   echo "midnight-proofs must resolve once from the exact patch declared by the selected Ledger8 workspace." >&2
+  exit 1
+fi
+
+if ! jq -e --arg compact "$compact_source" --arg identity "$identity_source" '
+  ([.packages[]
+    | select(.name == "midnight-compact-runtime")
+    | select(.source | startswith($compact))] | length == 1)
+  and
+  ([.packages[]
+    | select(.name | test("^midnight-did-(domain|jubjub-schnorr|method|runtime)$"))]
+   | length > 0
+   and all(.source | startswith($identity)))
+' "$metadata_file" >/dev/null; then
+  echo "Compact runtime and Midnight DID packages must resolve once from their reviewed immutable sources." >&2
   exit 1
 fi
 

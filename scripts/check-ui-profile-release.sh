@@ -447,6 +447,7 @@ app_portal_members="$(awk '
 expected_app_portal_members="$(printf '%s\n' \
   mobile \
   oxid-composition/development-did-approval \
+  oxid-composition/mobile-did-compact-artifacts \
   oxid-composition/mobile-portal \
   standalone-development \
   standalone-local | sort)"

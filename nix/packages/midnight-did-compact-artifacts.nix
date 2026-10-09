@@ -7,11 +7,11 @@
 
 stdenvNoCC.mkDerivation {
   pname = "oxid-midnight-did-compact-artifacts";
-  version = "0.4.0";
+  version = "0.5.0";
 
   src = fetchurl {
-    url = "https://github.com/midnightntwrk/midnight-did/releases/download/v0.4.0/midnight-did-zk-artifacts-0.4.0.tar.gz";
-    hash = "sha256-K5qTtp064ynCUvV5F0Y1KMxGql0Q8h4ysSExVeGIPow=";
+    url = "https://github.com/midnightntwrk/midnight-did/releases/download/v0.5.0/midnight-did-zk-artifacts-0.5.0.tar.gz";
+    hash = "sha256-pMLQDv2daVbLEUjZFrgKkfKwc3i8U+DVMEnViWN3vtU=";
   };
 
   nativeBuildInputs = [ jq ];
@@ -28,8 +28,8 @@ stdenvNoCC.mkDerivation {
   doInstallCheck = true;
   installCheckPhase = ''
     test "$(jq -r .schema "$out/manifest.json")" = midnight-did-zk-artifacts
-    test "$(jq -r .version "$out/manifest.json")" = 0.4.0
-    test "$(jq -r .gitSha "$out/manifest.json")" = cf00aacb3e1bb300e87bc4dd11ec0897fab6e233
+    test "$(jq -r .version "$out/manifest.json")" = 0.5.0
+    test "$(jq -r .gitSha "$out/manifest.json")" = a14267cec3c1ab7e00bb0f058a54267d913a321b
     for circuit in setVerificationMethod setSchnorrJubjubVerificationMethod setVerificationMethodRelation; do
       test -s "$out/keys/$circuit.prover"
       test -s "$out/keys/$circuit.verifier"
@@ -38,8 +38,8 @@ stdenvNoCC.mkDerivation {
   '';
 
   meta = {
-    description = "Authenticated Midnight DID 0.4.0 Compact artifacts";
-    homepage = "https://github.com/midnightntwrk/midnight-did/releases/tag/v0.4.0";
+    description = "Authenticated Midnight DID 0.5.0 Compact artifacts";
+    homepage = "https://github.com/midnightntwrk/midnight-did/releases/tag/v0.5.0";
     license = lib.licenses.asl20;
   };
 }

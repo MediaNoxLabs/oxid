@@ -798,7 +798,6 @@ fn two_fresh_wallets_receive_fixed_night_and_generate_dust() {
 #[ignore = "requires an explicitly authorized local standalone stack and live DID resolver"]
 fn funded_wallet_deploys_and_resolves_a_native_holder_did() {
     assert_eq!(std::env::var(ENABLE_ENV).as_deref(), Ok("1"));
-    assert!(std::env::var_os("OXID_MIDNIGHT_DID_CALL_COMPOSER").is_some());
     assert!(std::env::var_os("OXID_MIDNIGHT_DID_ARTIFACTS_DIR").is_some());
     assert!(std::env::var_os("OXID_MIDNIGHT_DID_RESOLVER_URL").is_some());
 

@@ -63,10 +63,15 @@ impl WalletDerivedSecretUsePort for TestCustody {
     fn use_derived_secret(
         &self,
         _: &WalletProfileId,
-        _: &WalletHdPath,
+        path: &WalletHdPath,
         operation: &mut dyn FnMut(&[u8; 32]) -> Result<(), WalletSecurityPortError>,
     ) -> Result<(), WalletSecurityPortError> {
-        operation(&[7; 32])
+        let secret = if path.components()[3].index() == 6 {
+            [9; 32]
+        } else {
+            [7; 32]
+        };
+        operation(&secret)
     }
 }
 
@@ -116,6 +121,7 @@ impl DidDeploymentContextSource for ReadyContextSource {
                 ledger_parameters: Some(vec![4]),
                 network_id: "undeployed".to_owned(),
                 timestamp_millis: 10_000,
+                expires_at_millis: 3_610_000,
                 coin_public_key: [5; 32],
                 encryption_public_key: [6; 32],
             })
@@ -485,16 +491,20 @@ fn native_effect_composer_authenticates_and_composes_the_first_maintenance_updat
     }
     let custody: Arc<dyn WalletDerivedSecretUsePort> = Arc::new(TestCustody);
     let keys: Arc<dyn WalletKeyOperationPort> = Arc::new(TestCustody);
-    let executable = std::env::current_exe().expect("current executable");
+    let artifacts = MidnightDidCompactArtifacts::load(
+        std::env::var_os("OXID_MIDNIGHT_DID_ARTIFACTS_DIR").expect("artifacts"),
+    )
+    .expect("authenticated artifacts");
     let effects = NativeDidDeploymentEffects::new(
         Arc::new(NativeMidnightDidDeploymentComposer::new(Arc::clone(
             &custody,
         ))),
         Arc::new(NativeMidnightDidMaintenanceComposer::new(custody)),
-        Arc::new(
-            NativeMidnightDidCallComposer::new(executable, Arc::new(TestCustody), keys)
-                .expect("call composer"),
-        ),
+        Arc::new(NativeMidnightDidCallComposer::new(
+            Arc::new(TestCustody),
+            keys,
+            artifacts,
+        )),
         Arc::new(ReadyContextSource),
     );
     let operation = DidDeploymentOperation::new(
@@ -504,6 +514,10 @@ fn native_effect_composer_authenticates_and_composes_the_first_maintenance_updat
         UnixTimestampMillis::new(10_000),
     )
     .expect("operation");
+    let request = deployment_request(&operation, 0).expect("deployment request");
+    NativeMidnightDidDeploymentComposer::new(Arc::new(TestCustody))
+        .compose(&request)
+        .expect("native deployment composition");
     let deploy =
         futures::executor::block_on(effects.compose(&operation, 0)).expect("deployment plan");
     let submission_id = effect_submission_id(&operation);

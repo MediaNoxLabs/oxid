@@ -13,6 +13,9 @@ default = []
 # Explicit Android Tailnet-demo egress for one public holder DID document.
 # Normal resolver and lifecycle builds do not contain this capability.
 tailnet-test-did-publication = []
+# Embed the authenticated DID bootstrap artifact closure in an explicit mobile
+# Portal build. Normal library and production-facing builds remain path-free.
+mobile-compact-artifacts = []
 
 [dependencies]
 base64.workspace = true
@@ -22,6 +25,10 @@ hex.workspace = true
 hmac.workspace = true
 midnight-base-crypto.workspace = true
 midnight-coin-structure.workspace = true
+midnight-compact-runtime.workspace = true
+midnight-did-domain.workspace = true
+midnight-did-jubjub-schnorr.workspace = true
+midnight-did-runtime.workspace = true
 midnight-ledger.workspace = true
 midnight-onchain-state.workspace = true
 midnight-serialize.workspace = true
