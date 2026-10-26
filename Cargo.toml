@@ -146,27 +146,27 @@ midnight-zkir = { version = "=2.1.1", git = "https://github.com/MediaNoxLabs/mid
 midnight-zswap = { version = "=8.2.0-rc.1", git = "https://github.com/MediaNoxLabs/midnight-ledger.git", rev = "8655615e7c4cbf3a1187b3203bf72e69dc09b8dc", package = "midnight-zswap", default-features = false }
 ndk-context = { version = "=0.1.1" }
 p256 = { version = "=0.14.0", default-features = false, features = ["ecdsa"] }
-proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
+proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 qrcode = { version = "=0.14.1", default-features = false, features = ["svg"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_arrays = { version = "=0.2.0" }
 serde_bytes = { version = "=0.11.19" }
-serde_json = { version = "=1.0.151" }
+serde_json = { version = "=1.0.154" }
 sha2 = { version = "=0.10.9", default-features = false }
 subtle = { version = "=2.6.1" }
 sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
-rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"] }
 rustls-platform-verifier-05 = { package = "rustls-platform-verifier", version = "=0.5.3" }
 rustls-platform-verifier-07 = { package = "rustls-platform-verifier", version = "=0.7.0" }
 rand = { version = "=0.8.8" }
 reqwest = { version = "=0.13.5", default-features = false, features = ["json", "rustls"] }
 rcgen = { version = "=0.14.10", default-features = false, features = ["ring"] }
 subxt = { version = "=0.44.3" }
-tokio = { version = "=1.53.1", default-features = false, features = ["net", "rt", "time"] }
+tokio = { version = "=1.53.3", default-features = false, features = ["net", "rt", "time"] }
 tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 url = { version = "=2.5.8" }
 webpki-root-certs = "=1.0.9"
-zeroize = { version = "=1.9.0" }
+zeroize = { version = "=1.9.1" }
 
 oxid-adapter-midnight = { version = "=0.2.0", path = "crates/adapters/midnight" }
 oxid-adapter-openid4vci = { version = "=0.2.0", path = "crates/adapters/openid4vci" }
